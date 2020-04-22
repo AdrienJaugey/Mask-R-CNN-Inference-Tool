@@ -15,7 +15,10 @@ class CellsConfig(Config):
     IMAGES_PER_GPU = 1
 
     # Number of classes (including background)
-    NUM_CLASSES = 1 + 1  # + 6  # background + tubule_atrophique (to test monoclass) + others
+    if TEST_MONOCLASS:
+      NUM_CLASSES = 1 + 1  # background + tubule_atrophique (to test monoclass)
+    else:
+      NUM_CLASSES = 1 + 7  # background + all classes
 
     # Use small images for faster training. Set the limits of the small side
     # the large side, and that determines the image shape.

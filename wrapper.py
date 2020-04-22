@@ -59,19 +59,22 @@ def createMasksOfImage(directoryPath, imgName, datasetName='dataset_train'):
         createMask(fileName, shape, int(noMask), ptsMask, datasetName, maskClass)
 
 
-def startWrapper(rawDatasetPath)
+def startWrapper(rawDatasetPath):
 	# Getting all images, assuming that there are only images and xml annotation in directory
 	# mkyong.com/python/python-how-to-list-all-files-in-a-directory/
 	images = []
+	annotations = []
 	for _, _, files in os.walk(rawDatasetPath):
 		for file in files:
-			if '.xml' not in file:
+			if '.png' in file:
 				images.append(file)
+			elif '.xml' in file:
+				annotations.append(file)
 
 	numberOfImages = len(images)
-	numberOfFiles = len(files)
-	if numberOfFiles - numberOfImages != numberOfImages:
-		print('It seems there are not as many images ({}) as other files ({})'.format(numberOfImages, numberOfFiles - numberOfImages))
+	numberOfFiles = len(annotations)
+	if numberOfFiles - numberOfImages != 0:
+		print('It seems there are not as many images ({}) as annotations files ({})'.format(numberOfImages, numberOfFiles))
 	for index in range(numberOfImages):
 		file = images[index]
 		print('Creating masks for {} image ({}/{})'.format(file, index + 1, numberOfImages))
