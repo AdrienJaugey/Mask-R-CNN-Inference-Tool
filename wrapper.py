@@ -8,7 +8,7 @@ def createMask(imgName, imgShape, noMask, ptsMask, datasetName='dataset_train', 
     # Formatting the suffix for the image representing the mask
     maskName = str('0' if noMask < 100 else '') + str('0' if noMask < 10 else '') + str(noMask)
     # Defining path where the result image will be stored and creating dir if not exists
-    output_directory = 'dataset_train/' + imgName + '/' + maskClass + '/'
+    output_directory = datasetName + '/' + imgName + '/' + maskClass + '/'
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
 
@@ -30,20 +30,20 @@ def createMask(imgName, imgShape, noMask, ptsMask, datasetName='dataset_train', 
 def createMasksOfImage(directoryPath, imgName, datasetName='dataset_train'):
     # Getting shape of original image (same for all this masks)
     img = None
-    img = cv2.imread(directoryPath + '/' + imgName)
+    img = cv2.imread(directoryPath + '/' + imgName + '.png')
     if img is None:
+        print('Problem with {} image'.format(imgName))
         return
     shape = img.shape
 
     # Copying the original image in the dataset
-    fileName = imgName.split('.')[0]
-    targetDirectoryPath = datasetName + '/' + fileName + '/images/'
+    targetDirectoryPath = datasetName + '/' + imgName + '/images/'
     if not os.path.exists(targetDirectoryPath):
         os.makedirs(targetDirectoryPath)
-        cv2.imwrite(targetDirectoryPath + imgName, img)
+        cv2.imwrite(targetDirectoryPath + imgName + '.png', img)
 
     # https://www.datacamp.com/community/tutorials/python-xml-elementtree
-    tree = ET.parse(directoryPath + '/' + fileName + '.xml')
+    tree = ET.parse(directoryPath + '/' + imgName + '.xml')
     root = tree.getroot()
     # Going through the XML tree and getting all Annotation nodes
     for annotation in root.findall('./Annotations/Annotation'):
@@ -56,26 +56,61 @@ def createMasksOfImage(directoryPath, imgName, datasetName='dataset_train'):
             yCoordinate = points.attrib.get('Y')
             ptsMask.append([xCoordinate, yCoordinate])
         # print('Mask ' + noMask + ': NbPts = ' + str(len(ptsMask)) + '\tclass = ' + maskClass)
-        createMask(fileName, shape, int(noMask), ptsMask, datasetName, maskClass)
+        createMask(imgName, shape, int(noMask), ptsMask, datasetName, maskClass)
 
 
-def startWrapper(rawDatasetPath):
-	# Getting all images, assuming that there are only images and xml annotation in directory
-	# mkyong.com/python/python-how-to-list-all-files-in-a-directory/
-	images = []
-	annotations = []
-	for _, _, files in os.walk(rawDatasetPath):
-		for file in files:
-			if '.png' in file:
-				images.append(file)
-			elif '.xml' in file:
-				annotations.append(file)
+def startWrapper(rawDatasetPath, datasetName='dataset_train'):
+    # https://mkyong.com/python/python-how-to-list-all-files-in-a-directory/
+    names = []
+    images = []  # list of image that can be used to compute masks
+    missingImages = []  # list of missing images
+    missingAnnotations = []  # list of missing annotations
+    for _, _, files in os.walk(rawDatasetPath):
+        for file in files:
+            name = file.split('.')[0]
+            if name not in names:  # We want to do this only once per unique file name (without extension)
+                names.append(name)
 
-	numberOfImages = len(images)
-	numberOfFiles = len(annotations)
-	if numberOfFiles - numberOfImages != 0:
-		print('It seems there are not as many images ({}) as annotations files ({})'.format(numberOfImages, numberOfFiles))
-	for index in range(numberOfImages):
-		file = images[index]
-		print('Creating masks for {} image ({}/{})'.format(file, index + 1, numberOfImages))
-		createMasksOfImage(rawDatasetPath, file)
+                # Testing if there is an png image with that name
+                pngPath = os.path.join(rawDatasetPath, name + '.png')
+                pngExists = os.path.exists(pngPath)
+
+                # Same thing with jp2 format
+                jp2Path = os.path.join(rawDatasetPath, name + '.jp2')
+                jp2Exists = os.path.exists(jp2Path)
+
+                # Testing if annotation file exists for that name
+                annotationsExist = os.path.exists(os.path.join(rawDatasetPath, name + '.xml'))
+                if pngExists or jp2Exists:  # At least one image exists
+                    if not annotationsExist:  # Annotations are missing
+                        missingAnnotations.append(name)
+                    else:
+                        if not pngExists:  # Only jp2 exists
+                            image = cv2.imread(jp2Path)  # Opening the jp2 image
+                            cv2.imwrite(pngPath, image)  # Saving the jp2 image to png format
+                        images.append(name)  # Adding this image to the list
+                elif annotationsExist:  # There is no image file but xml found
+                    missingImages.append(name)
+
+    print()
+    # Displaying missing image files
+    nbMissingImg = len(missingImages)
+    if nbMissingImg > 0:
+        print('Missing {} image{} : {}'.format(nbMissingImg, 's' if nbMissingImg > 1 else '', missingImages))
+
+    # Displaying missing annotations files
+    nbMissingAnnotations = len(missingAnnotations)
+    if nbMissingAnnotations > 0:
+        print('Missing {} annotation{} : {}'.format(nbMissingAnnotations, 's' if nbMissingAnnotations > 1 else '',
+                                                    missingAnnotations))
+
+    # Checking if there is file that is not image nor annotation
+    nbImages = len(images)
+    if len(names) - nbMissingImg - nbMissingAnnotations - nbImages != 0:
+        print('Be careful, there are not only required dataset files in this folder')
+
+    # Creating masks for any image which has all required files and displaying progress
+    for index in range(nbImages):
+        file = images[index]
+        print('Creating masks for {} image {}/{} ({:.2f}%)'.format(file, index + 1, nbImages, (index + 1) / nbImages * 100))
+        createMasksOfImage(rawDatasetPath, file, datasetName)
