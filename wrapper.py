@@ -4,9 +4,20 @@ import numpy as np
 import cv2
 
 
-def createMask(imgName, imgShape, noMask, ptsMask, datasetName='dataset_train', maskClass='masks'):
+def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 'dataset_train',
+               maskClass: str = 'masks'):
+    """
+    Create the mask image based on its polygon points
+    :param imgName: name w/o extension of the base image
+    :param imgShape: shape of the image
+    :param idMask: the ID of the mask, a number not already used for that image
+    :param ptsMask: array of [x, y] coordinates which are all the polygon points representing the mask
+    :param datasetName: name of the output dataset
+    :param maskClass: name of the associated class of the current mask
+    :return: None
+    """
     # Formatting the suffix for the image representing the mask
-    maskName = str('0' if noMask < 100 else '') + str('0' if noMask < 10 else '') + str(noMask)
+    maskName = str('0' if idMask < 100 else '') + str('0' if idMask < 10 else '') + str(idMask)
     # Defining path where the result image will be stored and creating dir if not exists
     output_directory = datasetName + '/' + imgName + '/' + maskClass + '/'
     if not os.path.exists(output_directory):
@@ -27,10 +38,17 @@ def createMask(imgName, imgShape, noMask, ptsMask, datasetName='dataset_train', 
     cv2.imwrite(output_directory + output_name, mask)
 
 
-def createMasksOfImage(directoryPath, imgName, datasetName='dataset_train'):
+def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'dataset_train'):
+    """
+    Create all the masks of a given image by parsing xml annotations file
+    :param rawDatasetPath: path to the folder containing images and associated annotations
+    :param imgName: name w/o extension of an image
+    :param datasetName: name of the output dataset
+    :return: None
+    """
     # Getting shape of original image (same for all this masks)
     img = None
-    img = cv2.imread(directoryPath + '/' + imgName + '.png')
+    img = cv2.imread(rawDatasetPath + '/' + imgName + '.png')
     if img is None:
         print('Problem with {} image'.format(imgName))
         return
@@ -43,7 +61,7 @@ def createMasksOfImage(directoryPath, imgName, datasetName='dataset_train'):
         cv2.imwrite(targetDirectoryPath + imgName + '.png', img)
 
     # https://www.datacamp.com/community/tutorials/python-xml-elementtree
-    tree = ET.parse(directoryPath + '/' + imgName + '.xml')
+    tree = ET.parse(rawDatasetPath + '/' + imgName + '.xml')
     root = tree.getroot()
     # Going through the XML tree and getting all Annotation nodes
     for annotation in root.findall('./Annotations/Annotation'):
@@ -59,7 +77,13 @@ def createMasksOfImage(directoryPath, imgName, datasetName='dataset_train'):
         createMask(imgName, shape, int(noMask), ptsMask, datasetName, maskClass)
 
 
-def startWrapper(rawDatasetPath, datasetName='dataset_train'):
+def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train'):
+    """
+    Start wrapping the raw dataset into the wanted format
+    :param rawDatasetPath: path to the folder containing images and associated annotations
+    :param datasetName: name of the output dataset
+    :return: None
+    """
     # https://mkyong.com/python/python-how-to-list-all-files-in-a-directory/
     names = []
     images = []  # list of image that can be used to compute masks
@@ -112,5 +136,6 @@ def startWrapper(rawDatasetPath, datasetName='dataset_train'):
     # Creating masks for any image which has all required files and displaying progress
     for index in range(nbImages):
         file = images[index]
-        print('Creating masks for {} image {}/{} ({:.2f}%)'.format(file, index + 1, nbImages, (index + 1) / nbImages * 100))
+        print('Creating masks for {} image {}/{} ({:.2f}%)'.format(file, index + 1, nbImages,
+                                                                   (index + 1) / nbImages * 100))
         createMasksOfImage(rawDatasetPath, file, datasetName)

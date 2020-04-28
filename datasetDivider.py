@@ -7,36 +7,56 @@ MIN_PART_OF_CORTEX = 10.0
 MIN_PART_OF_MASK = 10.0
 
 
-def computeStartsOfInterval(num, intervalLength=1024):
-    nbIteration = num // intervalLength
+def computeStartsOfInterval(maxVal: int, intervalLength=1024):
+    """
+    Divide the [0; maxVal] interval into the least overlapping (or not) intervals of given length
+    :param maxVal: end of the base interval
+    :param intervalLength: length of the new intervals
+    :return: list of starting coordinates for the new intervals
+    """
+    nbIteration = maxVal // intervalLength
     assert nbIteration > 1
     # First interval always starts on coordinate 0
     startCoordinates = [0]
-    if num / intervalLength != nbIteration:
+    if maxVal / intervalLength != nbIteration:
         if VERBOSE:
-            print('{} is not a multiplier of {}'.format(intervalLength, num))
+            print('{} is not a multiplier of {}'.format(intervalLength, maxVal))
 
         # offset = ((nbIteration - 1) * intervalLength - (num - 2 * intervalLength)) / 2  # Ok but no middle overlaps
-        offset = ((nbIteration - 1) * intervalLength - (num - 2 * intervalLength)) / (nbIteration + 1)
+        offset = ((nbIteration - 1) * intervalLength - (maxVal - 2 * intervalLength)) / (nbIteration + 1)
         nbIteration -= 1  # There are (num // intervalLength) + 1 intervals but the first and last are already counted
         for i in range(nbIteration):
             startCoordinates.append(round((i + 1) * (intervalLength - offset)))
 
         # Last interval
-        startCoordinates.append(num - intervalLength)
+        startCoordinates.append(maxVal - intervalLength)
     else:
         if VERBOSE:
-            print('{} is a multiplier of {}'.format(intervalLength, num))
+            print('{} is a multiplier of {}'.format(intervalLength, maxVal))
         for i in range(1, nbIteration):
             startCoordinates.append(i * intervalLength)
     return startCoordinates
 
 
-def getDivisionsCount(xStarts, yStarts):
+def getDivisionsCount(xStarts: [int], yStarts: [int]):
+    """
+    Return the number of division for given starting x and y coordinates
+    :param xStarts: the x-axis starting coordinates
+    :param yStarts: the y-axis starting coordinates
+    :return: number of divisions
+    """
     return len(xStarts) * len(yStarts)
 
 
-def getDivisionByID(xStarts, yStarts, idDivision, squareSideLength=1024):
+def getDivisionByID(xStarts: [int], yStarts: [int], idDivision: int, squareSideLength=1024):
+    """
+    Return x and y starting and ending coordinates for a specific division
+    :param xStarts: the x-axis starting coordinates
+    :param yStarts: the y-axis starting coordinates
+    :param idDivision: the ID of the division you want the coordinates. 0 <= ID < number of divisions
+    :param squareSideLength: length of the new intervals
+    :return: x, xEnd, y, yEnd coordinates
+    """
     if not 0 <= idDivision < len(xStarts) * len(yStarts):
         return -1, -1, -1, -1
     yIndex = idDivision // len(xStarts)
@@ -50,13 +70,30 @@ def getDivisionByID(xStarts, yStarts, idDivision, squareSideLength=1024):
     return x, xEnd, y, yEnd
 
 
-def getDivisionID(xStarts, yStarts, xStart, yStart):
+def getDivisionID(xStarts: [int], yStarts: [int], xStart: int, yStart: int):
+    """
+    Return the ID of the dimension from its starting x and y coordinates
+    :param xStarts: the x-axis starting coordinates
+    :param yStarts: the y-axis starting coordinates
+    :param xStart: the x starting coordinate of the division
+    :param yStart: the y starting coordinate of the division
+    :return: the ID of the division. 0 <= ID < number of divisions
+    """
     xIndex = xStarts.index(xStart)
     yIndex = yStarts.index(yStart)
     return yIndex * len(xStarts) + xIndex
 
 
-def getImageDivision(img, xStarts, yStarts, idDivision, squareSideLength=1024):
+def getImageDivision(img, xStarts: [int], yStarts: [int], idDivision: int, squareSideLength=1024):
+    """
+    Return the wanted division of an Image
+    :param img: the base image
+    :param xStarts: the x-axis starting coordinates
+    :param yStarts: the y-axis starting coordinates
+    :param idDivision: the ID of the division you want to get. 0 <= ID < number of divisions
+    :param squareSideLength: length of division side
+    :return: the image division
+    """
     x, xEnd, y, yEnd = getDivisionByID(xStarts, yStarts, idDivision, squareSideLength)
     if len(img.shape) == 2:
         return img[y:yEnd, x:xEnd]
@@ -64,12 +101,24 @@ def getImageDivision(img, xStarts, yStarts, idDivision, squareSideLength=1024):
         return img[y:yEnd, x:xEnd, :]
 
 
-def getBWCount(img):
-    histogram = cv2.calcHist([img], [0], None, [256], [0, 256])
+def getBWCount(mask):
+    """
+    Return number of black (0) and white (255) pixels in a mask image
+    :param mask: the mask image
+    :return: number of black pixels, number of white pixels
+    """
+    histogram = cv2.calcHist([mask], [0], None, [256], [0, 256])
     return int(histogram[0]), int(histogram[255])
 
 
-def getRepresentativePercentage(blackMask, whiteMask, divisionImage):
+def getRepresentativePercentage(blackMask: int, whiteMask: int, divisionImage):
+    """
+    Return the part of area represented by the white pixels in division, in mask and in image
+    :param blackMask: number of black pixels in the base mask image
+    :param whiteMask: number of white pixels in the base mask image
+    :param divisionImage: the mask division image
+    :return: partOfDiv, partOfMask, partOfImage
+    """
     blackDiv, whiteDiv = getBWCount(divisionImage)
     partOfDiv = whiteDiv / (whiteDiv + blackDiv) * 100
     partOfMask = whiteDiv / whiteMask * 100
@@ -77,7 +126,15 @@ def getRepresentativePercentage(blackMask, whiteMask, divisionImage):
     return partOfDiv, partOfMask, partOfImage
 
 
-def divideDataset(inputDatasetPath, outputDatasetPath=None, squareSideLength=1024):
+def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSideLength=1024):
+    """
+    Divide a dataset using images bigger than a wanted size into equivalent dataset with square-images divisions of
+    the wanted size
+    :param inputDatasetPath: path to the base dataset to divide
+    :param outputDatasetPath: path to the output divided dataset
+    :param squareSideLength: length of a division side
+    :return: None
+    """
     if outputDatasetPath is None:
         outputDatasetPath = inputDatasetPath + '_divided'
     print()
