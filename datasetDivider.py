@@ -166,7 +166,6 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
         else:
             cortexImgPath = os.path.join(cortexDirPath, os.listdir(cortexDirPath)[0])
             cortexImg = cv2.imread(cortexImgPath, cv2.IMREAD_UNCHANGED)
-            # 8 355 840 pixels
             black, white = getBWCount(cortexImg)
             total = white + black
             if VERBOSE:
@@ -190,22 +189,24 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
         ####################################################'''
         imageOutputDirPath = os.path.join(outputDatasetPath, imageDir)
         for masksDir in os.listdir(imageDirPath):
-            if masksDir == 'images':
+            if masksDir in ['images', 'full_images']:
                 for divId in range(getDivisionsCount(xStarts, yStarts)):
                     if divId in excludedDivisions:
                         continue
                     divSuffix = "_{}{}".format('0' if divId < 10 else '', divId)
                     divisionOutputDirPath = imageOutputDirPath + divSuffix
-                    outputImagePath = os.path.join(divisionOutputDirPath, 'images')
+                    outputImagePath = os.path.join(divisionOutputDirPath, masksDir)
                     os.makedirs(outputImagePath, exist_ok=True)
                     outputImagePath = os.path.join(outputImagePath, imageDir + divSuffix + ".png")
-                    cv2.imwrite(outputImagePath, getImageDivision(image, xStarts, yStarts, divId, squareSideLength))
+                    tempPath = os.path.join(os.path.join(imageDirPath, masksDir), '{}.png'.format(imageDir))
+                    tempImage = cv2.imread(tempPath)
+                    cv2.imwrite(outputImagePath, getImageDivision(tempImage, xStarts, yStarts, divId, squareSideLength))
             else:
                 maskDirPath = os.path.join(imageDirPath, masksDir)
                 # Going through every mask file in current directory
                 for mask in os.listdir(maskDirPath):
                     maskPath = os.path.join(maskDirPath, mask)
-                    maskImage = cv2.imread(maskPath, cv2.IMREAD_UNCHANGED)
+                    maskImage = cv2.imread(maskPath, cv2.IMREAD_GRAYSCALE)
                     blackMask, whiteMask = getBWCount(maskImage)
 
                     # Checking for each division if mask is useful or not

@@ -1,6 +1,6 @@
 import os
-import wrapper as wr
-import datasetDivider as dd
+import datasetWrapper as dW
+import datasetDivider as dD
 
 
 def infoNephrologyDataset(datasetPath: str):
@@ -17,21 +17,27 @@ def infoNephrologyDataset(datasetPath: str):
     maxNbClassesNoCortex = 0
     maxClassesNoCortex = []
     cortexMissing = []
+    multiCortices = []
     nbImg = 0
     for imageDir in os.listdir(datasetPath):
         nbImg += 1
         imagePath = os.path.join(datasetPath, imageDir)
         cortex = False
+        cortexDivided = False
         localHisto = {'tubule_atrophique': 0, 'vaisseau': 0, 'pac': 0, 'nsg_complet': 0,
                       'nsg_partiel': 0, 'tubule_sain': 0, 'cortex': 0}
         for maskDir in os.listdir(imagePath):
             if maskDir == 'cortex':
                 cortex = True
-            if maskDir != "images":
+                cortexDivided = len(os.listdir(os.path.join(os.path.join(datasetPath, imageDir), maskDir))) > 1
+            if maskDir != "images" and maskDir != "full_images":
                 histogram[maskDir] += 1
                 localHisto[maskDir] += 1
         if not cortex:
             cortexMissing.append(imageDir)
+
+        if cortexDivided:
+            multiCortices.append(imageDir)
 
         nbClasses = 0
         nbClassesNoCortex = 0
@@ -55,15 +61,22 @@ def infoNephrologyDataset(datasetPath: str):
     print("Nb Images : {}".format(nbImg))
     print("Histogram : {}".format(histogram))
     print("Missing cortices : {}".format(cortexMissing))
+    print("Multi cortices : {}".format(multiCortices))
     print("Max Classes ({}) : {}".format(maxNbClasses, maxClasses))
     print("Max Classes w/o cortex (({}) : {}".format(maxNbClassesNoCortex, maxClassesNoCortex))
 
 
-wr.startWrapper('raw_dataset', 'temp_nephrology_dataset')
-infoNephrologyDataset('temp_nephrology_dataset')
-dd.divideDataset('temp_nephrology_dataset', 'nephrology_dataset', squareSideLength=1024)
-infoNephrologyDataset('nephrology_dataset')
-# wr.startWrapper('raw_dataset_test', 'temp_test_dataset')
+# dW.startWrapper('raw_dataset', 'temp_nephrology_dataset', deleteBaseCortexMasks=False)
+# infoNephrologyDataset('temp_nephrology_dataset')
+# dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset', squareSideLength=1024)
+# infoNephrologyDataset('nephrology_dataset')
+
+# If you want to keep all cortex files comment dW.cleanCortexDir() lines
+# If you want to check them and then delete them, comment these lines too and after checking use them
+# dW.cleanCortexDir('temp_nephrology_dataset')
+# dW.cleanCortexDir('nephrology_dataset')
+
+# dW.startWrapper('raw_dataset_test', 'temp_test_dataset', deleteBaseCortexMasks=False)
 # infoNephrologyDataset('temp_test_dataset')
-# dd.divideDataset('temp_test_dataset', 'test_dataset', squareSideLength=1024)
+# dD.divideDataset('temp_test_dataset', 'test_dataset', squareSideLength=1024)
 # infoNephrologyDataset('test_dataset')
