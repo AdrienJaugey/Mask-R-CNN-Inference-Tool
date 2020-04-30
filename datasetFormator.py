@@ -88,6 +88,14 @@ def separateCortexDataset(datasetPath: str, cortexDatasetPath: str = None):
         cortexDatasetPath = datasetPath + '_cortex'
 
     _, _, toBeMoved, _, _, _ = infoNephrologyDataset(datasetPath, silent=True)
+    for imageDir in os.listdir(datasetPath):
+        imageDirPath = os.path.join(datasetPath, imageDir)
+        masksDirList = os.listdir(imageDirPath)
+        masksDirList.remove('images')
+        masksDirList.remove('full_images')
+        masksDirList.remove('cortex')
+        if len(masksDirList) == 0:
+            toBeMoved.append(imageDir)
     os.makedirs(cortexDatasetPath, exist_ok=True)
     if len(toBeMoved) > 0:
         print("Moving {} non-cortex images directories into correct dataset".format(len(toBeMoved)))
@@ -96,33 +104,33 @@ def separateCortexDataset(datasetPath: str, cortexDatasetPath: str = None):
                  os.path.join(cortexDatasetPath, imageWithoutCortexDir))
 
 
-def createEvalDataset(datasetPath: str, evalDatasetPath: str = None, evalDatasetSizePart=0.1, evalDatasetMinSize=30, rename=False, customRename: str = None):
+def createValDataset(datasetPath: str, valDatasetPath: str = None, valDatasetSizePart=0.1, valDatasetMinSize=30, rename=False, customRename: str = None):
     """
-    Create the evaluation dataset by moving a random set of base dataset's images
+    Create the validation dataset by moving a random set of base dataset's images
     :param datasetPath: path to the base dataset
-    :param evalDatasetPath: path to the eval dataset
-    :param evalDatasetSizePart: the part of the base dataset to be moved to the eval one
-    :param evalDatasetMinSize: the minimum size of the evaluation dataset
-    :param rename: whether or not you want to rename the base dataset after creation of the eval one
+    :param valDatasetPath: path to the val dataset
+    :param valDatasetSizePart: the part of the base dataset to be moved to the val one
+    :param valDatasetMinSize: the minimum size of the validation dataset
+    :param rename: whether or not you want to rename the base dataset after creation of the val one
     :param customRename: new name of the training dataset
     :return: None
     """
-    assert 0 < evalDatasetSizePart < 1
-    if evalDatasetPath is None:
-        evalDatasetPath = datasetPath + '_eval'
+    assert 0 < valDatasetSizePart < 1
+    if valDatasetPath is None:
+        valDatasetPath = datasetPath + '_val'
 
     fullList = os.listdir(datasetPath)
-    evalDatasetSize = round(len(fullList) * evalDatasetSizePart)
-    if evalDatasetSize < evalDatasetMinSize:
-        evalDatasetSize = evalDatasetMinSize
-    assert len(fullList) > evalDatasetSize
-    toBeMoved = np.random.choice(fullList, evalDatasetSize, replace=False)
+    valDatasetSize = round(len(fullList) * valDatasetSizePart)
+    if valDatasetSize < valDatasetMinSize:
+        valDatasetSize = valDatasetMinSize
+    assert len(fullList) > valDatasetSize
+    toBeMoved = np.random.choice(fullList, valDatasetSize, replace=False)
 
-    os.makedirs(evalDatasetPath, exist_ok=True)
+    os.makedirs(valDatasetPath, exist_ok=True)
     if len(toBeMoved) > 0:
-        print("Moving {} images directories into eval dataset".format(len(toBeMoved)))
+        print("Moving {} images directories into val dataset".format(len(toBeMoved)))
         for dirName in toBeMoved:
-            move(os.path.join(datasetPath, dirName), os.path.join(evalDatasetPath, dirName))
+            move(os.path.join(datasetPath, dirName), os.path.join(valDatasetPath, dirName))
     if rename:
         newName = (datasetPath + '_train') if customRename is None else customRename
         move(datasetPath, newName)
@@ -140,7 +148,8 @@ infoNephrologyDataset('nephrology_dataset')
 
 
 separateCortexDataset('nephrology_dataset', 'nephrology_cortex_dataset')
-createEvalDataset('nephrology_dataset', rename=True)
+createValDataset('nephrology_dataset', rename=True)
 infoNephrologyDataset('nephrology_dataset_train')
 infoNephrologyDataset('nephrology_cortex_dataset')
-infoNephrologyDataset('nephrology_dataset_eval')
+infoNephrologyDataset('nephrology_dataset_val')
+infoNephrologyDataset('nephrology_dataset_val')
