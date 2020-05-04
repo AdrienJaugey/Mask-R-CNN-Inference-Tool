@@ -1,39 +1,39 @@
 class CellsDataset(utils.Dataset):
-    CELLS_CLASS_NAMES = ["cortex", "tubule_sain", "tubule_atrophique", "nsg_complet", "nsg_partiel", "pac", "vaisseau"]
-
+    CELLS_CLASS_NAMES = ["tubule_sain", "tubule_atrophique", "nsg_complet", "nsg_partiel", "pac", "vaisseau", 
+                         "artefact"]
+    mode = ""
     def load_cells(self, mode):
         # Add classes
-        if not TEST_MONOCLASS:
-          self.add_class("cells", 1, "cortex")
-          self.add_class("cells", 2, "tubule_sain")
-          self.add_class("cells", 3, "tubule_atrophique")
-          self.add_class("cells", 4, "nsg_complet")
-          self.add_class("cells", 5, "nsg_partiel")
-          self.add_class("cells", 6, "pac")
-          self.add_class("cells", 7, "vaisseau")
-        else:
-          self.add_class("cells", 1, "tubule_atrophique")
-
-        if mode == "train":
+        self.add_class("cells", 1, "tubule_sain")
+        self.add_class("cells", 2, "tubule_atrophique")
+        self.add_class("cells", 3, "nsg_complet")
+        self.add_class("cells", 4, "nsg_partiel")
+        self.add_class("cells", 5, "pac")
+        self.add_class("cells", 6, "vaisseau")
+        self.add_class("cells", 7, "artefact")
+        
+        self.mode = mode
+        if self.mode == "train":
             for n, id_ in enumerate(train_ids):
-                if n < int(len(train_ids) * 0.9):
-                    path = TRAIN_PATH + id_
-                    img_path = path + '/images/'
-                    self.add_image("cells", image_id=id_, path=img_path)
+                path = TRAIN_PATH + id_
+                img_path = path + '/images/'
+                self.add_image("cells", image_id=id_, path=img_path)
 
-        if mode == "val":
-            for n, id_ in enumerate(train_ids):
-                if n >= int(len(train_ids) * 0.9):
-                    path = TRAIN_PATH + id_
-                    img_path = path + '/images/'
-                    self.add_image("cells", image_id=id_, path=img_path)
+        if self.mode == "val":
+            for n, id_ in enumerate(map_ids):
+                path = MAP_PATH + id_
+                img_path = path + '/images/'
+                self.add_image("cells", image_id=id_, path=img_path)
 
     def load_image(self, image_id):
 
         info = self.image_info[image_id]
         info = info.get("id")
-
-        path = TRAIN_PATH + info
+        
+        if self.mode == "train":
+            path = TRAIN_PATH + info
+        else:
+            path = MAP_PATH + info
         img = imread(path + '/images/' + info + '.' + IMAGE_FORMAT)[:, :, :3]
         img = resize(img, (config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1]), mode='constant', preserve_range=True)
 
@@ -52,14 +52,17 @@ class CellsDataset(utils.Dataset):
         """
         info = self.image_info[image_id]
         info = info.get("id")
-        path = TRAIN_PATH + info
+        
+        if self.mode == "train":
+            path = TRAIN_PATH + info
+        else:
+            path = MAP_PATH + info
+            
         # Counting masks for current image
         number_of_masks = 0
         for masks_dir in os.listdir(path):
             # For each directory excepting /images
-            if TEST_MONOCLASS and masks_dir != 'tubule_atrophique':
-                continue
-            if masks_dir == 'images':
+            if masks_dir in ['images', 'full_images', 'cortex']:
                 continue
             temp_DIR = path + '/' + masks_dir
             # Adding length of directory https://stackoverflow.com/questions/2632205/how-to-count-the-number-of-files-in-a-directory-using-python
@@ -70,14 +73,9 @@ class CellsDataset(utils.Dataset):
         iterator = 0
         class_ids = np.zeros((number_of_masks,), dtype=int)
         for masks_dir in os.listdir(path):
-            if TEST_MONOCLASS and masks_dir != 'tubule_atrophique':
+            if masks_dir in ['images', 'full_images', 'cortex']:
                 continue
-            if masks_dir == 'images':
-                continue
-            if TEST_MONOCLASS:
-              temp_class_id = 1
-            else:
-              temp_class_id = self.CELLS_CLASS_NAMES.index(masks_dir) + 1
+            temp_class_id = self.CELLS_CLASS_NAMES.index(masks_dir) + 1
             for mask_file in next(os.walk(path + '/' + masks_dir + '/'))[2]:
                 mask_ = imread(path + '/' + masks_dir + '/' + mask_file)
                 mask_ = resize(mask_, (config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1]), mode='constant',

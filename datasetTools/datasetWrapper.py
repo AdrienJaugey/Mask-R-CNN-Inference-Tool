@@ -152,17 +152,72 @@ def cleanImage(datasetPath: str, imageName: str):
     # Getting the cortex image
     cortexDirPath = os.path.join(currentImageDirPath, 'cortex')
     if os.path.exists(cortexDirPath):
-        if len(os.listdir(cortexDirPath)) > 1:
-            cortexFileName = os.listdir(cortexDirPath)[0]
-            cortexFilePath = os.path.join(cortexDirPath, cortexFileName)
-            cortex = cv2.imread(cortexFilePath)
+        cortexFileName = os.listdir(cortexDirPath)[0]
+        cortexFilePath = os.path.join(cortexDirPath, cortexFileName)
+        cortex = cv2.imread(cortexFilePath)
 
-            # Cleaning the image
-            image = cv2.bitwise_and(image, cortex)
-            # resized = cv2.resize(image, None, fx=1 / 3, fy=1 / 3, interpolation=cv2.INTER_CUBIC)
-            # cv2.imshow("cropped", resized)
-            # cv2.waitKey(0)
-            cv2.imwrite(imagePath, image)
+        # Cleaning the image
+        image = cv2.bitwise_and(image, cortex)
+        # resized = cv2.resize(image, None, fx=1 / 3, fy=1 / 3, interpolation=cv2.INTER_CUBIC)
+        # cv2.imshow("cropped", resized)
+        # cv2.waitKey(0)
+        cv2.imwrite(imagePath, image)
+
+
+def convertImage(inputImagePath: str, outputImagePath: str):
+    """
+    Convert an image from a format to another one
+    :param inputImagePath: path to the initial image
+    :param outputImagePath: path to the output image
+    :return: None
+    """
+    image = cv2.imread(inputImagePath)
+    cv2.imwrite(outputImagePath, image)
+
+
+def getInfoRawDataset(rawDatasetPath: str, verbose=False):
+    """
+    Listing all available images, those with missing information
+    :param verbose: whether or not print should be executed
+    :param rawDatasetPath: path to the raw dataset folder
+    :return: list of unique files names, list of available images names, list of missing images names,
+    list of missing annotations names
+    """
+    names = []
+    images = []  # list of image that can be used to compute masks
+    missingImages = []  # list of missing images
+    missingAnnotations = []  # list of missing annotations
+    if verbose:
+        print("Listing files and creating png if not present")
+    for file in os.listdir(rawDatasetPath):
+        name = file.split('.')[0]
+        if name not in names:  # We want to do this only once per unique file name (without extension)
+            names.append(name)
+
+            # Testing if there is an png image with that name
+            pngPath = os.path.join(rawDatasetPath, name + '.png')
+            pngExists = os.path.exists(pngPath)
+
+            # Same thing with jp2 format
+            jp2Path = os.path.join(rawDatasetPath, name + '.jp2')
+            jp2Exists = os.path.exists(jp2Path)
+
+            # Testing if annotation file exists for that name
+            annotationsExist = os.path.exists(os.path.join(rawDatasetPath, name + '.xml'))
+            if pngExists or jp2Exists:  # At least one image exists
+                if not annotationsExist:  # Annotations are missing
+                    missingAnnotations.append(name)
+                else:
+                    if verbose:
+                        print("Adding {} image".format(name))
+                    if not pngExists:  # Only jp2 exists
+                        if verbose:
+                            print("\tCreating png version")
+                        convertImage(jp2Path, pngPath)
+                    images.append(name)  # Adding this image to the list
+            elif annotationsExist:  # There is no image file but xml found
+                missingImages.append(name)
+    return names, images, missingImages, missingAnnotations
 
 
 def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', deleteBaseCortexMasks=False):
@@ -173,37 +228,34 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
     :param datasetName: name of the output dataset
     :return: None
     """
-    # https://mkyong.com/python/python-how-to-list-all-files-in-a-directory/
-    names = []
-    images = []  # list of image that can be used to compute masks
-    missingImages = []  # list of missing images
-    missingAnnotations = []  # list of missing annotations
-    for _, _, files in os.walk(rawDatasetPath):
-        for file in files:
-            name = file.split('.')[0]
-            if name not in names:  # We want to do this only once per unique file name (without extension)
-                names.append(name)
+    names, images, missingImages, missingAnnotations = getInfoRawDataset(rawDatasetPath, verbose=True)
+    for file in os.listdir(rawDatasetPath):
+        name = file.split('.')[0]
+        if name not in names:  # We want to do this only once per unique file name (without extension)
+            names.append(name)
 
-                # Testing if there is an png image with that name
-                pngPath = os.path.join(rawDatasetPath, name + '.png')
-                pngExists = os.path.exists(pngPath)
+            # Testing if there is an png image with that name
+            pngPath = os.path.join(rawDatasetPath, name + '.png')
+            pngExists = os.path.exists(pngPath)
 
-                # Same thing with jp2 format
-                jp2Path = os.path.join(rawDatasetPath, name + '.jp2')
-                jp2Exists = os.path.exists(jp2Path)
+            # Same thing with jp2 format
+            jp2Path = os.path.join(rawDatasetPath, name + '.jp2')
+            jp2Exists = os.path.exists(jp2Path)
 
-                # Testing if annotation file exists for that name
-                annotationsExist = os.path.exists(os.path.join(rawDatasetPath, name + '.xml'))
-                if pngExists or jp2Exists:  # At least one image exists
-                    if not annotationsExist:  # Annotations are missing
-                        missingAnnotations.append(name)
-                    else:
-                        if not pngExists:  # Only jp2 exists
-                            image = cv2.imread(jp2Path)  # Opening the jp2 image
-                            cv2.imwrite(pngPath, image)  # Saving the jp2 image to png format
-                        images.append(name)  # Adding this image to the list
-                elif annotationsExist:  # There is no image file but xml found
-                    missingImages.append(name)
+            # Testing if annotation file exists for that name
+            annotationsExist = os.path.exists(os.path.join(rawDatasetPath, name + '.xml'))
+            if pngExists or jp2Exists:  # At least one image exists
+                if not annotationsExist:  # Annotations are missing
+                    missingAnnotations.append(name)
+                else:
+                    print("Adding {} image".format(name))
+                    if not pngExists:  # Only jp2 exists
+                        print("\tCreating png version")
+                        image = cv2.imread(jp2Path)  # Opening the jp2 image
+                        cv2.imwrite(pngPath, image)  # Saving the jp2 image to png format
+                    images.append(name)  # Adding this image to the list
+            elif annotationsExist:  # There is no image file but xml found
+                missingImages.append(name)
 
     print()
     # Displaying missing image files

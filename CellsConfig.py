@@ -15,15 +15,12 @@ class CellsConfig(Config):
     IMAGES_PER_GPU = 1
 
     # Number of classes (including background)
-    if TEST_MONOCLASS:
-      NUM_CLASSES = 1 + 1  # background + tubule_atrophique (to test monoclass)
-    else:
-      NUM_CLASSES = 1 + 7  # background + all classes
+    NUM_CLASSES = 1 + 7  # background + all classes
 
     # Use small images for faster training. Set the limits of the small side
     # the large side, and that determines the image shape.
-    IMAGE_MIN_DIM = 896
-    IMAGE_MAX_DIM = 896
+    IMAGE_MIN_DIM = 1024
+    IMAGE_MAX_DIM = 1024
 
     # Use smaller anchors because our image and objects are small
     RPN_ANCHOR_SCALES = (8, 16, 64, 128, 256)  # anchor side in pixels
@@ -32,7 +29,7 @@ class CellsConfig(Config):
     TRAIN_ROIS_PER_IMAGE = 800
 
     # set number of epoch
-    STEPS_PER_EPOCH = 200
+    STEPS_PER_EPOCH = 400
 
     # set validation steps
     VALIDATION_STEPS = 50
