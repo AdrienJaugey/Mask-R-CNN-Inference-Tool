@@ -1,7 +1,11 @@
 class CellsDataset(utils.Dataset):
-    CELLS_CLASS_NAMES = ["tubule_sain", "tubule_atrophique", "nsg_complet", "nsg_partiel", "pac", "vaisseau", 
+    __CELLS_CLASS_NAMES = ["tubule_sain", "tubule_atrophique", "nsg_complet", "nsg_partiel", "pac", "vaisseau",
                          "artefact"]
     mode = ""
+
+    def get_class_names(self):
+        return self.__CELLS_CLASS_NAMES.copy()
+
     def load_cells(self, mode):
         # Add classes
         self.add_class("cells", 1, "tubule_sain")
@@ -11,7 +15,7 @@ class CellsDataset(utils.Dataset):
         self.add_class("cells", 5, "pac")
         self.add_class("cells", 6, "vaisseau")
         self.add_class("cells", 7, "artefact")
-        
+
         self.mode = mode
         if self.mode == "train":
             for n, id_ in enumerate(train_ids):
@@ -29,7 +33,7 @@ class CellsDataset(utils.Dataset):
 
         info = self.image_info[image_id]
         info = info.get("id")
-        
+
         if self.mode == "train":
             path = TRAIN_PATH + info
         else:
@@ -52,12 +56,12 @@ class CellsDataset(utils.Dataset):
         """
         info = self.image_info[image_id]
         info = info.get("id")
-        
+
         if self.mode == "train":
             path = TRAIN_PATH + info
         else:
             path = MAP_PATH + info
-            
+
         # Counting masks for current image
         number_of_masks = 0
         for masks_dir in os.listdir(path):
@@ -75,7 +79,7 @@ class CellsDataset(utils.Dataset):
         for masks_dir in os.listdir(path):
             if masks_dir in ['images', 'full_images', 'cortex']:
                 continue
-            temp_class_id = self.CELLS_CLASS_NAMES.index(masks_dir) + 1
+            temp_class_id = self.__CELLS_CLASS_NAMES.index(masks_dir) + 1
             for mask_file in next(os.walk(path + '/' + masks_dir + '/'))[2]:
                 mask_ = imread(path + '/' + masks_dir + '/' + mask_file)
                 mask_ = resize(mask_, (config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1]), mode='constant',

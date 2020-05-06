@@ -56,7 +56,7 @@ def display_images(images, titles=None, cols=4, cmap=None, norm=None,
     plt.show()
 
 
-def random_colors(N, bright=True):
+def random_colors(N, bright=True, shuffle=True):
     """
     Generate random colors.
     To get visually distinct colors, generate them in HSV space then
@@ -65,7 +65,8 @@ def random_colors(N, bright=True):
     brightness = 1.0 if bright else 0.7
     hsv = [(i / N, 1, brightness) for i in range(N)]
     colors = list(map(lambda c: colorsys.hsv_to_rgb(*c), hsv))
-    random.shuffle(colors)
+    if shuffle:
+        random.shuffle(colors)
     return colors
 
 
@@ -80,11 +81,64 @@ def apply_mask(image, mask, color, alpha=0.5):
     return image
 
 
+def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Matrix", cmap=plt.get_cmap('gray'), show=True, fileName=None):
+    """
+    Display confusion matrix and can also save it to an image file
+    :param confusion_matrix: the raw confusion matrix as a 2-D array
+    :param class_names: list of the class names in the same order as for the dataset
+    :param title: [optional] custom title of the figure
+    :param cmap: [optional] custom colormap for the display
+    :param show: [optional] whether or not plot should be shown
+    :param fileName: [optional] name of the file to be saved, if not given, figure will not be saved as file
+    :return: None
+    """
+    NB_CLASS = len(class_names)
+    # Adding background as first class
+    labels = class_names.copy()
+    labels.insert(0, "background")
+
+    plt.plot()
+    fig, ax = plt.subplots()
+    ax.set_title(title)
+
+    # Displaying the confusion matrix as a gray image scaled with min/max values
+    minVal = np.amin(confusion_matrix)
+    maxVal = np.amax(confusion_matrix)
+    ax.imshow(confusion_matrix, cmap=cmap, vmin=minVal, vmax=maxVal)
+
+    # Using class names as labels of both axis
+    plt.xlabel("Predicted")
+    ax.set_xticks(np.arange(NB_CLASS + 1))
+    ax.set_xticklabels(labels)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+
+    plt.ylabel("Ground Truth")
+    ax.set_yticks(np.arange(NB_CLASS + 1))
+    ax.set_yticklabels(labels)
+
+    # Adding the text values above the image
+    middle = (maxVal - minVal) / 2
+    for i in range(NB_CLASS + 1):
+        for j in range(NB_CLASS + 1):
+            color = "w"  # white
+            if confusion_matrix[i][j] > middle:
+                color = "k"  # black
+            ax.text(j, i, confusion_matrix[i][j], ha="center", va="center", color=color)
+
+    # Auto resize of dimension
+    fig.tight_layout()
+    # Saving the figure if fileName given
+    if fileName is not None:
+        fig.savefig(fileName + ".png")
+    # if show:
+    #     plt.show()
+
+
 def display_instances(image, boxes, masks, class_ids, class_names,
                       scores=None, title="",
                       figsize=(16, 16), ax=None, fig=None,
                       show_mask=True, show_bbox=True,
-                      colors=None, captions=None, fileName=None):
+                      colors=None, colorPerClass=False, captions=None, fileName=None):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -111,7 +165,8 @@ def display_instances(image, boxes, masks, class_ids, class_names,
         auto_show = True
 
     # Generate random colors
-    colors = colors or random_colors(N)
+    nb_color = (len(class_names) - 1) if colorPerClass else N
+    colors = colors or random_colors(nb_color, shuffle=(not colorPerClass))
 
     # Show area outside image boundaries.
     height, width = image.shape[:2]
@@ -122,7 +177,10 @@ def display_instances(image, boxes, masks, class_ids, class_names,
 
     masked_image = image.astype(np.uint32).copy()
     for i in range(N):
-        color = colors[i]
+        if colorPerClass:
+            color = colors[class_ids[i] - 1]
+        else:
+            color = colors[i]
 
         # Bounding box
         if not np.any(boxes[i]):
@@ -131,8 +189,8 @@ def display_instances(image, boxes, masks, class_ids, class_names,
         y1, x1, y2, x2 = boxes[i]
         if show_bbox:
             p = patches.Rectangle((x1, y1), x2 - x1, y2 - y1, linewidth=2,
-                                alpha=0.7, linestyle="dashed",
-                                edgecolor=color, facecolor='none')
+                                  alpha=0.7, linestyle="dashed",
+                                  edgecolor=color, facecolor='none')
             ax.add_patch(p)
 
         # Label
@@ -163,6 +221,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             p = Polygon(verts, facecolor="none", edgecolor=color)
             ax.add_patch(p)
     ax.imshow(masked_image.astype(np.uint8))
+    fig.tight_layout()
     if fileName is not None:
         fig.savefig(fileName + ".png")
     if auto_show:
@@ -177,7 +236,7 @@ def display_differences(image,
                         iou_threshold=0.5, score_threshold=0.5):
     """Display ground truth and prediction instances on the same image."""
     # Match predictions to ground truth
-    gt_match, pred_match, overlaps = utils.compute_matches(
+    gt_match, pred_match, overlaps, _ = utils.compute_matches(
         gt_box, gt_class_id, gt_mask,
         pred_box, pred_class_id, pred_score, pred_mask,
         iou_threshold=iou_threshold, score_threshold=score_threshold)

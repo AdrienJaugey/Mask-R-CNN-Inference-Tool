@@ -653,9 +653,10 @@ def trim_zeros(x):
     return x[~np.all(x == 0, axis=1)]
 
 
-def compute_matches(gt_boxes, gt_class_ids, gt_masks,
-                    pred_boxes, pred_class_ids, pred_scores, pred_masks,
-                    iou_threshold=0.5, score_threshold=0.0):
+def compute_matches(gt_boxes, gt_class_ids, gt_masks, pred_boxes,
+                    pred_class_ids, pred_scores, pred_masks,
+                    iou_threshold=0.5, score_threshold=0.0,
+                    nb_class=-1, confusion_iou_threshold=0.1):
     """Finds matches between prediction and ground truth instances.
 
     Returns:
@@ -667,6 +668,11 @@ def compute_matches(gt_boxes, gt_class_ids, gt_masks,
     """
     # Trim zero padding
     # TODO: cleaner to do zero unpadding upstream
+
+    if nb_class > 0:
+        confusion_matrix = np.zeros((nb_class + 1, nb_class + 1), dtype=np.int32)
+    else:
+        confusion_matrix = None
     gt_boxes = trim_zeros(gt_boxes)
     gt_masks = gt_masks[..., :gt_boxes.shape[0]]
     pred_boxes = trim_zeros(pred_boxes)
@@ -694,27 +700,44 @@ def compute_matches(gt_boxes, gt_class_ids, gt_masks,
         if low_score_idx.size > 0:
             sorted_ixs = sorted_ixs[:low_score_idx[0]]
         # 3. Find the match
+        nothing = True
+        done = False
         for j in sorted_ixs:
-            # If ground truth box is already matched, go to next one
-            if gt_match[j] > -1:
-                continue
             # If we reach IoU smaller than the threshold, end the loop
             iou = overlaps[i, j]
-            if iou < iou_threshold:
-                break
-            # Do we have a match?
-            if pred_class_ids[i] == gt_class_ids[j]:
-                match_count += 1
-                gt_match[j] = i
-                pred_match[i] = j
-                break
+            if confusion_matrix is not None and iou >= confusion_iou_threshold:
+                nothing = False
+                confusion_matrix[gt_class_ids[j]][pred_class_ids[i]] += 1
 
-    return gt_match, pred_match, overlaps
+            # If ground truth box is already matched, go to next one
+            if not done and gt_match[j] > -1:
+                continue
+
+            if iou >= iou_threshold:
+                # Do we have a match?
+                if pred_class_ids[i] == gt_class_ids[j]:
+                    match_count += 1
+                    gt_match[j] = i
+                    pred_match[i] = j
+                    done = True
+        # Something has been predicted but no ground truth annotation
+        if confusion_matrix is not None and nothing:
+            confusion_matrix[0][pred_class_ids[i]] += 1
+    # Looking for a ground truth box without overlapping prediction
+    if confusion_matrix is not None:
+        for j in range(len(gt_match)):
+            if gt_match[j] == -1:
+                if gt_class_ids[j] > nb_class:
+                    print("Error : got class id = {} while max class id = {}".format(gt_class_ids[j], nb_class))
+                else:
+                    confusion_matrix[gt_class_ids[j]][0] += 1
+    return gt_match, pred_match, overlaps, confusion_matrix
 
 
 def compute_ap(gt_boxes, gt_class_ids, gt_masks,
                pred_boxes, pred_class_ids, pred_scores, pred_masks,
-               iou_threshold=0.5):
+               iou_threshold=0.5,
+               nb_class=-1, confusion_iou_threshold=0.1):
     """Compute Average Precision at a set IoU threshold (default 0.5).
 
     Returns:
@@ -724,10 +747,11 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
     overlaps: [pred_boxes, gt_boxes] IoU overlaps.
     """
     # Get matches and overlaps
-    gt_match, pred_match, overlaps = compute_matches(
+    gt_match, pred_match, overlaps, confusion_matrix = compute_matches(
         gt_boxes, gt_class_ids, gt_masks,
         pred_boxes, pred_class_ids, pred_scores, pred_masks,
-        iou_threshold)
+        iou_threshold,
+        nb_class=nb_class, confusion_iou_threshold=confusion_iou_threshold)
 
     # Compute precision and recall at each prediction box step
     precisions = np.cumsum(pred_match > -1) / (np.arange(len(pred_match)) + 1)
@@ -748,7 +772,7 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
     mAP = np.sum((recalls[indices] - recalls[indices - 1]) *
                  precisions[indices])
 
-    return mAP, precisions, recalls, overlaps
+    return mAP, precisions, recalls, overlaps, confusion_matrix
 
 
 def compute_ap_range(gt_box, gt_class_id, gt_mask,
@@ -761,7 +785,7 @@ def compute_ap_range(gt_box, gt_class_id, gt_mask,
     # Compute AP over range of IoU thresholds
     AP = []
     for iou_threshold in iou_thresholds:
-        ap, precisions, recalls, overlaps =\
+        ap, precisions, recalls, overlaps, _ =\
             compute_ap(gt_box, gt_class_id, gt_mask,
                         pred_box, pred_class_id, pred_score, pred_mask,
                         iou_threshold=iou_threshold)
