@@ -81,30 +81,56 @@ def apply_mask(image, mask, color, alpha=0.5):
     return image
 
 
-def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Matrix", cmap=plt.get_cmap('gray'), show=True, fileName=None):
+def get_text_color(val, maxVal, colormap, light_threshold=0.6):
+    """
+    Return black or white text color for confusion matrix depending on the background color
+    :param val: the current value
+    :param maxVal: max value in the confusion matrix
+    :param colormap: the colormap that is used to color the confusion matrix
+    :param light_threshold: the threshold used to determine whether or not a color is dark or light
+    :return: "k" if background color is light else "w"
+    """
+	# Based on https://css-tricks.com/switch-font-color-for-different-backgrounds-with-css/
+    red, green, blue, _ = colormap(round((val / maxVal) * 256))
+    _, light, _ = colorsys.rgb_to_hls(red, green, blue)
+    return "k" if light >= light_threshold else "w"
+
+
+def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Matrix", normalize=False, cmap=plt.get_cmap('gray'), show=True, fileName=None):
     """
     Display confusion matrix and can also save it to an image file
     :param confusion_matrix: the raw confusion matrix as a 2-D array
     :param class_names: list of the class names in the same order as for the dataset
     :param title: [optional] custom title of the figure
+    :param normalize: [optional] whether or not the confusion matrix should be normalized
     :param cmap: [optional] custom colormap for the display
     :param show: [optional] whether or not plot should be shown
     :param fileName: [optional] name of the file to be saved, if not given, figure will not be saved as file
     :return: None
     """
+    matrix = np.copy(confusion_matrix)
     NB_CLASS = len(class_names)
     # Adding background as first class
     labels = class_names.copy()
     labels.insert(0, "background")
 
-    plt.plot()
+    # plt.plot()
     fig, ax = plt.subplots()
     ax.set_title(title)
 
+    if normalize:
+        matrix = matrix.astype(np.float)
+        for i in range(len(matrix)):
+            somme = 0.0
+            for j in range(len(matrix[0])):
+                somme += matrix[i][j]
+            for j in range(len(matrix[0])):
+                matrix[i][j] = matrix[i][j] / somme
+
     # Displaying the confusion matrix as a gray image scaled with min/max values
-    minVal = np.amin(confusion_matrix)
-    maxVal = np.amax(confusion_matrix)
-    ax.imshow(confusion_matrix, cmap=cmap, vmin=minVal, vmax=maxVal)
+    minVal = np.amin(matrix)
+    maxVal = np.amax(matrix)
+    ax.imshow(matrix, cmap=cmap, vmin=minVal, vmax=maxVal)
 
     # Using class names as labels of both axis
     plt.xlabel("Predicted")
@@ -117,21 +143,18 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     ax.set_yticklabels(labels)
 
     # Adding the text values above the image
-    middle = (maxVal - minVal) / 2
     for i in range(NB_CLASS + 1):
         for j in range(NB_CLASS + 1):
-            color = "w"  # white
-            if confusion_matrix[i][j] > middle:
-                color = "k"  # black
-            ax.text(j, i, confusion_matrix[i][j], ha="center", va="center", color=color)
+            color = get_text_color(matrix[i][j], maxVal, cmap)
+            ax.text(j, i, round(matrix[i][j], 2), ha="center", va="center", color=color)
 
     # Auto resize of dimension
     fig.tight_layout()
     # Saving the figure if fileName given
     if fileName is not None:
         fig.savefig(fileName + ".png")
-    # if show:
-    #     plt.show()
+    if show:
+         plt.show()
 
 
 def display_instances(image, boxes, masks, class_ids, class_names,
