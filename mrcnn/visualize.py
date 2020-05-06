@@ -16,7 +16,7 @@ import colorsys
 import numpy as np
 from skimage.measure import find_contours
 import matplotlib.pyplot as plt
-from matplotlib import patches,  lines
+from matplotlib import patches, lines
 from matplotlib.patches import Polygon
 import IPython.display
 
@@ -81,7 +81,7 @@ def apply_mask(image, mask, color, alpha=0.5):
     return image
 
 
-def get_text_color(val, maxVal, colormap, light_threshold=0.6):
+def get_text_color(val, maxVal, colormap, light_threshold=0.5):
     """
     Return black or white text color for confusion matrix depending on the background color
     :param val: the current value
@@ -90,13 +90,16 @@ def get_text_color(val, maxVal, colormap, light_threshold=0.6):
     :param light_threshold: the threshold used to determine whether or not a color is dark or light
     :return: "k" if background color is light else "w"
     """
-	# Based on https://css-tricks.com/switch-font-color-for-different-backgrounds-with-css/
-    red, green, blue, _ = colormap(round((val / maxVal) * 256))
+    # Based on https://css-tricks.com/switch-font-color-for-different-backgrounds-with-css/
+    # TODO: Add support to minVal != 0
+    index = int(round((val / maxVal) * 256))
+    red, green, blue, _ = colormap(index)
     _, light, _ = colorsys.rgb_to_hls(red, green, blue)
     return "k" if light >= light_threshold else "w"
 
 
-def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Matrix", normalize=False, cmap=plt.get_cmap('gray'), show=True, fileName=None):
+def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Matrix", normalize=False,
+                             cmap=plt.get_cmap('gray'), show=True, fileName=None):
     """
     Display confusion matrix and can also save it to an image file
     :param confusion_matrix: the raw confusion matrix as a 2-D array
@@ -154,7 +157,7 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     if fileName is not None:
         fig.savefig(fileName + ".png")
     if show:
-         plt.show()
+        plt.show()
 
 
 def display_instances(image, boxes, masks, class_ids, class_names,
@@ -264,8 +267,8 @@ def display_differences(image,
         pred_box, pred_class_id, pred_score, pred_mask,
         iou_threshold=iou_threshold, score_threshold=score_threshold)
     # Ground truth = green. Predictions = red
-    colors = [(0, 1, 0, .8)] * len(gt_match)\
-           + [(1, 0, 0, 1)] * len(pred_match)
+    colors = [(0, 1, 0, .8)] * len(gt_match) \
+             + [(1, 0, 0, 1)] * len(pred_match)
     # Concatenate GT and predictions
     class_ids = np.concatenate([gt_class_id, pred_class_id])
     scores = np.concatenate([np.zeros([len(gt_match)]), pred_score])
@@ -275,8 +278,8 @@ def display_differences(image,
     captions = ["" for m in gt_match] + ["{:.2f} / {:.2f}".format(
         pred_score[i],
         (overlaps[i, int(pred_match[i])]
-            if pred_match[i] > -1 else overlaps[i].max()))
-            for i in range(len(pred_match))]
+         if pred_match[i] > -1 else overlaps[i].max()))
+        for i in range(len(pred_match))]
     # Set title if not provided
     title = title or "Ground Truth and Detections\n GT=green, pred=red, captions: score/IoU"
     # Display
@@ -338,7 +341,7 @@ def draw_rois(image, rois, refined_rois, mask, class_ids, class_names, limit=10)
 
             # Mask
             m = utils.unmold_mask(mask[id], rois[id]
-                                  [:4].astype(np.int32), image.shape)
+            [:4].astype(np.int32), image.shape)
             masked_image = apply_mask(masked_image, m, color)
 
     ax.imshow(masked_image)
@@ -430,7 +433,7 @@ def plot_overlaps(gt_class_ids, pred_class_ids, pred_scores,
             text = "match" if gt_class_ids[j] == pred_class_ids[i] else "wrong"
         color = ("white" if overlaps[i, j] > thresh
                  else "black" if overlaps[i, j] > 0
-                 else "grey")
+        else "grey")
         plt.text(j, i, "{:.3f}\n{}".format(overlaps[i, j], text),
                  horizontalalignment="center", verticalalignment="center",
                  fontsize=9, color=color)
