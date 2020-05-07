@@ -12,6 +12,7 @@ import sys
 import random
 import itertools
 import colorsys
+import cv2
 
 import numpy as np
 from skimage.measure import find_contours
@@ -249,7 +250,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     ax.imshow(masked_image.astype(np.uint8))
     fig.tight_layout()
     if fileName is not None:
-        fig.savefig(fileName + ".png")
+        cv2.imwrite(fileName + ".png", masked_image.astype(np.uint8))
     if auto_show:
         plt.show()
 
