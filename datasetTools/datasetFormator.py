@@ -36,6 +36,13 @@ def infoNephrologyDataset(datasetPath: str, silent=False):
                 cortex = True
                 cortexDivided = len(os.listdir(os.path.join(os.path.join(datasetPath, imageDir), maskDir))) > 1
             if maskDir != "images" and maskDir != "full_images":
+                # Removing spaces, this should not happen actually but it did
+                if " " in maskDir:
+                    newMaskDir = maskDir.replace(" ", "_")
+                    maskDirPath = os.path.join(imagePath, maskDir)
+                    newMaskDirPath = os.path.join(imagePath, newMaskDir)
+                    move(maskDirPath, newMaskDirPath)
+                    maskDir = newMaskDir
                 histogram[maskDir] += 1
                 localHisto[maskDir] += 1
         if not cortex:
@@ -146,8 +153,8 @@ infoNephrologyDataset('temp_nephrology_dataset')
 dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset', squareSideLength=1024)
 infoNephrologyDataset('nephrology_dataset')
 
-# # If you want to keep all cortex files comment dW.cleanCortexDir() lines
-# # If you want to check them and then delete them, comment these lines too and after checking use them
+# If you want to keep all cortex files comment dW.cleanCortexDir() lines
+# If you want to check them and then delete them, comment these lines too and after checking use them
 # dW.cleanCortexDir('temp_nephrology_dataset')
 # dW.cleanCortexDir('nephrology_dataset')
 
