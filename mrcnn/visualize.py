@@ -165,7 +165,8 @@ def display_instances(image, boxes, masks, class_ids, class_names,
                       scores=None, title="",
                       figsize=(16, 16), ax=None, fig=None,
                       show_mask=True, show_bbox=True,
-                      colors=None, colorPerClass=False, captions=None, fileName=None):
+                      colors=None, colorPerClass=False, captions=None,
+                      fileName=None, onlyImage=False):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -249,10 +250,16 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             ax.add_patch(p)
     ax.imshow(masked_image.astype(np.uint8))
     fig.tight_layout()
+    BGR_img = cv2.cvtColor(masked_image.astype(np.uint8), cv2.COLOR_RGB2BGR)
     if fileName is not None:
-        cv2.imwrite(fileName + ".png", masked_image.astype(np.uint8))
+        if onlyImage:
+            cv2.imwrite(fileName + ".png", BGR_img)
+        else:
+            fig.savefig(fileName + ".png")
     if auto_show:
         plt.show()
+    return masked_image.astype(np.uint8)
+
 
 
 def display_differences(image,
