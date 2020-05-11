@@ -15,7 +15,7 @@ def computeStartsOfInterval(maxVal: int, intervalLength=1024):
     :return: list of starting coordinates for the new intervals
     """
     nbIteration = maxVal // intervalLength
-    assert nbIteration > 1
+    assert nbIteration > 0
     # First interval always starts on coordinate 0
     startCoordinates = [0]
     if maxVal / intervalLength != nbIteration:

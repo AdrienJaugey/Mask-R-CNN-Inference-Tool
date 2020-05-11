@@ -252,10 +252,9 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     fig.tight_layout()
     BGR_img = cv2.cvtColor(masked_image.astype(np.uint8), cv2.COLOR_RGB2BGR)
     if fileName is not None:
+        fig.savefig(fileName + ".png")
         if onlyImage:
             cv2.imwrite(fileName + ".png", BGR_img)
-        else:
-            fig.savefig(fileName + ".png")
     if auto_show:
         plt.show()
     return masked_image.astype(np.uint8)

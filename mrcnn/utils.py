@@ -22,9 +22,78 @@ import urllib.request
 import shutil
 import warnings
 from distutils.version import LooseVersion
+import datasetDivider as div
 
 # URL from which to download the latest COCO trained weights
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
+
+
+############################################################
+#  Results Fusing
+############################################################
+def fuse_results(results, input_image, div_ids=None):
+    """
+    Fuse results of multiple predictions (divisions for example)
+    :param results: list of the results of the predictions
+    :param input_image: the base input image to get size
+    :param div_ids: list of div_ids in the order if some are skipped
+    :return: same structure contained in results
+    """
+    # Getting base input image information
+    div_side_length = results[0]['masks'].shape[0]
+    height, width, _ = input_image.shape
+    xStarts = div.computeStartsOfInterval(width)
+    yStarts = div.computeStartsOfInterval(height)
+
+    # Counting total sum of predicted masks
+    size = 0
+    for r in results:
+        size += len(r['scores'])
+
+    # Initialisation of arrays
+    masks = np.zeros((height, width, size), dtype=bool)
+    scores = np.zeros(size)
+    rois = np.zeros((size, 4), dtype=int)
+    class_ids = np.zeros(size, dtype=int)
+
+    # If no division is skipped, test if there are all divisions results
+    if div_ids is None:
+        assert div.getDivisionsCount(xStarts, yStarts) == len(results), "No divisions ids passed and number of " \
+                                                                        "results different from number of divisions "
+
+    # Iterating through divisions results
+    lastIndex = 0
+    for division_index, res in enumerate(results):
+        # Getting the division ID based on iterator or given ids and getting its coordinates
+        divId = division_index if div_ids is None else div_ids[division_index]
+        xStart, xEnd, yStart, yEnd = div.getDivisionByID(xStarts, yStarts, divId, div_side_length)
+
+        # Formatting and adding all the division's predictions to global ones
+        r = results[division_index]
+        for prediction_index in range(len(r['scores'])):
+            scores[lastIndex] = r['scores'][prediction_index]
+            class_ids[lastIndex] = r['class_ids'][prediction_index]
+
+            masks[yStart:yEnd, xStart:xEnd, lastIndex] = r['masks'][:, :, prediction_index]
+
+            roi = r['rois'][prediction_index].copy()
+            # y1, x1, y2, x2
+            roi[0] += yStart
+            roi[1] += xStart
+            roi[2] += yStart
+            roi[3] += xStart
+            rois[lastIndex] = roi
+
+            lastIndex += 1
+
+    # Formatting returned result
+    fused_results = {
+        "rois": rois,
+        "class_ids": class_ids,
+        "scores": scores,
+        "masks": masks,
+    }
+    return fused_results
 
 
 ############################################################
@@ -101,7 +170,7 @@ def compute_overlaps_masks(masks1, masks2):
     """Computes IoU overlaps between two sets of masks.
     masks1, masks2: [Height, Width, instances]
     """
-    
+
     # If either set of masks is empty return empty result
     if masks1.shape[-1] == 0 or masks2.shape[-1] == 0:
         return np.zeros((masks1.shape[-1], masks2.shape[-1]))
@@ -781,14 +850,14 @@ def compute_ap_range(gt_box, gt_class_id, gt_mask,
     """Compute AP over a range or IoU thresholds. Default range is 0.5-0.95."""
     # Default is 0.5 to 0.95 with increments of 0.05
     iou_thresholds = iou_thresholds or np.arange(0.5, 1.0, 0.05)
-    
+
     # Compute AP over range of IoU thresholds
     AP = []
     for iou_threshold in iou_thresholds:
-        ap, precisions, recalls, overlaps, _ =\
+        ap, precisions, recalls, overlaps, _ = \
             compute_ap(gt_box, gt_class_id, gt_mask,
-                        pred_box, pred_class_id, pred_score, pred_mask,
-                        iou_threshold=iou_threshold)
+                       pred_box, pred_class_id, pred_score, pred_mask,
+                       iou_threshold=iou_threshold)
         if verbose:
             print("AP @{:.2f}:\t {:.3f}".format(iou_threshold, ap))
         AP.append(ap)
