@@ -254,7 +254,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     if fileName is not None:
         fig.savefig(fileName + ".png")
         if onlyImage:
-            cv2.imwrite(fileName + ".png", BGR_img)
+            cv2.imwrite(fileName + "_clean.png", BGR_img)
     if auto_show:
         plt.show()
     return masked_image.astype(np.uint8)
