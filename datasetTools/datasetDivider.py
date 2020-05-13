@@ -1,5 +1,6 @@
 import os
 import cv2
+import numpy as np
 
 VERBOSE = False
 MIN_PART_OF_DIV = 10.0
@@ -101,14 +102,21 @@ def getImageDivision(img, xStarts: [int], yStarts: [int], idDivision: int, squar
         return img[y:yEnd, x:xEnd, :]
 
 
-def getBWCount(mask):
+def getBWCount(mask, using='cv2', bins=None):
     """
     Return number of black (0) and white (255) pixels in a mask image
     :param mask: the mask image
+    :param using: 'numpy' or 'cv2', chosing how to compute histo
+    :param bins: bins parameter of numpy.histogram method
     :return: number of black pixels, number of white pixels
     """
-    histogram = cv2.calcHist([mask], [0], None, [256], [0, 256])
-    return int(histogram[0]), int(histogram[255])
+    if bins is None:
+        bins = [0, 1, 2]
+    if using == 'cv2':
+        histogram = cv2.calcHist([mask], [0], None, [256], [0, 256])
+        return int(histogram[0]), int(histogram[255])
+    else:
+        return np.histogram(mask, bins=bins)[0]
 
 
 def getRepresentativePercentage(blackMask: int, whiteMask: int, divisionImage):

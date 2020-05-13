@@ -12,6 +12,8 @@ import os
 import logging
 import math
 import random
+
+import cv2
 import numpy as np
 import tensorflow as tf
 import scipy
@@ -91,9 +93,317 @@ def fuse_results(results, input_image, div_ids=None):
         "rois": rois,
         "class_ids": class_ids,
         "scores": scores,
-        "masks": masks,
+        "masks": masks
     }
     return fused_results
+
+
+def filter_fused_masks(fused_results,
+                       bb_threshold=0.5,
+                       vessel_threshold=0.9,
+                       vessel_class_id=6):
+    """
+    Post-prediction filtering to remove non-sense predictions
+    :param fused_results: the results after fusion
+    :param bb_threshold: the least part of overlapping bounding boxes to continue checking
+    :param vessel_threshold: the least part of a non-vessel mask contained in vessel for it to be deleted
+    :param vessel_class_id: the id of vessel class
+    :param verbose: display or not some additional information
+    :return:
+    """
+    rois = fused_results['rois']
+    masks = fused_results['masks']
+    scores = fused_results['scores']
+    class_ids = fused_results['class_ids']
+    bbAreas = np.zeros(len(class_ids))
+    maskAreas = np.zeros(len(class_ids))
+    toDelete = []
+    for i, r1 in enumerate(rois):
+        # If this RoI has already been selected for deletion, we skip it
+        if i in toDelete:
+            continue
+
+        # If the area of this RoI has not been computed
+        if bbAreas[i] == 0:
+            r1Width = r1[3] - r1[1]
+            r1Height = r1[2] - r1[0]
+            bbAreas[i] = r1Width * r1Height
+
+        r1IsVessel = class_ids[i] == vessel_class_id
+
+        # Then we check for each RoI that has not already been checked
+        for j in range(i + 1, len(rois)):
+            r2 = rois[j]
+
+            # We want only one prediction class to be vessel
+            r2IsVessel = class_ids[j] == vessel_class_id
+            if r1IsVessel == r2IsVessel:
+                continue
+
+            # If the area of the 2nd RoI has not been computed
+            if bbAreas[j] == 0:
+                r2Width = r2[3] - r2[1]
+                r2Height = r2[2] - r2[0]
+                bbAreas[j] = r2Width * r2Height
+
+            # Computation of the bb intersection
+            y1 = np.maximum(r1[0], r2[0])
+            y2 = np.minimum(r1[2], r2[2])
+            x1 = np.maximum(r1[1], r2[1])
+            x2 = np.minimum(r1[3], r2[3])
+            xInter = np.maximum(x2 - x1, 0)
+            yInter = np.maximum(y2 - y1, 0)
+            intersection = xInter * yInter
+
+            # We skip next part if bb intersection not representative enough
+            partOfR1 = intersection / bbAreas[i]
+            partOfR2 = intersection / bbAreas[j]
+            if partOfR1 > bb_threshold or partOfR2 > bb_threshold:
+                # Getting first mask and computing its area if not done yet
+                mask1 = masks[:, :, i]
+                if maskAreas[i] == -1:
+                    mask1Histogram = div.getBWCount(mask1, using="numpy")
+                    maskAreas[i] = mask1Histogram[1]
+                    if maskAreas[i] == 0:
+                        print(i, mask1Histogram[1])
+
+                # Getting second mask and computing its area if not done yet
+                mask2 = masks[:, :, j]
+                if maskAreas[j] == -1:
+                    mask2Histogram = div.getBWCount(mask2, using="numpy")
+                    maskAreas[j] = mask2Histogram[1]
+                    if maskAreas[j] == 0:
+                        print(j, mask2Histogram[1])
+
+                # Computing intersection of mask 1 and 2 and computing its area
+                mask1AND2 = np.logical_and(mask1, mask2)
+                mask1AND2Histogram = div.getBWCount(mask1AND2, using="numpy")
+
+                partOfMask1 = mask1AND2Histogram[1] / maskAreas[i]
+                partOfMask2 = mask1AND2Histogram[1] / maskAreas[j]
+
+                # We check if the common area represents more than the vessel_threshold of the non-vessel mask
+                if r1IsVessel and partOfMask2 > vessel_threshold:
+                    toDelete.append(j)
+                elif r2IsVessel and partOfMask1 > vessel_threshold:
+                    toDelete.append(i)
+
+    # Deletion of unwanted results
+    scores = np.delete(scores, toDelete)
+    class_ids = np.delete(class_ids, toDelete)
+    masks = np.delete(masks, toDelete, axis=2)
+    rois = np.delete(rois, toDelete, axis=0)
+    return {"rois": rois, "class_ids": class_ids, "scores": scores, "masks": masks}
+
+
+def fuse_masks(fused_results,
+               bb_threshold=0.1, mask_threshold=0.1,
+               using="OR", verbose=0):
+    """
+    Fuses overlapping masks of the same class
+    :param fused_results: the fused predictions results
+    :param bb_threshold: least part of bounding boxes overlapping to continue checking
+    :param mask_threshold: idem but with mask
+    :param using: "OR" or "AND", choosing between how mask overlapping part is computed
+    :param verbose: 0 : nothing, 1+ : errors/problems, 2 : general information
+    :return: fused_results with only fused masks
+    """
+    rois = fused_results['rois']
+    masks = fused_results['masks']
+    scores = fused_results['scores']
+    class_ids = fused_results['class_ids']
+
+    height, width = masks[:, :, 0].shape
+    nbPx = height * width
+
+    bbAreas = np.ones(len(class_ids), dtype=int) * -1
+    maskAreas = np.ones(len(class_ids), dtype=int) * -1
+    fusedWith = np.ones(len(class_ids), dtype=int) * -1
+    maskCount = np.ones(len(class_ids), dtype=int)
+    toDelete = []
+    for i, roi1 in enumerate(rois):
+        # Computation of the bounding box area if not done yet
+        if bbAreas[i] == -1:
+            r1Width = roi1[3] - roi1[1]
+            r1Height = roi1[2] - roi1[0]
+            bbAreas[i] = r1Width * r1Height
+
+        for j in range(i + 1, len(rois)):
+            # If masks are not from the same class, we skip them
+            if class_ids[i] != class_ids[j]:
+                continue
+
+            hadPrinted = False
+            roi2 = rois[j]
+
+            # Computation of the bounding box area if not done yet
+            if bbAreas[j] == -1:
+                r2Width = roi2[3] - roi2[1]
+                r2Height = roi2[2] - roi2[0]
+                bbAreas[j] = r2Width * r2Height
+
+            # Computation of the bb intersection
+            y1 = np.maximum(roi1[0], roi2[0])
+            y2 = np.minimum(roi1[2], roi2[2])
+            x1 = np.maximum(roi1[1], roi2[1])
+            x2 = np.minimum(roi1[3], roi2[3])
+            xInter = np.maximum(x2 - x1, 0)
+            yInter = np.maximum(y2 - y1, 0)
+            bbIntersection = xInter * yInter
+
+            # We skip next part if bb intersection not representative enough
+            partOfRoI1 = bbIntersection / bbAreas[i]
+            partOfRoI2 = bbIntersection / bbAreas[j]
+
+            if partOfRoI1 > bb_threshold or partOfRoI2 > bb_threshold:
+                if verbose > 1:
+                    hadPrinted = True
+                    print("[{}/{}] Enough RoI overlap".format(str(i).zfill(3), str(j).zfill(3)))
+
+                # Getting first mask and computing its area if not done yet
+                mask1 = masks[:, :, i]
+                if maskAreas[i] == -1:
+                    mask1Histogram = div.getBWCount(mask1, using="numpy")
+                    tempSum = mask1Histogram[0] + mask1Histogram[1]
+                    if verbose > 0 and tempSum != nbPx:
+                        hadPrinted = True
+                        print("[{}] Histogram pixels {} != total pixels {}".format(str(i).zfill(3), tempSum, nbPx))
+                    maskAreas[i] = mask1Histogram[1]
+
+                # Getting second mask and computing its area if not done yet
+                mask2 = masks[:, :, j]
+                if maskAreas[j] == -1:
+                    mask2Histogram = div.getBWCount(mask2, using="numpy")
+                    tempSum = mask2Histogram[0] + mask2Histogram[1]
+                    if verbose > 0 and tempSum != nbPx:
+                        hadPrinted = True
+                        print("[{}] Histogram pixels {} != total pixels {}".format(str(j).zfill(3), tempSum, nbPx))
+                    maskAreas[j] = mask2Histogram[1]
+
+                # Computing intersection of mask 1 and 2 and computing its area
+                if using == "AND":
+                    mask1AND2 = np.logical_and(mask1, mask2)
+                    mask1AND2Histogram = div.getBWCount(mask1AND2, using="numpy")
+                    tempSum = mask1AND2Histogram[0] + mask1AND2Histogram[1]
+                else:
+                    mask1OR2 = np.logical_or(mask1, mask2)
+                    mask1OR2Histogram = div.getBWCount(mask1OR2, using="numpy")
+                    tempSum = mask1OR2Histogram[0] + mask1OR2Histogram[1]
+
+                if verbose > 0:
+                    if tempSum != nbPx:
+                        hadPrinted = True
+                        print("[{}] Histogram pixels {} != total pixels {}".format(using, tempSum, nbPx))
+                    if (using == "OR" and mask1OR2Histogram[1] == tempSum) or (
+                            using == "AND" and mask1AND2Histogram[1] == tempSum):
+                        hadPrinted = True
+                        print("[{}] Histogram problem : white representing all values".format(using))
+
+                    if verbose > 1:
+                        print(mask1Histogram,
+                              "[{}] White = {}".format(str(i).zfill(3), maskAreas[i]),
+                              mask2Histogram,
+                              "[{}] White = {}".format(str(j).zfill(3), maskAreas[j]),
+                              mask1OR2Histogram if using == "OR" else mask1AND2Histogram,
+                              "[{}] White = {}".format(
+                                  using,
+                                  mask1AND2Histogram[1] if using == "AND" else mask1OR2Histogram[1]),
+                              sep="\n")
+
+                # Computing representative part of intersection for each mask
+                if using == "OR":
+                    maskIntersection = maskAreas[i] + maskAreas[j] - mask1OR2Histogram[1]
+                    partOfMask1 = maskIntersection / maskAreas[i]
+                    partOfMask2 = maskIntersection / maskAreas[j]
+                else:
+                    partOfMask1 = mask1AND2Histogram[1] / maskAreas[i]
+                    partOfMask2 = mask1AND2Histogram[1] / maskAreas[j]
+
+                if verbose > 0:
+                    if not (0 <= partOfMask1 <= 1):
+                        hadPrinted = True
+                        print("[{}] Intersection representing more than 100% of the mask : {:3.2f}%".format(
+                            str(i).zfill(3),
+                            partOfMask1 * 100))
+
+                    if not (0 <= partOfMask2 <= 1):
+                        hadPrinted = True
+                        print("[{}] Intersection representing more than 100% of the mask : {:3.2f}%".format(
+                            str(j).zfill(3),
+                            partOfMask2 * 100))
+
+                    if verbose > 1:
+                        print("[{}] {:5.2f}% of mask [{}]".format(using, partOfMask1 * 100, str(i).zfill(3)))
+                        print("[{}] {:5.2f}% of mask [{}]".format(using, partOfMask2 * 100, str(j).zfill(3)))
+
+                if partOfMask1 > mask_threshold or partOfMask2 > mask_threshold:
+                    # If the first mask has already been fused with another mask, we will fuse with the "parent" one
+                    fusionTarget = i if fusedWith[i] == -1 else fusedWith[i]
+                    fusedWith[j] = fusionTarget
+
+                    if verbose > 1:
+                        print("[{}] Fusion with [{}]".format(str(j).zfill(3), str(fusionTarget).zfill(3)))
+
+                    # If we have used union instead of intersection before and the fusion target is the first mask, we
+                    # don't have to compute it once again
+                    if using == "OR" and i == fusionTarget:
+                        fusedMask = mask1OR2
+                    else:
+                        fusedMask = masks[:, :, fusionTarget]
+                        fusedMask = np.logical_or(fusedMask, mask2)
+
+                    # Updating the mask and its stored area
+                    masks[:, :, fusionTarget] = fusedMask
+                    _, fusedMaskArea = div.getBWCount(fusedMask, using="numpy")
+
+                    if verbose > 1:
+                        print("[{}] Mask area before fusion = {}".format(str(fusionTarget).zfill(3),
+                                                                         maskAreas[fusionTarget]))
+
+                    maskAreas[fusionTarget] = fusedMaskArea
+
+                    if verbose > 1:
+                        print("[{}] Mask area after fusion = {}".format(str(fusionTarget).zfill(3),
+                                                                        maskAreas[fusionTarget]))
+                        print("[{}] Bounding boxes area before fusion = {}".format(str(fusionTarget).zfill(3),
+                                                                                   bbAreas[fusionTarget]))
+
+                    # Computing the new RoI
+                    rois[fusionTarget][0] = min(rois[fusionTarget][0], rois[j][0])
+                    rois[fusionTarget][1] = min(rois[fusionTarget][1], rois[j][1])
+                    rois[fusionTarget][2] = max(rois[fusionTarget][2], rois[j][2])
+                    rois[fusionTarget][3] = max(rois[fusionTarget][3], rois[j][3])
+
+                    # Computing and updating the area of the new RoI
+                    fusedRoIWidth = rois[fusionTarget][3] - rois[fusionTarget][1]
+                    fusedRoIHeight = rois[fusionTarget][2] - rois[fusionTarget][0]
+                    fusedRoIArea = fusedRoIWidth * fusedRoIHeight
+                    bbAreas[fusionTarget] = fusedRoIArea
+
+                    if verbose > 1:
+                        print("[{}] Bounding boxes area after fusion = {}".format(str(fusionTarget).zfill(3),
+                                                                                  bbAreas[fusionTarget]))
+                        print("[{}] Score before fusion = {}".format(str(fusionTarget).zfill(3), scores[fusionTarget]))
+
+                    # Updating score of the fusion target by computing average score of all fused masks
+                    scores[fusionTarget] = (scores[fusionTarget] * maskCount[fusionTarget] + scores[j])
+                    maskCount[fusionTarget] += 1
+                    scores[fusionTarget] /= maskCount[fusionTarget]
+
+                    if verbose > 1:
+                        print("[{}] Score after fusion = {}".format(str(fusionTarget).zfill(3), scores[fusionTarget]))
+
+                    toDelete.append(j)
+
+                if verbose > 0 and hadPrinted:
+                    print()
+
+    # Deletion of unwanted results
+    scores = np.delete(scores, toDelete)
+    class_ids = np.delete(class_ids, toDelete)
+    masks = np.delete(masks, toDelete, axis=2)
+    rois = np.delete(rois, toDelete, axis=0)
+    return {"rois": rois, "class_ids": class_ids, "scores": scores, "masks": masks}
 
 
 ############################################################
