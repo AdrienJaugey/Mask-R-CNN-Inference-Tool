@@ -14,8 +14,7 @@ def infoNephrologyDataset(datasetPath: str, silent=False):
     :return: nbImg, histogram, cortexMissing, multiCortices, maxClasses, maxClassesNoCortex
     """
     print()
-    histogram = {'tubule_atrophique': 0, 'vaisseau': 0, 'pac': 0, 'nsg_complet': 0,
-                 'nsg_partiel': 0, 'tubule_sain': 0, 'cortex': 0, 'artefact': 0}
+    histogram = {}
     maxNbClasses = 0
     maxClasses = []
     maxNbClassesNoCortex = 0
@@ -29,13 +28,12 @@ def infoNephrologyDataset(datasetPath: str, silent=False):
         imagePath = os.path.join(datasetPath, imageDir)
         cortex = False
         cortexDivided = False
-        localHisto = {'tubule_atrophique': 0, 'vaisseau': 0, 'pac': 0, 'nsg_complet': 0,
-                      'nsg_partiel': 0, 'tubule_sain': 0, 'cortex': 0, 'artefact': 0}
+        localHisto = {}
         for maskDir in os.listdir(imagePath):
             if maskDir == 'cortex':
                 cortex = True
                 cortexDivided = len(os.listdir(os.path.join(os.path.join(datasetPath, imageDir), maskDir))) > 1
-            if maskDir != "images" and maskDir != "full_images":
+            if maskDir not in ["images", "full_images"]:
                 # Removing spaces, this should not happen actually but it did
                 if " " in maskDir:
                     newMaskDir = maskDir.replace(" ", "_")
@@ -43,7 +41,11 @@ def infoNephrologyDataset(datasetPath: str, silent=False):
                     newMaskDirPath = os.path.join(imagePath, newMaskDir)
                     move(maskDirPath, newMaskDirPath)
                     maskDir = newMaskDir
+                if maskDir not in histogram.keys():
+                    histogram[maskDir] = 0
                 histogram[maskDir] += 1
+                if maskDir not in localHisto.keys():
+                    localHisto[maskDir] = 0
                 localHisto[maskDir] += 1
         if not cortex:
             name = imageDir.split('_')[0] + "_*"
