@@ -128,8 +128,9 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
             somme = 0.0
             for j in range(len(matrix[0])):
                 somme += matrix[i][j]
-            for j in range(len(matrix[0])):
-                matrix[i][j] = matrix[i][j] / somme
+            if somme != 0:
+                for j in range(len(matrix[0])):
+                    matrix[i][j] = matrix[i][j] / somme
 
     # Displaying the confusion matrix as a gray image scaled with min/max values
     minVal = np.amin(matrix)
