@@ -7,10 +7,8 @@ Licensed under the MIT License (see LICENSE for details)
 Written by Waleed Abdulla
 """
 
-import sys
-import os
 import logging
-import math
+import os
 import random
 
 import cv2
@@ -24,7 +22,9 @@ import urllib.request
 import shutil
 import warnings
 from distutils.version import LooseVersion
-import datasetDivider as div
+from datasetTools import datasetDivider as div
+from datasetTools.XMLExporter import XMLExporter
+from datasetTools.ASAPExporter import ASAPExporter
 
 # URL from which to download the latest COCO trained weights
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
@@ -109,9 +109,9 @@ def comparePriority(main_class_id, other_class_id, priority_table=None):
     # Return 0 if no priority table given, if it has bad dimensions or a class_id is not in the correct range
     if priority_table is None:
         return 0
-    elif not(len(priority_table) == len(priority_table[0])
-             and 0 <= main_class_id < len(priority_table)
-             and 0 <= other_class_id < len(priority_table)):
+    elif not (len(priority_table) == len(priority_table[0])
+              and 0 <= main_class_id < len(priority_table)
+              and 0 <= other_class_id < len(priority_table)):
         return 0
     if priority_table[main_class_id][other_class_id]:
         return 1
@@ -431,9 +431,109 @@ def filter_fused_masks(fused_results,
     return {"rois": rois, "class_ids": class_ids, "scores": scores, "masks": masks}
 
 
-def extract_annotations(filtered_masks, imageName):
-    # TODO : Implementing annotations extraction
-    return
+def getPoints(mask, xOffset=0, yOffset=0, epsilon=1,
+              show=False, waitSeconds=10, info=False):
+    """
+    Return a list of points describing the given mask as a polygon
+    :param mask: the mask you want the points
+    :param xOffset: if using a RoI the x-axis offset used
+    :param yOffset: if using a RoI the y-axis offset used
+    :param epsilon: epsilon parameter of cv2.approxPolyDP() method
+    :param show: whether you want or not to display the approximated mask so you can see it
+    :param waitSeconds: time in seconds to wait before closing automatically the displayed masks, or press ESC to close
+    :param info: whether you want to display some information (mask size, number of predicted points, number of
+    approximated points...) or not
+    :return: 2D-array of points coordinates : [[x, y]]
+    """
+    contours, _ = cv2.findContours(mask, method=cv2.RETR_TREE, mode=cv2.CHAIN_APPROX_SIMPLE)
+
+    # https://stackoverflow.com/questions/41879315/opencv-visualize-polygonal-curves-extracted-with-cv2-approxpolydp
+    # Finding biggest area
+    cnt = contours[0]
+    max_area = cv2.contourArea(cnt)
+
+    for cont in contours:
+        if cv2.contourArea(cont) > max_area:
+            cnt = cont
+            max_area = cv2.contourArea(cont)
+
+    res = cv2.approxPolyDP(cnt, epsilon, True)
+    pts = []
+    for point in res:
+        pts.append([point[0][0] + xOffset, point[0][1] + yOffset])
+
+    if info:
+        maskHeight, maskWidth = mask.shape
+        nbPtPred = contours[0].shape[0]
+        nbPtApprox = len(pts)
+        print("Mask size : {}x{}".format(maskWidth, maskHeight))
+        print("Nb points prediction : {}".format(nbPtPred))
+        print("Nb points approx : {}".format(nbPtApprox))
+        print("Compression rate : {:5.2f}%".format(nbPtPred / nbPtApprox * 100))
+        temp = np.array(pts)
+        xMin = np.amin(temp[:, 0])
+        xMax = np.amax(temp[:, 0])
+        yMin = np.amin(temp[:, 1])
+        yMax = np.amax(temp[:, 1])
+        print("{} <= X <= {}".format(xMin, xMax))
+        print("{} <= Y <= {}".format(yMin, yMax))
+        print()
+
+    if show:
+        img = np.zeros(mask.shape, np.int8)
+        img = cv2.drawContours(img, [res], -1, 255, 2)
+        cv2.imshow('before {}'.format(img.shape), mask * 255)
+        cv2.imshow("approxPoly", img * 255)
+        cv2.waitKey(max(waitSeconds, 1) * 1000)
+
+    return pts
+
+
+def export_annotations(image_name: str, results: dict, class_names: [str],
+                       exporter: XMLExporter, asap_colors=None, save_path="predicted/"):
+    """
+    Exports predicted results to an XML annotation file using given XMLExporter
+    :param image_name: name of the inferred image
+    :param results: inference results of the image
+    :param class_names: list of class names, including background
+    :param exporter: class inheriting XMLExporter
+    :param asap_colors: if using ASAPExporter, dict matching classes' names and their colors
+    :param save_path: path to the dir you want to save the annotation file
+    :return: None
+    """
+    isASAPExporter = type(exporter) == type(ASAPExporter)
+    assert not isASAPExporter or (isASAPExporter and asap_colors is not None)
+
+    xmlData = exporter()
+    rois = results['rois']
+    masks = results['masks']
+    class_ids = results['class_ids']
+    height, width = masks[:, :, 0].shape
+    # For each prediction
+    for i in range(masks.shape[2]):
+        # Getting the RoI coordinates and the corresponding area
+        # y1, x1, y2, x2
+        yStart, xStart, yEnd, xEnd = rois[i]
+        yStart = max(yStart - 10, 0)
+        xStart = max(xStart - 10, 0)
+        yEnd = min(yEnd + 10, height)
+        xEnd = min(xEnd + 10, width)
+        mask = masks[yStart:yEnd, xStart:xEnd, i]
+
+        # Getting list of points coordinates and adding the prediction to XML
+        points = getPoints(np.uint8(mask), xOffset=xStart, yOffset=yStart, show=False, waitSeconds=0, info=False)
+        xmlData.addAnnotation(class_names[class_ids[i]], points)
+
+    if isASAPExporter:
+        for i, name in enumerate(class_names):
+            if i == 0:
+                continue
+            xmlData.addAnnotationClass(name, asap_colors[name])
+    else:
+        for name in class_names:
+            xmlData.addAnnotationClass(name)
+    os.makedirs(save_path, exist_ok=True)
+    xmlData.saveToFile(save_path + image_name + ".xml")
 
 
 ############################################################
