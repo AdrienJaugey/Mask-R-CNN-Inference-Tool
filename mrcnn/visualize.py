@@ -119,7 +119,7 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     labels.insert(0, "background")
 
     # plt.plot()
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(8, 6), frameon=False)
     ax.set_title(title)
 
     if normalize:

@@ -31,7 +31,7 @@ COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0
 
 
 ############################################################
-#  Results Fusing
+#  Results Post-Processing
 ############################################################
 def fuse_results(results, input_image, div_ids=None):
     """
@@ -98,102 +98,27 @@ def fuse_results(results, input_image, div_ids=None):
     return fused_results
 
 
-def filter_fused_masks(fused_results,
-                       bb_threshold=0.5,
-                       vessel_threshold=0.9,
-                       vessel_class_id=6):
+def comparePriority(main_class_id, other_class_id, priority_table=None):
     """
-    Post-prediction filtering to remove non-sense predictions
-    :param fused_results: the results after fusion
-    :param bb_threshold: the least part of overlapping bounding boxes to continue checking
-    :param vessel_threshold: the least part of a non-vessel mask contained in vessel for it to be deleted
-    :param vessel_class_id: the id of vessel class
-    :param verbose: display or not some additional information
-    :return:
+    Compare priority of given class ids
+    :param main_class_id: the main/current class id
+    :param other_class_id: the other class id you want to compare to
+    :param priority_table: the priority table to get the priority in
+    :return: 1 if main has priority, -1 if other has priority, 0 if no one has priority or in case of parameter error
     """
-    rois = fused_results['rois']
-    masks = fused_results['masks']
-    scores = fused_results['scores']
-    class_ids = fused_results['class_ids']
-    bbAreas = np.zeros(len(class_ids))
-    maskAreas = np.zeros(len(class_ids))
-    toDelete = []
-    for i, r1 in enumerate(rois):
-        # If this RoI has already been selected for deletion, we skip it
-        if i in toDelete:
-            continue
-
-        # If the area of this RoI has not been computed
-        if bbAreas[i] == 0:
-            r1Width = r1[3] - r1[1]
-            r1Height = r1[2] - r1[0]
-            bbAreas[i] = r1Width * r1Height
-
-        r1IsVessel = class_ids[i] == vessel_class_id
-
-        # Then we check for each RoI that has not already been checked
-        for j in range(i + 1, len(rois)):
-            r2 = rois[j]
-
-            # We want only one prediction class to be vessel
-            r2IsVessel = class_ids[j] == vessel_class_id
-            if r1IsVessel == r2IsVessel:
-                continue
-
-            # If the area of the 2nd RoI has not been computed
-            if bbAreas[j] == 0:
-                r2Width = r2[3] - r2[1]
-                r2Height = r2[2] - r2[0]
-                bbAreas[j] = r2Width * r2Height
-
-            # Computation of the bb intersection
-            y1 = np.maximum(r1[0], r2[0])
-            y2 = np.minimum(r1[2], r2[2])
-            x1 = np.maximum(r1[1], r2[1])
-            x2 = np.minimum(r1[3], r2[3])
-            xInter = np.maximum(x2 - x1, 0)
-            yInter = np.maximum(y2 - y1, 0)
-            intersection = xInter * yInter
-
-            # We skip next part if bb intersection not representative enough
-            partOfR1 = intersection / bbAreas[i]
-            partOfR2 = intersection / bbAreas[j]
-            if partOfR1 > bb_threshold or partOfR2 > bb_threshold:
-                # Getting first mask and computing its area if not done yet
-                mask1 = masks[:, :, i]
-                if maskAreas[i] == -1:
-                    mask1Histogram = div.getBWCount(mask1, using="numpy")
-                    maskAreas[i] = mask1Histogram[1]
-                    if maskAreas[i] == 0:
-                        print(i, mask1Histogram[1])
-
-                # Getting second mask and computing its area if not done yet
-                mask2 = masks[:, :, j]
-                if maskAreas[j] == -1:
-                    mask2Histogram = div.getBWCount(mask2, using="numpy")
-                    maskAreas[j] = mask2Histogram[1]
-                    if maskAreas[j] == 0:
-                        print(j, mask2Histogram[1])
-
-                # Computing intersection of mask 1 and 2 and computing its area
-                mask1AND2 = np.logical_and(mask1, mask2)
-                mask1AND2Histogram = div.getBWCount(mask1AND2, using="numpy")
-
-                partOfMask1 = mask1AND2Histogram[1] / maskAreas[i]
-                partOfMask2 = mask1AND2Histogram[1] / maskAreas[j]
-
-                # We check if the common area represents more than the vessel_threshold of the non-vessel mask
-                if r1IsVessel and partOfMask2 > vessel_threshold:
-                    toDelete.append(j)
-                elif r2IsVessel and partOfMask1 > vessel_threshold:
-                    toDelete.append(i)
-
-    # Deletion of unwanted results
-    scores = np.delete(scores, toDelete)
-    class_ids = np.delete(class_ids, toDelete)
-    masks = np.delete(masks, toDelete, axis=2)
-    rois = np.delete(rois, toDelete, axis=0)
-    return {"rois": rois, "class_ids": class_ids, "scores": scores, "masks": masks}
+    # Return 0 if no priority table given, if it has bad dimensions or a class_id is not in the correct range
+    if priority_table is None:
+        return 0
+    elif not(len(priority_table) == len(priority_table[0])
+             and 0 <= main_class_id < len(priority_table)
+             and 0 <= other_class_id < len(priority_table)):
+        return 0
+    if priority_table[main_class_id][other_class_id]:
+        return 1
+    elif priority_table[other_class_id][main_class_id]:
+        return -1
+    else:
+        return 0
 
 
 def fuse_masks(fused_results,
@@ -404,6 +329,111 @@ def fuse_masks(fused_results,
     masks = np.delete(masks, toDelete, axis=2)
     rois = np.delete(rois, toDelete, axis=0)
     return {"rois": rois, "class_ids": class_ids, "scores": scores, "masks": masks}
+
+
+def filter_fused_masks(fused_results,
+                       bb_threshold=0.5,
+                       mask_threshold=0.9,
+                       priority_table=None):
+    """
+    Post-prediction filtering to remove non-sense predictions
+    :param fused_results: the results after fusion
+    :param bb_threshold: the least part of overlapping bounding boxes to continue checking
+    :param mask_threshold: the least part of a mask contained in another for it to be deleted
+    :param priority_table: the priority table used to compare classes
+    :return:
+    """
+    rois = fused_results['rois']
+    masks = fused_results['masks']
+    scores = fused_results['scores']
+    class_ids = fused_results['class_ids']
+    bbAreas = np.zeros(len(class_ids))
+    maskAreas = np.zeros(len(class_ids))
+    toDelete = []
+    for i, r1 in enumerate(rois):
+        # If this RoI has already been selected for deletion, we skip it
+        if i in toDelete:
+            continue
+
+        # If the area of this RoI has not been computed
+        if bbAreas[i] == 0:
+            r1Width = r1[3] - r1[1]
+            r1Height = r1[2] - r1[0]
+            bbAreas[i] = r1Width * r1Height
+
+        # Then we check for each RoI that has not already been checked
+        for j in range(i + 1, len(rois)):
+            if j in toDelete:
+                continue
+            r2 = rois[j]
+
+            # We want only one prediction class to be vessel
+            priority = comparePriority(class_ids[i] - 1, class_ids[j] - 1, priority_table)
+            if priority == 0:
+                continue
+
+            # If the area of the 2nd RoI has not been computed
+            if bbAreas[j] == 0:
+                r2Width = r2[3] - r2[1]
+                r2Height = r2[2] - r2[0]
+                bbAreas[j] = r2Width * r2Height
+
+            # Computation of the bb intersection
+            y1 = np.maximum(r1[0], r2[0])
+            y2 = np.minimum(r1[2], r2[2])
+            x1 = np.maximum(r1[1], r2[1])
+            x2 = np.minimum(r1[3], r2[3])
+            xInter = np.maximum(x2 - x1, 0)
+            yInter = np.maximum(y2 - y1, 0)
+            intersection = xInter * yInter
+
+            # We skip next part if bb intersection not representative enough
+            partOfR1 = intersection / bbAreas[i]
+            partOfR2 = intersection / bbAreas[j]
+            if partOfR1 > bb_threshold or partOfR2 > bb_threshold:
+                # Getting first mask and computing its area if not done yet
+                mask1 = masks[:, :, i]
+                if maskAreas[i] == -1:
+                    mask1Histogram = div.getBWCount(mask1, using="numpy")
+                    maskAreas[i] = mask1Histogram[1]
+                    if maskAreas[i] == 0:
+                        print(i, mask1Histogram[1])
+
+                # Getting second mask and computing its area if not done yet
+                mask2 = masks[:, :, j]
+                if maskAreas[j] == -1:
+                    mask2Histogram = div.getBWCount(mask2, using="numpy")
+                    maskAreas[j] = mask2Histogram[1]
+                    if maskAreas[j] == 0:
+                        print(j, mask2Histogram[1])
+
+                # Computing intersection of mask 1 and 2 and computing its area
+                mask1AND2 = np.logical_and(mask1, mask2)
+                mask1AND2Histogram = div.getBWCount(mask1AND2, using="numpy")
+                partOfMask1 = mask1AND2Histogram[1] / maskAreas[i]
+                partOfMask2 = mask1AND2Histogram[1] / maskAreas[j]
+
+                # We check if the common area represents more than the vessel_threshold of the non-vessel mask
+                if priority == -1 and partOfMask1 > mask_threshold:
+                    print("[{:03d}/{:03d}] Kept class = {}\tRemoved Class = {}".format(i, j,
+                                                                                       class_ids[i], class_ids[j]))
+                    toDelete.append(i)
+                elif priority == 1 and partOfMask2 > mask_threshold:
+                    print("[{:03d}/{:03d}] Kept class = {}\tRemoved Class = {}".format(i, j,
+                                                                                       class_ids[i], class_ids[j]))
+                    toDelete.append(j)
+
+    # Deletion of unwanted results
+    scores = np.delete(scores, toDelete)
+    class_ids = np.delete(class_ids, toDelete)
+    masks = np.delete(masks, toDelete, axis=2)
+    rois = np.delete(rois, toDelete, axis=0)
+    return {"rois": rois, "class_ids": class_ids, "scores": scores, "masks": masks}
+
+
+def extract_annotations(filtered_masks, imageName):
+    # TODO : Implementing annotations extraction
+    return
 
 
 ############################################################
