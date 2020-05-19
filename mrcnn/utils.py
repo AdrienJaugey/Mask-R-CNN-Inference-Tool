@@ -23,10 +23,12 @@ import shutil
 import warnings
 from distutils.version import LooseVersion
 from datasetTools import datasetDivider as div
-from datasetTools.XMLExporter import XMLExporter
+from datasetTools.AnnotationExporter import AnnotationExporter
 from datasetTools.ASAPExporter import ASAPExporter
 
 # URL from which to download the latest COCO trained weights
+from datasetTools.LabelMeExporter import LabelMeExporter
+
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
 
 
@@ -460,7 +462,8 @@ def getPoints(mask, xOffset=0, yOffset=0, epsilon=1,
     res = cv2.approxPolyDP(cnt, epsilon, True)
     pts = []
     for point in res:
-        pts.append([point[0][0] + xOffset, point[0][1] + yOffset])
+        # Casting coordinates to int, not doing this makes crash json dump
+        pts.append([int(point[0][0] + xOffset), int(point[0][1] + yOffset)])
 
     if info:
         maskHeight, maskWidth = mask.shape
@@ -489,26 +492,32 @@ def getPoints(mask, xOffset=0, yOffset=0, epsilon=1,
     return pts
 
 
-def export_annotations(image_name: str, results: dict, class_names: [str],
-                       exporter: XMLExporter, asap_colors=None, save_path="predicted/"):
+def export_annotations(image_name: str, results: dict, classes_info: [{int, str, str}],
+                       exporter: AnnotationExporter, save_path="predicted/"):
     """
     Exports predicted results to an XML annotation file using given XMLExporter
     :param image_name: name of the inferred image
     :param results: inference results of the image
-    :param class_names: list of class names, including background
+    :param classes_info: list of class names, including background
     :param exporter: class inheriting XMLExporter
-    :param asap_colors: if using ASAPExporter, dict matching classes' names and their colors
     :param save_path: path to the dir you want to save the annotation file
     :return: None
     """
-    isASAPExporter = type(exporter) == type(ASAPExporter)
-    assert not isASAPExporter or (isASAPExporter and asap_colors is not None)
+    isASAPExporter = exporter is ASAPExporter
+    isLabelMeExporter = exporter is LabelMeExporter
+    assert not (isASAPExporter and isLabelMeExporter)
 
-    xmlData = exporter()
+    if isASAPExporter:
+        print("Exporting to ASAP annotation file format.")
+    if isLabelMeExporter:
+        print("Exporting to LabelMe annotation file format.")
+
     rois = results['rois']
     masks = results['masks']
     class_ids = results['class_ids']
     height, width = masks[:, :, 0].shape
+    xmlData = exporter({"name": image_name, "height": height, 'width': width})
+
     # For each prediction
     for i in range(masks.shape[2]):
         # Getting the RoI coordinates and the corresponding area
@@ -522,18 +531,16 @@ def export_annotations(image_name: str, results: dict, class_names: [str],
 
         # Getting list of points coordinates and adding the prediction to XML
         points = getPoints(np.uint8(mask), xOffset=xStart, yOffset=yStart, show=False, waitSeconds=0, info=False)
-        xmlData.addAnnotation(class_names[class_ids[i]], points)
+        classInfo = classes_info[class_ids[i]]
+        xmlData.addAnnotation(classInfo, points)
 
-    if isASAPExporter:
-        for i, name in enumerate(class_names):
-            if i == 0:
-                continue
-            xmlData.addAnnotationClass(name, asap_colors[name])
-    else:
-        for name in class_names:
-            xmlData.addAnnotationClass(name)
+    for classInfo in classes_info:
+        if classInfo["id"] == 0:
+            continue
+        xmlData.addAnnotationClass(classInfo)
+
     os.makedirs(save_path, exist_ok=True)
-    xmlData.saveToFile(save_path + image_name + ".xml")
+    xmlData.saveToFile(save_path, image_name)
 
 
 ############################################################

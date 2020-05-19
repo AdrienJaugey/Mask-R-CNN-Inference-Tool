@@ -1,5 +1,5 @@
 import xml.etree.ElementTree as et
-from datasetTools.XMLExporter import XMLExporter
+from datasetTools.AnnotationExporter import XMLExporter
 
 
 class ASAPExporter(XMLExporter):
@@ -24,8 +24,8 @@ class ASAPExporter(XMLExporter):
         </ASAP_Annotations>
     '''
 
-    def __init__(self):
-        super().__init__("ASAP_Annotations")
+    def __init__(self, imageInfo: dict):
+        super().__init__(imageInfo, "ASAP_Annotations")
         self.annotations = et.Element('Annotations')
         self.annotations.text = "\n\t\t"
         self.annotations.tail = "\n\t"
@@ -36,21 +36,26 @@ class ASAPExporter(XMLExporter):
         self.addToRoot(self.groups)
         self.nbAnnotation = 0
         self.nbGroup = 0
+        self.classCount = {}
 
-    def addAnnotation(self, className, points):
+    def addAnnotation(self, classInfo: {}, points):
+        if classInfo["name"] not in self.classCount:
+            self.classCount[classInfo["name"]] = 0
+
         mask = et.Element('Annotation')
-        self.annotations.append(mask)
-        mask.set('Name', "Annotation {}".format(self.nbAnnotation))
-        self.nbAnnotation += 1
+        mask.set('Name', "{} {} ({})".format(classInfo["name"], self.classCount[classInfo["name"]], self.nbAnnotation))
         mask.set("Type", "Polygon")
-        mask.set("PartOfGroup", className)
+        mask.set("PartOfGroup", classInfo["name"])
         mask.set("Color", "#F4FA58")
         mask.text = "\n\t\t\t"
         mask.tail = "\n\t\t"
+        self.annotations.append(mask)
+
         coordinates = et.Element('Coordinates')
         coordinates.text = "\n\t\t\t\t"
         coordinates.tail = "\n\t\t"
         mask.append(coordinates)
+
         for i, pt in enumerate(points):
             coordinate = et.Element('Coordinate')
             coordinate.set("Order", str(i))
@@ -59,17 +64,22 @@ class ASAPExporter(XMLExporter):
             coordinate.tail = "\n\t\t\t" + ("\t" if i != len(points) - 1 else "")
             coordinates.append(coordinate)
 
-    def addAnnotationClass(self, className, color):
-        self.nbGroup += 1
+        self.classCount[classInfo["name"]] += 1
+        self.nbAnnotation += 1
+
+    def addAnnotationClass(self, classInfo: {}):
         group = et.Element('Group')
-        group.set('Name', className)
+        group.set('Name', classInfo["name"])
         group.set('PartOfGroup', "None")
-        group.set("Color", color)
+        group.set("Color", classInfo["color"])
         group.text = "\n\t\t\t"
         group.tail = "\n\t\t"
+
         attribute = et.Element('Attributes')
         attribute.tail = "\n\t\t"
         group.append(attribute)
+
+        self.nbGroup += 1
         self.groups.append(group)
 
     def __str__(self):
