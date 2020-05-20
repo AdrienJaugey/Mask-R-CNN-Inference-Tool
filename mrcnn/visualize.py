@@ -167,7 +167,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
                       figsize=(16, 16), ax=None, fig=None,
                       show_mask=True, show_bbox=True,
                       colors=None, colorPerClass=False, captions=None,
-                      fileName=None, onlyImage=False):
+                      fileName=None, onlyImage=False, silent=False):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -191,7 +191,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     auto_show = False
     if not ax:
         fig, ax = plt.subplots(1, figsize=figsize)
-        auto_show = True
+        auto_show = not silent
 
     # Generate random colors
     nb_color = (len(class_names) - 1) if colorPerClass else N

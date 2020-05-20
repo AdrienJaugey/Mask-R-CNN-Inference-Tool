@@ -24,8 +24,8 @@ class ASAPExporter(XMLExporter):
         </ASAP_Annotations>
     '''
 
-    def __init__(self, imageInfo: dict):
-        super().__init__(imageInfo, "ASAP_Annotations")
+    def __init__(self, imageInfo: dict, verbose=0):
+        super().__init__(imageInfo, "ASAP_Annotations", verbose=verbose)
         self.annotations = et.Element('Annotations')
         self.annotations.text = "\n\t\t"
         self.annotations.tail = "\n\t"

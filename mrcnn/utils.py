@@ -336,7 +336,8 @@ def fuse_masks(fused_results,
 def filter_fused_masks(fused_results,
                        bb_threshold=0.5,
                        mask_threshold=0.9,
-                       priority_table=None):
+                       priority_table=None,
+                       verbose=0):
     """
     Post-prediction filtering to remove non-sense predictions
     :param fused_results: the results after fusion
@@ -417,12 +418,14 @@ def filter_fused_masks(fused_results,
 
                 # We check if the common area represents more than the vessel_threshold of the non-vessel mask
                 if priority == -1 and partOfMask1 > mask_threshold:
-                    print("[{:03d}/{:03d}] Kept class = {}\tRemoved Class = {}".format(i, j,
-                                                                                       class_ids[i], class_ids[j]))
+                    if verbose > 0:
+                        print("[{:03d}/{:03d}] Kept class = {}\tRemoved Class = {}".format(i, j, class_ids[i],
+                                                                                           class_ids[j]))
                     toDelete.append(i)
                 elif priority == 1 and partOfMask2 > mask_threshold:
-                    print("[{:03d}/{:03d}] Kept class = {}\tRemoved Class = {}".format(i, j,
-                                                                                       class_ids[i], class_ids[j]))
+                    if verbose > 0:
+                        print("[{:03d}/{:03d}] Kept class = {}\tRemoved Class = {}".format(i, j, class_ids[i],
+                                                                                           class_ids[j]))
                     toDelete.append(j)
 
     # Deletion of unwanted results
@@ -493,7 +496,7 @@ def getPoints(mask, xOffset=0, yOffset=0, epsilon=1,
 
 
 def export_annotations(image_name: str, results: dict, classes_info: [{int, str, str}],
-                       exporter: AnnotationExporter, save_path="predicted/"):
+                       exporter: AnnotationExporter, save_path="predicted/", verbose=0):
     """
     Exports predicted results to an XML annotation file using given XMLExporter
     :param image_name: name of the inferred image
@@ -501,22 +504,24 @@ def export_annotations(image_name: str, results: dict, classes_info: [{int, str,
     :param classes_info: list of class names, including background
     :param exporter: class inheriting XMLExporter
     :param save_path: path to the dir you want to save the annotation file
+    :param verbose: verbose level of the method (0 = nothing, 1 = information)
     :return: None
     """
     isASAPExporter = exporter is ASAPExporter
     isLabelMeExporter = exporter is LabelMeExporter
     assert not (isASAPExporter and isLabelMeExporter)
 
-    if isASAPExporter:
-        print("Exporting to ASAP annotation file format.")
-    if isLabelMeExporter:
-        print("Exporting to LabelMe annotation file format.")
+    if verbose > 0:
+        if isASAPExporter:
+            print("Exporting to ASAP annotation file format.")
+        if isLabelMeExporter:
+            print("Exporting to LabelMe annotation file format.")
 
     rois = results['rois']
     masks = results['masks']
     class_ids = results['class_ids']
     height, width = masks[:, :, 0].shape
-    xmlData = exporter({"name": image_name, "height": height, 'width': width})
+    xmlData = exporter({"name": image_name, "height": height, 'width': width}, verbose=verbose)
 
     # For each prediction
     for i in range(masks.shape[2]):

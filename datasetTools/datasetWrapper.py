@@ -48,7 +48,7 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
     """
     # Getting shape of original image (same for all this masks)
     img = None
-    img = cv2.imread(rawDatasetPath + '/' + imgName + '.png')
+    img = cv2.imread(os.path.join(rawDatasetPath, imgName + '.png'))
     if img is None:
         print('Problem with {} image'.format(imgName))
         return
@@ -61,7 +61,7 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
         cv2.imwrite(targetDirectoryPath + imgName + '.png', img)
 
     # https://www.datacamp.com/community/tutorials/python-xml-elementtree
-    tree = ET.parse(rawDatasetPath + '/' + imgName + '.xml')
+    tree = ET.parse(os.path.join(rawDatasetPath, imgName + '.xml'))
     root = tree.getroot()
     # Going through the XML tree and getting all Annotation nodes
     for annotation in root.findall('./Annotations/Annotation'):

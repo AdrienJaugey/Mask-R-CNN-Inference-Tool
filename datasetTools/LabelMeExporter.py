@@ -30,8 +30,8 @@ class LabelMeExporter(JSONExporter):
     }
     '''
 
-    def __init__(self, imageInfo: dict):
-        super().__init__(imageInfo)
+    def __init__(self, imageInfo: dict, verbose=0):
+        super().__init__(imageInfo, verbose=verbose)
         self.data = {
             "version": "4.2.10",
             "flags": {},

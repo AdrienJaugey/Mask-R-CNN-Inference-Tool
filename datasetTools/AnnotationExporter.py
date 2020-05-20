@@ -6,12 +6,13 @@ import json
 
 class AnnotationExporter(ABC):
 
-    def __init__(self, imageInfo: dict):
+    def __init__(self, imageInfo: dict, verbose=0):
         """
         Init Annotation exporter
         :param imageInfo: {"name": Image Name, "height": image height, "width": image width}
         """
         self.imageInfo = imageInfo
+        self.verbose = verbose
 
     @abstractmethod
     def addAnnotation(self, classInfo: {}, points):
@@ -52,13 +53,14 @@ class AnnotationExporter(ABC):
         filePath = os.path.join(savePath, self.getSaveFileName(fileName))
         with open(filePath, 'w') as file:
             file.write(str(self))
-            print("Annotations saved to {}".format(filePath))
+            if self.verbose > 0:
+                print("Annotations saved to {}".format(filePath))
 
 
 class XMLExporter(AnnotationExporter, ABC):
 
-    def __init__(self, imageInfo: dict, rootName):
-        super().__init__(imageInfo)
+    def __init__(self, imageInfo: dict, rootName, verbose=0):
+        super().__init__(imageInfo, verbose=verbose)
         self.root = et.Element(rootName)
         self.root.tail = "\n"
         self.root.text = "\n\t"
@@ -80,8 +82,8 @@ class XMLExporter(AnnotationExporter, ABC):
 
 class JSONExporter(AnnotationExporter, ABC):
 
-    def __init__(self, imageInfo: dict):
-        super().__init__(imageInfo)
+    def __init__(self, imageInfo: dict, verbose=0):
+        super().__init__(imageInfo, verbose)
         self.data = {}
 
     def getSaveFileName(self, fileName):
