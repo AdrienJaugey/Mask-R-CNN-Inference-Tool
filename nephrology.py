@@ -166,7 +166,7 @@ class NephrologyInferenceModel:
 
         # Load trained weights (fill in path to trained weights here)
         assert self.__MODEL_PATH != "", "Provide path to trained weights"
-        print("Loading weights from ", self.__MODEL_PATH)
+        print("Loading weights from", self.__MODEL_PATH)
         self.__MODEL.load_weights(self.__MODEL_PATH, by_name=True)
         print()
 
@@ -193,9 +193,9 @@ class NephrologyInferenceModel:
         self.__APs.clear()
         cmap = plt.cm.get_cmap('hot')
         total_start_time = time()
-        for IMAGE_PATH in images:
+        for i, IMAGE_PATH in enumerate(images):
             start_time = time()
-            print("Using {} image file".format(IMAGE_PATH))
+            print("Using {} image file ({}/{} | {:4.2f}%)".format(IMAGE_PATH, i + 1, len(images), (i + 1) / len(images) * 100))
             image, imageInfo, image_results_path = prepare_image(IMAGE_PATH, results_path, silent=displayOnlyAP)
 
             if imageInfo["HAS_ANNOTATION"]:
@@ -373,6 +373,7 @@ class NephrologyInferenceModel:
             m = final_time // 60
             s = final_time % 60
             print(" Done in {:02d}m {:02d}s\n".format(m, s))
+            plt.close('all')
 
         mAP = np.mean(self.__APs) * 100
         print("Mean Average Precision is about {:5.2f}%".format(mAP))

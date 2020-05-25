@@ -36,6 +36,7 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
     # Formatting the suffix for the image representing the mask
     maskName = str('0' if idMask < 100 else '') + str('0' if idMask < 10 else '') + str(idMask)
     # Defining path where the result image will be stored and creating dir if not exists
+    maskClass = maskClass.replace(" ", "_")
     output_directory = datasetName + '/' + imgName + '/' + maskClass + '/'
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
