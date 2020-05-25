@@ -14,14 +14,13 @@ with warnings.catch_warnings():
     import matplotlib
     import matplotlib.pyplot as plt
     import json
-    from shlex import quote
     from time import time, ctime
     from skimage.io import imread, imsave, imshow, imread_collection, concatenate_images
     from skimage.transform import resize
-    from datasetTools import datasetDivider as div
+    from datasetTools import datasetDivider as div, AnnotationAdapter
     from datasetTools import datasetWrapper as wr
-    from datasetTools.ASAPExporter import ASAPExporter
-    from datasetTools.LabelMeExporter import LabelMeExporter
+    from datasetTools.ASAPAdapter import ASAPAdapter
+    from datasetTools.LabelMeAdapter import LabelMeAdapter
     from mrcnn import config
     from mrcnn import utils
     from mrcnn import model
@@ -93,7 +92,10 @@ def prepare_image(imagePath, results_path, silent=False):
 
         nbDiv = div.getDivisionsCount(xStarts, yStarts)
 
-        if os.path.exists(dirPath + image_name + '.xml'):
+        annotationExists = False
+        for ext in AnnotationAdapter.ANNOTATION_FORMAT:
+            annotationExists = annotationExists or os.path.exists(dirPath + image_name + '.' + ext)
+        if annotationExists:
             if not silent:
                 print(" - Annotation file found: creating dataset files")
             has_annotation = True
@@ -362,10 +364,10 @@ class NephrologyInferenceModel:
             if not displayOnlyAP:
                 print(" - Saving predicted annotations files")
             utils.export_annotations(imageInfo["NAME"], filtered_masks, self.__CLASSES_INFO,
-                                     ASAPExporter,
+                                     ASAPAdapter,
                                      save_path=image_results_path, verbose=0 if displayOnlyAP else 1)
             utils.export_annotations(imageInfo["NAME"], filtered_masks, self.__CLASSES_INFO,
-                                     LabelMeExporter,
+                                     LabelMeAdapter,
                                      save_path=image_results_path, verbose=0 if displayOnlyAP else 1)
             final_time = round(time() - start_time)
             m = final_time // 60

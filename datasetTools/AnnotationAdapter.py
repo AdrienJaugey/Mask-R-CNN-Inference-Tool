@@ -4,7 +4,8 @@ import xml.etree.ElementTree as et
 import json
 
 
-class AnnotationExporter(ABC):
+class AnnotationAdapter(ABC):
+    # TODO: Saving annotations to adapter specific folder to avoid overwriting some annotations if using same file name
 
     def __init__(self, imageInfo: dict, verbose=0):
         """
@@ -39,6 +40,14 @@ class AnnotationExporter(ABC):
     def __str__(self):
         pass
 
+    @staticmethod
+    def getAnnotationFormat():
+        return None
+
+    @staticmethod
+    def getPriorityLevel():
+        return -1
+
     @abstractmethod
     def getSaveFileName(self, fileName):
         pass
@@ -56,8 +65,26 @@ class AnnotationExporter(ABC):
             if self.verbose > 0:
                 print("Annotations saved to {}".format(filePath))
 
+    @staticmethod
+    def canRead(filePath):
+        """
+        Test if class is able to read an annotation file format
+        :param filePath: file path to the annotation file
+        :return: True if the class is able to read it, else False
+        """
+        return False
 
-class XMLExporter(AnnotationExporter, ABC):
+    @staticmethod
+    def readFile(filePath):
+        """
+        Read an annotation file and extract masks information
+        :param filePath: file path to the annotation file
+        :return: [ ( maskClass, [[x, y]] ) ]
+        """
+        return None
+
+
+class XMLAdapter(AnnotationAdapter, ABC):
 
     def __init__(self, imageInfo: dict, rootName, verbose=0):
         super().__init__(imageInfo, verbose=verbose)
@@ -73,21 +100,48 @@ class XMLExporter(AnnotationExporter, ABC):
         """
         self.root.append(node)
 
+    @staticmethod
+    def getAnnotationFormat():
+        return "xml"
+
     def getSaveFileName(self, fileName):
         return fileName + '.xml'
 
     def __str__(self):
         return "<?xml version=\"1.0\"?>\n" + et.tostring(self.root, encoding='unicode', method='xml')
 
+    @staticmethod
+    def canRead(filePath):
+        return 'xml' in os.path.split(filePath)[1]
 
-class JSONExporter(AnnotationExporter, ABC):
+
+class JSONAdapter(AnnotationAdapter, ABC):
 
     def __init__(self, imageInfo: dict, verbose=0):
         super().__init__(imageInfo, verbose)
         self.data = {}
+
+    @staticmethod
+    def getAnnotationFormat():
+        return "json"
 
     def getSaveFileName(self, fileName):
         return fileName + '.json'
 
     def __str__(self):
         return json.dumps(self.data, indent='\t')
+
+    @staticmethod
+    def canRead(filePath):
+        return 'json' in os.path.split(filePath)[1]
+
+
+from datasetTools.ASAPAdapter import ASAPAdapter
+from datasetTools.LabelMeAdapter import LabelMeAdapter
+
+ANNOTATION_ADAPTERS = [ASAPAdapter, LabelMeAdapter]
+ANNOTATION_FORMAT = []
+for adapter in ANNOTATION_ADAPTERS:
+    format = adapter.getAnnotationFormat()
+    if format not in ANNOTATION_FORMAT:
+        ANNOTATION_FORMAT.append(format)

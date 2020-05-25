@@ -1,8 +1,9 @@
+import math
 import xml.etree.ElementTree as et
-from datasetTools.AnnotationExporter import XMLExporter
+from datasetTools.AnnotationAdapter import XMLAdapter
 
 
-class ASAPExporter(XMLExporter):
+class ASAPAdapter(XMLAdapter):
     """
     Exports predictions to ASAP annotation format
     """
@@ -93,3 +94,35 @@ class ASAPExporter(XMLExporter):
         else:
             self.groups[-1].tail = "\n\t"
         return super().__str__()
+
+    @staticmethod
+    def getPriorityLevel():
+        return 10
+
+    @staticmethod
+    def canRead(filePath):
+        canRead = XMLAdapter.canRead(filePath)
+        if canRead:
+            tree = et.parse(filePath)
+            root = tree.getroot()
+            canRead = root.tag == "ASAP_Annotations"
+        return canRead
+
+    @staticmethod
+    def readFile(filePath):
+        canRead = ASAPAdapter.canRead(filePath)
+        assert canRead
+        tree = et.parse(filePath)
+        root = tree.getroot()
+        masks = []
+        # Going through the XML tree and getting all Annotation nodes
+        for annotation in root.findall('./Annotations/Annotation'):
+            maskClass = annotation.attrib.get('PartOfGroup')
+            ptsMask = []
+            # Going through the Annotation node and getting all Coordinate nodes
+            for points in annotation.find('Coordinates'):
+                xCoordinate = points.attrib.get('X')
+                yCoordinate = points.attrib.get('Y')
+                ptsMask.append([xCoordinate, yCoordinate])
+            masks.append((maskClass, ptsMask))
+        return masks

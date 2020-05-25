@@ -2,6 +2,23 @@ import os
 import xml.etree.ElementTree as ET
 import numpy as np
 import cv2
+from datasetTools import AnnotationAdapter as adapt
+from datasetTools.AnnotationAdapter import AnnotationAdapter
+
+classesInfo = [
+    {"id": 0, "name": "Background", "color": "", "ignore": True},
+    {"id": 1, "name": "tubule_sain", "color": "#ff007f", "ignore": False},
+    {"id": 2, "name": "tubule_atrophique", "color": "#55557f", "ignore": False},
+    {"id": 3, "name": "nsg_complet", "color": "#ff557f", "ignore": False},
+    {"id": 4, "name": "nsg_partiel", "color": "#55aa7f", "ignore": False},
+    {"id": 5, "name": "pac", "color": "#ffaa7f", "ignore": False},
+    {"id": 6, "name": "vaisseau", "color": "#55ff7f", "ignore": False},
+    {"id": 7, "name": "artefact", "color": "#000000", "ignore": False},
+    {"id": 8, "name": "veine", "color": "#0000ff", "ignore": False},
+    {"id": 9, "name": "nsg", "color": "#55007f", "ignore": True},
+    {"id": 10, "name": "intima", "color": "#aa0000", "ignore": True},
+    {"id": 11, "name": "media", "color": "#aa5500", "ignore": True}
+]
 
 
 def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 'dataset_train',
@@ -38,16 +55,17 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
     cv2.imwrite(output_directory + output_name, mask)
 
 
-def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'dataset_train'):
+def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'dataset_train',
+                       adapter: AnnotationAdapter = None):
     """
     Create all the masks of a given image by parsing xml annotations file
     :param rawDatasetPath: path to the folder containing images and associated annotations
     :param imgName: name w/o extension of an image
     :param datasetName: name of the output dataset
+    :param adapter: the annotation adapter to use to create masks, if None looking for an adapter that can read the file
     :return: None
     """
     # Getting shape of original image (same for all this masks)
-    img = None
     img = cv2.imread(os.path.join(rawDatasetPath, imgName + '.png'))
     if img is None:
         print('Problem with {} image'.format(imgName))
@@ -60,21 +78,54 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
         os.makedirs(targetDirectoryPath)
         cv2.imwrite(targetDirectoryPath + imgName + '.png', img)
 
-    # https://www.datacamp.com/community/tutorials/python-xml-elementtree
-    tree = ET.parse(os.path.join(rawDatasetPath, imgName + '.xml'))
-    root = tree.getroot()
-    # Going through the XML tree and getting all Annotation nodes
-    for annotation in root.findall('./Annotations/Annotation'):
-        maskClass = annotation.attrib.get('PartOfGroup')
-        noMask = annotation.attrib.get('Name').replace('Annotation ', '')
-        ptsMask = []
-        # Going through the Annotation node and getting all Coordinate nodes
-        for points in annotation.find('Coordinates'):
-            xCoordinate = points.attrib.get('X')
-            yCoordinate = points.attrib.get('Y')
-            ptsMask.append([xCoordinate, yCoordinate])
-        # print('Mask ' + noMask + ': NbPts = ' + str(len(ptsMask)) + '\tclass = ' + maskClass)
-        createMask(imgName, shape, int(noMask), ptsMask, datasetName, maskClass)
+    # Finding annotation files
+    formats = adapt.ANNOTATION_FORMAT
+    fileList = os.listdir(rawDatasetPath)
+    imageFiles = []
+    for file in fileList:
+        if imgName in file:
+            if file.split('.')[-1] in formats:
+                imageFiles.append(file)
+
+    # Choosing the adapter to use (parameters to force it ?)
+    file = None
+    assert len(imageFiles) > 0
+    if adapter is None:
+        # No adapter given, we are looking for the adapter with highest priority level that can read an/the annotation
+        # file
+        adapters = adapt.ANNOTATION_ADAPTERS
+        adapterPriority = -1
+        for f in imageFiles:
+            for a in adapters:
+                if a.canRead(os.path.join(rawDatasetPath, f)):
+                    if a.getPriorityLevel() > adapterPriority:
+                        adapterPriority = a.getPriorityLevel()
+                        adapter = a
+                        file = f
+    else:
+        # Using given adapter, we are looking for a file that can be read
+        file = None
+        for f in imageFiles:
+            if adapter.canRead(os.path.join(rawDatasetPath, f)) and file is None:
+                file = f
+
+    # Getting the masks data
+    masks = adapter.readFile(os.path.join(rawDatasetPath, file))
+
+    # Creating masks
+    for noMask, (datasetClass, maskPoints) in enumerate(masks):
+        # Converting class id to class name if needed
+        if type(datasetClass) is int:
+            if classesInfo[datasetClass]["id"] == datasetClass:
+                maskClass = classesInfo[datasetClass]["name"]
+            else:
+                for classInfo in classesInfo:
+                    if classInfo["id"] == datasetClass:
+                        maskClass = classInfo["name"]
+                        break
+        else:
+            maskClass = datasetClass
+        createMask(imgName, shape, noMask, maskPoints, datasetName, maskClass)
 
 
 def fuseCortices(datasetPath: str, imageName: str, deleteBaseMasks=False):
@@ -175,11 +226,12 @@ def convertImage(inputImagePath: str, outputImagePath: str):
     cv2.imwrite(outputImagePath, image)
 
 
-def getInfoRawDataset(rawDatasetPath: str, verbose=False):
+def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAdapter = None):
     """
     Listing all available images, those with missing information
     :param verbose: whether or not print should be executed
     :param rawDatasetPath: path to the raw dataset folder
+    :param adapter:
     :return: list of unique files names, list of available images names, list of missing images names,
     list of missing annotations names
     """
@@ -187,6 +239,10 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False):
     images = []  # list of image that can be used to compute masks
     missingImages = []  # list of missing images
     missingAnnotations = []  # list of missing annotations
+    if adapter is None:
+        formats = adapt.ANNOTATION_FORMAT
+    else:
+        formats = [adapter.getAnnotationFormat()]
     if verbose:
         print("Listing files and creating png if not present")
     for file in os.listdir(rawDatasetPath):
@@ -203,7 +259,9 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False):
             jp2Exists = os.path.exists(jp2Path)
 
             # Testing if annotation file exists for that name
-            annotationsExist = os.path.exists(os.path.join(rawDatasetPath, name + '.xml'))
+            annotationsExist = False
+            for ext in formats:
+                annotationsExist = annotationsExist or os.path.exists(os.path.join(rawDatasetPath, name + '.' + ext))
             if pngExists or jp2Exists:  # At least one image exists
                 if not annotationsExist:  # Annotations are missing
                     missingAnnotations.append(name)
@@ -220,42 +278,17 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False):
     return names, images, missingImages, missingAnnotations
 
 
-def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', deleteBaseCortexMasks=False):
+def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', deleteBaseCortexMasks=False,
+                 adapter: AnnotationAdapter = None):
     """
     Start wrapping the raw dataset into the wanted format
     :param deleteBaseCortexMasks: delete the base masks images after fusion
     :param rawDatasetPath: path to the folder containing images and associated annotations
     :param datasetName: name of the output dataset
+    :param adapter: Adapter to use to read annotations, if None compatible adapter will be searched
     :return: None
     """
-    names, images, missingImages, missingAnnotations = getInfoRawDataset(rawDatasetPath, verbose=True)
-    for file in os.listdir(rawDatasetPath):
-        name = file.split('.')[0]
-        if name not in names:  # We want to do this only once per unique file name (without extension)
-            names.append(name)
-
-            # Testing if there is an png image with that name
-            pngPath = os.path.join(rawDatasetPath, name + '.png')
-            pngExists = os.path.exists(pngPath)
-
-            # Same thing with jp2 format
-            jp2Path = os.path.join(rawDatasetPath, name + '.jp2')
-            jp2Exists = os.path.exists(jp2Path)
-
-            # Testing if annotation file exists for that name
-            annotationsExist = os.path.exists(os.path.join(rawDatasetPath, name + '.xml'))
-            if pngExists or jp2Exists:  # At least one image exists
-                if not annotationsExist:  # Annotations are missing
-                    missingAnnotations.append(name)
-                else:
-                    print("Adding {} image".format(name))
-                    if not pngExists:  # Only jp2 exists
-                        print("\tCreating png version")
-                        image = cv2.imread(jp2Path)  # Opening the jp2 image
-                        cv2.imwrite(pngPath, image)  # Saving the jp2 image to png format
-                    images.append(name)  # Adding this image to the list
-            elif annotationsExist:  # There is no image file but xml found
-                missingImages.append(name)
+    names, images, missingImages, missingAnnotations = getInfoRawDataset(rawDatasetPath, verbose=True, adapter=adapter)
 
     print()
     # Displaying missing image files
@@ -279,7 +312,6 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
         file = images[index]
         print('Creating masks for {} image {}/{} ({:.2f}%)'.format(file, index + 1, nbImages,
                                                                    (index + 1) / nbImages * 100))
-        createMasksOfImage(rawDatasetPath, file, datasetName)
+        createMasksOfImage(rawDatasetPath, file, datasetName, adapter)
         fuseCortices(datasetName, file, deleteBaseMasks=deleteBaseCortexMasks)
         cleanImage(datasetName, file)
-

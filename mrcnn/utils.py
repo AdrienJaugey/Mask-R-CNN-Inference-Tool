@@ -23,12 +23,11 @@ import shutil
 import warnings
 from distutils.version import LooseVersion
 from datasetTools import datasetDivider as div
-from datasetTools.AnnotationExporter import AnnotationExporter
-from datasetTools.ASAPExporter import ASAPExporter
+from datasetTools.AnnotationAdapter import AnnotationAdapter
+from datasetTools.ASAPAdapter import ASAPAdapter
+from datasetTools.LabelMeAdapter import LabelMeAdapter
 
 # URL from which to download the latest COCO trained weights
-from datasetTools.LabelMeExporter import LabelMeExporter
-
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
 
 
@@ -496,32 +495,32 @@ def getPoints(mask, xOffset=0, yOffset=0, epsilon=1,
 
 
 def export_annotations(image_name: str, results: dict, classes_info: [{int, str, str}],
-                       exporter: AnnotationExporter, save_path="predicted/", verbose=0):
+                       adapter: AnnotationAdapter, save_path="predicted/", verbose=0):
     """
     Exports predicted results to an XML annotation file using given XMLExporter
     :param image_name: name of the inferred image
     :param results: inference results of the image
     :param classes_info: list of class names, including background
-    :param exporter: class inheriting XMLExporter
+    :param adapter: class inheriting XMLExporter
     :param save_path: path to the dir you want to save the annotation file
     :param verbose: verbose level of the method (0 = nothing, 1 = information)
     :return: None
     """
-    isASAPExporter = exporter is ASAPExporter
-    isLabelMeExporter = exporter is LabelMeExporter
-    assert not (isASAPExporter and isLabelMeExporter)
+    isASAPAdapter = adapter is ASAPAdapter
+    isLabelMeAdapter = adapter is LabelMeAdapter
+    assert not (isASAPAdapter and isLabelMeAdapter)
 
     if verbose > 0:
-        if isASAPExporter:
+        if isASAPAdapter:
             print("Exporting to ASAP annotation file format.")
-        if isLabelMeExporter:
+        if isLabelMeAdapter:
             print("Exporting to LabelMe annotation file format.")
 
     rois = results['rois']
     masks = results['masks']
     class_ids = results['class_ids']
     height, width = masks[:, :, 0].shape
-    xmlData = exporter({"name": image_name, "height": height, 'width': width}, verbose=verbose)
+    xmlData = adapter({"name": image_name, "height": height, 'width': width}, verbose=verbose)
 
     # For each prediction
     for i in range(masks.shape[2]):

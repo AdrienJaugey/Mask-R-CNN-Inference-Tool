@@ -2,8 +2,10 @@ import os
 from shutil import move
 import numpy as np
 
-import datasetWrapper as dW
-import datasetDivider as dD
+from datasetTools import datasetWrapper as dW
+from datasetTools import datasetDivider as dD
+from datasetTools.ASAPAdapter import ASAPAdapter
+from datasetTools.LabelMeAdapter import LabelMeAdapter
 
 
 def infoNephrologyDataset(datasetPath: str, silent=False):
@@ -150,7 +152,7 @@ def createValDataset(datasetPath: str, valDatasetPath: str = None, valDatasetSiz
         move(datasetPath, newName)
 
 
-dW.startWrapper('raw_dataset', 'temp_nephrology_dataset', deleteBaseCortexMasks=True)
+dW.startWrapper('raw_dataset', 'temp_nephrology_dataset', deleteBaseCortexMasks=True, adapter=None)
 infoNephrologyDataset('temp_nephrology_dataset')
 dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset', squareSideLength=1024)
 infoNephrologyDataset('nephrology_dataset')
