@@ -375,15 +375,16 @@ class NephrologyInferenceModel:
             print(" Done in {:02d}m {:02d}s\n".format(m, s))
             plt.close('all')
 
-        mAP = np.mean(self.__APs) * 100
-        print("Mean Average Precision is about {:5.2f}%".format(mAP))
-        name = "Final Confusion Matrix"
-        name2 = "Final Normalized Confusion Matrix"
-        visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, dataset_val.get_class_names(), title=name,
-                                           cmap=cmap, show=False, fileName=results_path + name)
-        visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, dataset_val.get_class_names(), title=name2,
-                                           cmap=cmap, show=False, normalize=True,
-                                           fileName=results_path + name2)
+        if len(self.__APs) > 0:
+            mAP = np.mean(self.__APs) * 100
+            print("Mean Average Precision is about {:5.2f}%".format(mAP))
+            name = "Final Confusion Matrix"
+            name2 = "Final Normalized Confusion Matrix"
+            visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, dataset_val.get_class_names(), title=name,
+                                               cmap=cmap, show=False, fileName=results_path + name)
+            visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, dataset_val.get_class_names(), title=name2,
+                                               cmap=cmap, show=False, normalize=True,
+                                               fileName=results_path + name2)
         total_time = round(time() - total_start_time)
         h = total_time // 3600
         m = (total_time % 3600) // 60
