@@ -58,65 +58,6 @@ def listAvailableImage(dirPath: str):
     return image
 
 
-def prepare_image(imagePath, results_path, silent=False):
-    """
-    Creating png version if not existing, dataset masks if annotation found and get some information
-    :param imagePath: path to the image to use
-    :param results_path: path to the results dir to create the image folder and paste it in
-    :param silent: No display
-    :return: image, imageInfo = {"PATH": str, "DIR_PATH": str, "FILE_NAME": str, "NAME": str, "HEIGHT": int,
-    "WIDTH": int, "NB_DIV": int, "X_STARTS": v, "Y_STARTS": list, "HAS_ANNOTATION": bool}
-    """
-    if os.path.exists(imagePath):
-        image_file_name = imagePath.split('/')[-1]
-        dirPath = imagePath.replace(image_file_name, '')
-        image_name = image_file_name.split('.')[0]
-        image_extension = image_file_name.split('.')[-1]
-
-        image_results_path = results_path + image_name + "/"
-        os.makedirs(image_results_path, exist_ok=True)
-
-        image = imread(imagePath)
-        if image_extension != "png":
-            # print('Converting to png')
-            tempPath = dirPath + image_name + '.png'
-            imsave(tempPath, image)
-            imagePath = tempPath
-        imsave(os.path.join(image_results_path, image_name + ".png"), image)
-
-        image = cv2.imread(imagePath)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        height, width, _ = image.shape
-        xStarts = div.computeStartsOfInterval(width)
-        yStarts = div.computeStartsOfInterval(height)
-
-        nbDiv = div.getDivisionsCount(xStarts, yStarts)
-
-        annotationExists = False
-        for ext in AnnotationAdapter.ANNOTATION_FORMAT:
-            annotationExists = annotationExists or os.path.exists(dirPath + image_name + '.' + ext)
-        if annotationExists:
-            if not silent:
-                print(" - Annotation file found: creating dataset files")
-            has_annotation = True
-            wr.createMasksOfImage(dirPath, image_name, 'data')
-        else:
-            has_annotation = False
-        imageInfo = {
-            "PATH": imagePath,
-            "DIR_PATH": dirPath,
-            "FILE_NAME": image_file_name,
-            "NAME": image_name,
-            "HEIGHT": height,
-            "WIDTH": width,
-            "NB_DIV": nbDiv,
-            "X_STARTS": xStarts,
-            "Y_STARTS": yStarts,
-            "HAS_ANNOTATION": has_annotation
-        }
-        return image, imageInfo, image_results_path
-
-
 class NephrologyInferenceModel:
 
     def __init__(self, classesInfo, modelPath, divisionSize=1024):
@@ -137,7 +78,7 @@ class NephrologyInferenceModel:
 
         # Configurations
         nbClass = self.__NB_CLASS
-        divSize = self.__DIVISION_SIZE
+        divSize = 1024 if self.__DIVISION_SIZE == "noDiv" else self.__DIVISION_SIZE
         self.__CONFUSION_MATRIX = np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int32)
         self.__APs = []
 
@@ -170,11 +111,76 @@ class NephrologyInferenceModel:
         self.__MODEL.load_weights(self.__MODEL_PATH, by_name=True)
         print()
 
+    def prepare_image(self, imagePath, results_path, silent=False):
+        """
+        Creating png version if not existing, dataset masks if annotation found and get some information
+        :param imagePath: path to the image to use
+        :param results_path: path to the results dir to create the image folder and paste it in
+        :param silent: No display
+        :return: image, imageInfo = {"PATH": str, "DIR_PATH": str, "FILE_NAME": str, "NAME": str, "HEIGHT": int,
+        "WIDTH": int, "NB_DIV": int, "X_STARTS": v, "Y_STARTS": list, "HAS_ANNOTATION": bool}
+        """
+        image = None
+        imageInfo = None
+        image_results_path = None
+        if os.path.exists(imagePath):
+            image_file_name = imagePath.split('/')[-1]
+            dirPath = imagePath.replace(image_file_name, '')
+            image_name = image_file_name.split('.')[0]
+            image_extension = image_file_name.split('.')[-1]
+
+            image_results_path = results_path + image_name + "/"
+            os.makedirs(image_results_path, exist_ok=True)
+
+            image = imread(imagePath)
+            if image_extension != "png":
+                # print('Converting to png')
+                tempPath = dirPath + image_name + '.png'
+                imsave(tempPath, image)
+                imagePath = tempPath
+            imsave(os.path.join(image_results_path, image_name + ".png"), image)
+
+            image = cv2.imread(imagePath)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            height, width, _ = image.shape
+            xStarts = [0] if self.__DIVISION_SIZE == "noDiv" else div.computeStartsOfInterval(
+                maxVal=width, intervalLength=self.__DIVISION_SIZE
+            )
+            yStarts = [0] if self.__DIVISION_SIZE == "noDiv" else div.computeStartsOfInterval(
+                maxVal=height, intervalLength=self.__DIVISION_SIZE
+            )
+
+            nbDiv = div.getDivisionsCount(xStarts, yStarts)
+
+            annotationExists = False
+            for ext in AnnotationAdapter.ANNOTATION_FORMAT:
+                annotationExists = annotationExists or os.path.exists(dirPath + image_name + '.' + ext)
+            if annotationExists:
+                if not silent:
+                    print(" - Annotation file found: creating dataset files")
+                has_annotation = True
+                wr.createMasksOfImage(dirPath, image_name, 'data')
+            else:
+                has_annotation = False
+            imageInfo = {
+                "PATH": imagePath,
+                "DIR_PATH": dirPath,
+                "FILE_NAME": image_file_name,
+                "NAME": image_name,
+                "HEIGHT": height,
+                "WIDTH": width,
+                "NB_DIV": nbDiv,
+                "X_STARTS": xStarts,
+                "Y_STARTS": yStarts,
+                "HAS_ANNOTATION": has_annotation
+            }
+        return image, imageInfo, image_results_path
+
     def inference(self, images: list, results_path=None, save_results=True,
                   fusion_bb_threshold=0., fusion_mask_threshold=0.1,
                   filter_bb_threshold=0.5, filter_mask_threshold=0.9,
                   priority_table=None, displayOnlyAP=False):
-
+        assert len(images) > 0, "images list cannot be empty"
         if results_path is None or results_path in ['.', './', "/"]:
             lastDir = "results"
             remainingPath = ""
@@ -187,17 +193,20 @@ class NephrologyInferenceModel:
             remainingPath = results_path[0:results_path.index(lastDir)]
 
         results_path = remainingPath + "{}_{}/".format(lastDir, datetime.now().strftime("%Y%m%d_%H%M%S"))
+        os.makedirs(results_path)
         print("Results will be saved to {}".format(results_path))
-
+        logsPath = os.path.join(results_path, 'inference_data.csv')
+        with open(logsPath, 'w') as results_log:
+            results_log.write("Image; Duration (s); Precision;\n")
         self.__CONFUSION_MATRIX.fill(0)
         self.__APs.clear()
         cmap = plt.cm.get_cmap('hot')
         total_start_time = time()
         for i, IMAGE_PATH in enumerate(images):
             start_time = time()
-            print("Using {} image file ({}/{} | {:4.2f}%)".format(IMAGE_PATH, i + 1, len(images), (i + 1) / len(images) * 100))
-            image, imageInfo, image_results_path = prepare_image(IMAGE_PATH, results_path, silent=displayOnlyAP)
-
+            print("Using {} image file ({}/{} | {:4.2f}%)".format(IMAGE_PATH, i + 1, len(images),
+                                                                  (i + 1) / len(images) * 100))
+            image, imageInfo, image_results_path = self.prepare_image(IMAGE_PATH, results_path, silent=displayOnlyAP)
             if imageInfo["HAS_ANNOTATION"]:
                 class LightCellsDataset(utils.Dataset):
 
@@ -283,11 +292,11 @@ class NephrologyInferenceModel:
                     if not displayOnlyAP:
                         print(" - Applying annotations on file to get expected results")
                     fileName = image_results_path + "{} Expected".format(imageInfo["NAME"])
-                    visualize.display_instances(image, gt_bbox, gt_mask, gt_class_id, dataset_val.class_names,
-                                                colorPerClass=True, figsize=(imageInfo["WIDTH"] / 100,
-                                                                             imageInfo["HEIGHT"] / 100),
-                                                title="{} Expected".format(imageInfo["NAME"]),
-                                                fileName=fileName, silent=True)
+                    _ = visualize.display_instances(image, gt_bbox, gt_mask, gt_class_id, dataset_val.class_names,
+                                                    colorPerClass=True, figsize=(imageInfo["WIDTH"] / 100,
+                                                                                 imageInfo["HEIGHT"] / 100),
+                                                    title="{} Expected".format(imageInfo["NAME"]),
+                                                    fileName=fileName, silent=True)
 
             # Getting predictions for each division
 
@@ -305,7 +314,7 @@ class NephrologyInferenceModel:
 
             if not displayOnlyAP:
                 print(" - Fusing results of all divisions")
-            fused_results = utils.fuse_results(res, image)
+            fused_results = utils.fuse_results(res, image, division_size=self.__DIVISION_SIZE)
 
             if not displayOnlyAP:
                 print(" - Fusing overlapping masks")
@@ -373,6 +382,11 @@ class NephrologyInferenceModel:
             m = final_time // 60
             s = final_time % 60
             print(" Done in {:02d}m {:02d}s\n".format(m, s))
+            if not imageInfo['HAS_ANNOTATION']:
+                AP = -1
+            with open(logsPath, 'a') as results_log:
+                apText = "{:4.3f}".format(AP).replace(".", ",")
+                results_log.write("{}; {}; {};\n".format(imageInfo["NAME"], final_time, apText))
             plt.close('all')
 
         if len(self.__APs) > 0:
@@ -385,10 +399,14 @@ class NephrologyInferenceModel:
             visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, dataset_val.get_class_names(), title=name2,
                                                cmap=cmap, show=False, normalize=True,
                                                fileName=results_path + name2)
+        else:
+            mAP = -1
         total_time = round(time() - total_start_time)
         h = total_time // 3600
         m = (total_time % 3600) // 60
         s = final_time % 60
         print("All inferences done in {:02d}h {:02d}m {:02d}s".format(h, m, s))
         plt.close('all')
-        # TODO: delete 'data/' folder or whatever name it has
+        with open(logsPath, 'a') as results_log:
+            mapText = "{:4.3f}".format(mAP).replace(".", ",")
+            results_log.write("GLOBAL; {}; {};\n".format(total_time, mapText))

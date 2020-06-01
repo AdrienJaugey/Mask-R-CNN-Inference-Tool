@@ -150,8 +150,9 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     # Adding the text values above the image
     for i in range(NB_CLASS + 1):
         for j in range(NB_CLASS + 1):
-            color = get_text_color(matrix[i][j], maxVal, cmap)
-            ax.text(j, i, round(matrix[i][j], 2), ha="center", va="center", color=color)
+            if matrix[i][j] != 0:
+                color = get_text_color(matrix[i][j], maxVal, cmap)
+                ax.text(j, i, round(matrix[i][j], 2), ha="center", va="center", color=color)
 
     # Auto resize of dimension
     fig.tight_layout()

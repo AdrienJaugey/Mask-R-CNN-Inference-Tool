@@ -34,20 +34,22 @@ COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0
 ############################################################
 #  Results Post-Processing
 ############################################################
-def fuse_results(results, input_image, div_ids=None):
+def fuse_results(results, input_image, division_size=1024, div_ids=None):
     """
     Fuse results of multiple predictions (divisions for example)
     :param results: list of the results of the predictions
     :param input_image: the base input image to get size
+    :param division_size:
     :param div_ids: list of div_ids in the order if some are skipped
     :return: same structure contained in results
     """
     # Getting base input image information
     div_side_length = results[0]['masks'].shape[0]
     height, width, _ = input_image.shape
-    xStarts = div.computeStartsOfInterval(width)
-    yStarts = div.computeStartsOfInterval(height)
-
+    xStarts = [0] if division_size == "noDiv" else div.computeStartsOfInterval(width, division_size)
+    yStarts = [0] if division_size == "noDiv" else div.computeStartsOfInterval(height, division_size)
+    widthRatio = width / div_side_length
+    heightRatio = height / div_side_length
     # Counting total sum of predicted masks
     size = 0
     for r in results:
@@ -77,14 +79,24 @@ def fuse_results(results, input_image, div_ids=None):
             scores[lastIndex] = r['scores'][prediction_index]
             class_ids[lastIndex] = r['class_ids'][prediction_index]
 
-            masks[yStart:yEnd, xStart:xEnd, lastIndex] = r['masks'][:, :, prediction_index]
+            if division_size != "noDiv":
+                masks[yStart:yEnd, xStart:xEnd, lastIndex] = r['masks'][:, :, prediction_index]
+            else:
+                mask = np.uint8(r['masks'][:, :, prediction_index])
+                masks[:, :, lastIndex] = cv2.resize(mask, (width, height), interpolation=cv2.INTER_CUBIC)
 
             roi = r['rois'][prediction_index].copy()
             # y1, x1, y2, x2
-            roi[0] += yStart
-            roi[1] += xStart
-            roi[2] += yStart
-            roi[3] += xStart
+            if division_size != "noDiv":
+                roi[0] += yStart
+                roi[1] += xStart
+                roi[2] += yStart
+                roi[3] += xStart
+            else:
+                roi[0] *= heightRatio
+                roi[1] *= widthRatio
+                roi[2] *= heightRatio
+                roi[3] *= widthRatio
             rois[lastIndex] = roi
 
             lastIndex += 1
@@ -343,6 +355,7 @@ def filter_fused_masks(fused_results,
     :param bb_threshold: the least part of overlapping bounding boxes to continue checking
     :param mask_threshold: the least part of a mask contained in another for it to be deleted
     :param priority_table: the priority table used to compare classes
+    :param verbose: 0 : nothing, 1+ : errors/problems, 2 : general information
     :return:
     """
     rois = fused_results['rois']
@@ -1450,3 +1463,5 @@ def resize(image, output_shape, order=1, mode='constant', cval=0, clip=True,
             image, output_shape,
             order=order, mode=mode, cval=cval, clip=clip,
             preserve_range=preserve_range)
+
+
