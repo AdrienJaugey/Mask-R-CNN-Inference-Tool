@@ -160,6 +160,7 @@ class NephrologyInferenceModel:
                     print(" - Annotation file found: creating dataset files")
                 has_annotation = True
                 wr.createMasksOfImage(dirPath, image_name, 'data')
+                wr.cleanImage('data', image_name, onlyMasks=True)
             else:
                 has_annotation = False
             imageInfo = {

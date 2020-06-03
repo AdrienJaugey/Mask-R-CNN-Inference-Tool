@@ -1,5 +1,5 @@
 import os
-from shutil import move
+from shutil import move, copy, copytree
 import numpy as np
 
 from datasetTools import datasetWrapper as dW
@@ -24,6 +24,7 @@ def infoNephrologyDataset(datasetPath: str, silent=False):
     cortexMissing = []
     printedCortexMissing = []
     multiCortices = []
+    missingDataImages = []
     nbImg = 0
     for imageDir in os.listdir(datasetPath):
         nbImg += 1
@@ -31,12 +32,16 @@ def infoNephrologyDataset(datasetPath: str, silent=False):
         cortex = False
         cortexDivided = False
         localHisto = {}
+        missingData = True
         for maskDir in os.listdir(imagePath):
             if maskDir == 'cortex':
                 cortex = True
+                missingData = False
                 cortexDivided = len(os.listdir(os.path.join(os.path.join(datasetPath, imageDir), maskDir))) > 1
             if maskDir not in ["images", "full_images"]:
                 # Removing spaces, this should not happen actually but it did
+                if maskDir in ["medullaire", "fond"]:
+                    missingData = False
                 if " " in maskDir:
                     newMaskDir = maskDir.replace(" ", "_")
                     maskDirPath = os.path.join(imagePath, maskDir)
@@ -50,11 +55,15 @@ def infoNephrologyDataset(datasetPath: str, silent=False):
                     localHisto[maskDir] = 0
                 localHisto[maskDir] += 1
         if not cortex:
-            name = imageDir.split('_')[0] + "_*"
+            if "_" in imageDir:
+                name = imageDir.split('_')[0] + "_*"
+            else:
+                name = imageDir
             if name not in printedCortexMissing:
                 printedCortexMissing.append(name)
             cortexMissing.append(imageDir)
-
+        if missingData:
+            missingDataImages.append(name)
         if cortexDivided:
             multiCortices.append(imageDir)
 
@@ -82,40 +91,88 @@ def infoNephrologyDataset(datasetPath: str, silent=False):
         print("\tNb Images : {}".format(nbImg))
         print("\tHistogram : {}".format(histogram))
         print("\tMissing cortices ({}) : {}".format(len(cortexMissing), printedCortexMissing))
+        print("\tMissing data ({}) : {}".format(len(missingDataImages), missingDataImages))
         print("\tMulti cortices ({}) : {}".format(len(multiCortices), multiCortices))
         print("\tMax Classes w/ cortex  ({}) :\t{}".format(maxNbClasses, maxClasses))
         print("\tMax Classes w/o cortex ({}) :\t{}".format(maxNbClassesNoCortex, maxClassesNoCortex))
-    return nbImg, histogram, cortexMissing, multiCortices, maxClasses, maxClassesNoCortex
+    return nbImg, histogram, cortexMissing, multiCortices, maxClasses, maxClassesNoCortex, missingDataImages
 
 
-def separateCortexDataset(datasetPath: str, cortexDatasetPath: str = None):
+def sortImages(datasetPath: str, createCortexDataset=False, cortexDatasetPath: str = None, unusedDirPath: str = None):
     """
-    Move each image folder with no cortex present to the cortex dataset folder
+    Move images that cannot be used in main training/inference, can also create cortex dataset
     :param datasetPath: path to the base dataset
+    :param createCortexDataset: whether the cortex dataset should be created or not
     :param cortexDatasetPath: path to the cortex dataset
+    :param unusedDirPath: path to the directory where unused files will be moved
     :return: None
     """
-    TO_UNCOUNT = ['images', 'full_images', 'cortex']
-    if cortexDatasetPath is None:
+    # Setting paths if not given
+    if unusedDirPath is None:
+        unusedDirPath = datasetPath + '_unused'
+
+    TO_UNCOUNT = ['images', 'full_images', 'cortex', 'medullaire', 'background']
+    if createCortexDataset and cortexDatasetPath is None:
         cortexDatasetPath = datasetPath + '_cortex'
 
-    _, _, toBeMoved, _, _, _ = infoNephrologyDataset(datasetPath, silent=True)
+    # Getting list of images directories without data
+    info = infoNephrologyDataset(datasetPath, silent=True)
+    noCortex = info[2]
+    noData = info[6]
+    toBeMoved = []
+    toBeMoved.extend(noData)
+    toBeMoved.extend(noCortex)
+
+    # For each image directory that is not already in toBeMoved list
     for imageDir in os.listdir(datasetPath):
-        if imageDir in toBeMoved:
+        # If image has no cortex, medulla nor background, skip it
+        if imageDir in noData:
             continue
-        imageDirPath = os.path.join(datasetPath, imageDir)
-        masksDirList = os.listdir(imageDirPath)
-        for uncount in TO_UNCOUNT:
-            if uncount in masksDirList:
-                masksDirList.remove(uncount)
-        if len(masksDirList) == 0:
-            toBeMoved.append(imageDir)
-    os.makedirs(cortexDatasetPath, exist_ok=True)
+
+        masksDirList = os.listdir(os.path.join(datasetPath, imageDir))
+        if imageDir not in noCortex:
+            for uncount in TO_UNCOUNT:
+                if uncount in masksDirList:
+                    masksDirList.remove(uncount)
+            if len(masksDirList) == 0:
+                toBeMoved.append(imageDir)
+
+        if createCortexDataset:
+            # Init : getting paths & making dest dir
+            imageDirPath = os.path.join(datasetPath, imageDir)
+            dstDirPath = os.path.join(cortexDatasetPath, imageDir)
+            destImagesDirPath = os.path.join(dstDirPath, 'images')
+            os.makedirs(destImagesDirPath, exist_ok=True)
+
+            # Copy image from full_images (images if not present) dir to dest
+            imageFileName = imageDir + '.png'
+            if os.path.exists(os.path.join(imageDirPath, 'full_images')):
+                srcImageFilePath = os.path.join(imageDirPath, 'full_images', imageFileName)
+            else:
+                srcImageFilePath = os.path.join(imageDirPath, 'images', imageFileName)
+            fullImageDstPath = os.path.join(destImagesDirPath, imageFileName)
+            copy(srcImageFilePath, fullImageDstPath)
+
+            # Copy cortex directory to dest if exists
+            cortexDirPath = os.path.join(imageDirPath, 'cortex')
+            if os.path.exists(cortexDirPath):
+                copytree(cortexDirPath, os.path.join(dstDirPath, 'cortex'))
+
+            # Move background & medulla directories to dest if present
+            medullaDirPath = os.path.join(imageDirPath, 'medullaire')
+            if os.path.exists(medullaDirPath):
+                move(medullaDirPath, dstDirPath)
+            backgroundDirPath = os.path.join(imageDirPath, 'fond')
+            if os.path.exists(backgroundDirPath):
+                move(backgroundDirPath, dstDirPath)
+
+    # Moving directories that will not be used in main dataset
     if len(toBeMoved) > 0:
-        print("Moving {} non-cortex images directories into correct dataset".format(len(toBeMoved)))
+        os.makedirs(unusedDirPath, exist_ok=True)
+        print("Moving {} non-usable images directories into correct folder".format(len(toBeMoved)))
         for imageWithoutCortexDir in toBeMoved:
             srcPath = os.path.join(datasetPath, imageWithoutCortexDir)
-            dstPath = os.path.join(cortexDatasetPath, imageWithoutCortexDir)
+            dstPath = os.path.join(unusedDirPath, imageWithoutCortexDir)
             move(srcPath, dstPath)
 
 
@@ -152,19 +209,49 @@ def createValDataset(datasetPath: str, valDatasetPath: str = None, valDatasetSiz
         move(datasetPath, newName)
 
 
+def checkNSG(datasetPath: str):
+    totalDiff = 0
+    for imageDir in os.listdir(datasetPath):
+        dirPath = os.path.join(datasetPath, imageDir)
+        nsgDirectoriesPath = [os.path.join(dirPath, 'nsg'), os.path.join(dirPath, 'nsg_partiel'),
+                              os.path.join(dirPath, 'nsg_complet')]
+        count = [0, 0, 0]
+        for index, dir in enumerate(nsgDirectoriesPath):
+            if os.path.exists(dir):
+                count[index] = len(os.listdir(dir))
+        nsg = count[0]
+        completAndPartiel = count[1] + count[2]
+        if nsg != completAndPartiel:
+            diff = abs(count[0] - count[1] - count[2])
+            print(
+                "{} : {} {} manquant{}".format(imageDir, diff, 'nsg' if nsg < completAndPartiel else 'complet/partiel',
+                                               's' if diff > 1 else ''))
+            totalDiff += diff
+    print("Total : {}".format(totalDiff))
+
+
+dW.getInfoRawDataset('raw_dataset', verbose=True, adapter=None)
 dW.startWrapper('raw_dataset', 'temp_nephrology_dataset', deleteBaseCortexMasks=True, adapter=None)
 infoNephrologyDataset('temp_nephrology_dataset')
+checkNSG('temp_nephrology_dataset')
+
+sortImages(datasetPath='temp_nephrology_dataset',
+           createCortexDataset=True, cortexDatasetPath='nephrology_cortex_dataset',
+           unusedDirPath='nephrology_dataset_unused')
+infoNephrologyDataset('nephrology_cortex_dataset')
+createValDataset('nephrology_cortex_dataset', rename=True)
+infoNephrologyDataset('nephrology_cortex_dataset_train')
+infoNephrologyDataset('nephrology_cortex_dataset_val')
+
 dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset', squareSideLength=1024)
 infoNephrologyDataset('nephrology_dataset')
 
-# If you want to keep all cortex files comment dW.cleanCortexDir() lines
-# If you want to check them and then delete them, comment these lines too and after checking use them
-# dW.cleanCortexDir('temp_nephrology_dataset')
-# dW.cleanCortexDir('nephrology_dataset')
+# # If you want to keep all cortex files comment dW.cleanCortexDir() lines
+# # If you want to check them and then delete them, comment these lines too and after checking use them
+# # dW.cleanCortexDir('temp_nephrology_dataset')
+# # dW.cleanCortexDir('nephrology_dataset')
 
-
-separateCortexDataset('nephrology_dataset', 'nephrology_cortex_dataset')
+sortImages('nephrology_dataset', unusedDirPath='nephrology_dataset_unused')
 createValDataset('nephrology_dataset', rename=True)
 infoNephrologyDataset('nephrology_dataset_train')
-infoNephrologyDataset('nephrology_cortex_dataset')
 infoNephrologyDataset('nephrology_dataset_val')

@@ -2,6 +2,7 @@ import os
 import xml.etree.ElementTree as ET
 import numpy as np
 import cv2
+from datasetTools.datasetDivider import getBWCount
 from datasetTools import AnnotationAdapter as adapt
 from datasetTools.AnnotationAdapter import AnnotationAdapter
 
@@ -182,11 +183,14 @@ def cleanCortexDir(datasetPath: str):
                             os.remove(maskPath)
 
 
-def cleanImage(datasetPath: str, imageName: str):
+def cleanImage(datasetPath: str, imageName: str, medullaMinPart=0.05, onlyMasks=False):
     """
-    Creating the full_images directory and cleaning the base image by removing non-cortex areas
+    Creating the full_images directory and cleaning the base image by removing non-cortex areas, creating medulla mask
+    and cleaning background mask
     :param datasetPath: the dataset that have been wrapped
     :param imageName: the image you want its cortex to be fused
+    :param medullaMinPart: least part of image to represent medulla for it to be kept
+    :param onlyMasks: if true, will not create full_images directory and clean image
     :return: None
     """
     # Defining all the useful paths
@@ -196,24 +200,54 @@ def cleanImage(datasetPath: str, imageName: str):
     imagePath = os.path.join(imagesDirPath, imageFileName)
     image = cv2.imread(imagePath)
 
-    # Copying the full image into the correct directory
-    fullImageDirPath = os.path.join(currentImageDirPath, 'full_images')
-    os.makedirs(fullImageDirPath, exist_ok=True)
-    cv2.imwrite(os.path.join(fullImageDirPath, imageFileName), image)
-
     # Getting the cortex image
+    medulla = np.zeros((image.shape[0], image.shape[1]), np.uint8)
     cortexDirPath = os.path.join(currentImageDirPath, 'cortex')
-    if os.path.exists(cortexDirPath):
+    cortexPresent = os.path.exists(cortexDirPath)
+    if cortexPresent:
         cortexFileName = os.listdir(cortexDirPath)[0]
         cortexFilePath = os.path.join(cortexDirPath, cortexFileName)
-        cortex = cv2.imread(cortexFilePath)
+        if not onlyMasks:
+            # Copying the full image into the correct directory
+            fullImageDirPath = os.path.join(currentImageDirPath, 'full_images')
+            os.makedirs(fullImageDirPath, exist_ok=True)
+            cv2.imwrite(os.path.join(fullImageDirPath, imageFileName), image)
 
-        # Cleaning the image
-        image = cv2.bitwise_and(image, cortex)
-        # resized = cv2.resize(image, None, fx=1 / 3, fy=1 / 3, interpolation=cv2.INTER_CUBIC)
-        # cv2.imshow("cropped", resized)
-        # cv2.waitKey(0)
-        cv2.imwrite(imagePath, image)
+            # Cleaning the image
+            cortex = cv2.imread(cortexFilePath)
+            image = cv2.bitwise_and(image, cortex)
+            cv2.imwrite(imagePath, image)
+
+        # Starting medulla mask creation
+        cortex = cv2.imread(cortexFilePath, cv2.IMREAD_UNCHANGED)
+        invertedCortex = np.bitwise_not(cortex)
+        medulla = cortex
+
+    backgroundDirPath = os.path.join(currentImageDirPath, 'fond')
+    if os.path.exists(backgroundDirPath):
+        for backgroundFile in os.listdir(backgroundDirPath):
+            # Second Medulla mask creation step
+            backgroundFilePath = os.path.join(backgroundDirPath, backgroundFile)
+            backgroundImage = cv2.imread(backgroundFilePath, cv2.IMREAD_UNCHANGED)
+            medulla = np.bitwise_or(medulla, backgroundImage)
+
+            # Cleaning background image if cortex mask is present
+            if cortexPresent:
+                # background = background && not(cortex)
+                backgroundImage = np.bitwise_and(backgroundImage, invertedCortex)
+                cv2.imwrite(backgroundFilePath, backgroundImage)
+
+    # Last Medulla mask creation step if medulla > 1% of image
+    black, white = getBWCount(medulla)
+    bwRatio = black / (black + white)
+    if bwRatio >= medullaMinPart:
+        # medulla = !(background || cortex)
+        medulla = np.bitwise_not(medulla)
+        medullaDirPath = os.path.join(currentImageDirPath, 'medullaire')
+        os.makedirs(medullaDirPath, exist_ok=True)
+        medullaFilePath = os.path.join(medullaDirPath, imageName + '_medulla.png')
+        cv2.imwrite(medullaFilePath, medulla)
+
 
 
 def convertImage(inputImagePath: str, outputImagePath: str):
@@ -276,6 +310,29 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAda
                     images.append(name)  # Adding this image to the list
             elif annotationsExist:  # There is no image file but xml found
                 missingImages.append(name)
+    if verbose:
+        # Displaying missing image files
+        problem = False
+        nbMissingImg = len(missingImages)
+        if nbMissingImg > 0:
+            problem = True
+            print('Missing {} image{} : {}'.format(nbMissingImg, 's' if nbMissingImg > 1 else '', missingImages))
+
+        # Displaying missing annotations files
+        nbMissingAnnotations = len(missingAnnotations)
+        if nbMissingAnnotations > 0:
+            problem = True
+            print('Missing {} annotation{} : {}'.format(nbMissingAnnotations, 's' if nbMissingAnnotations > 1 else '',
+                                                        missingAnnotations))
+
+        # Checking if there is file that is not image nor annotation
+        nbImages = len(images)
+        if len(names) - nbMissingImg - nbMissingAnnotations - nbImages != 0:
+            problem = True
+            print('Be careful, there are not only required dataset files in this folder')
+
+        if not problem:
+            print("Raw Dataset has no problem. Number of Images : {}".format(nbImages))
     return names, images, missingImages, missingAnnotations
 
 
@@ -291,23 +348,7 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
     """
     names, images, missingImages, missingAnnotations = getInfoRawDataset(rawDatasetPath, verbose=True, adapter=adapter)
 
-    print()
-    # Displaying missing image files
-    nbMissingImg = len(missingImages)
-    if nbMissingImg > 0:
-        print('Missing {} image{} : {}'.format(nbMissingImg, 's' if nbMissingImg > 1 else '', missingImages))
-
-    # Displaying missing annotations files
-    nbMissingAnnotations = len(missingAnnotations)
-    if nbMissingAnnotations > 0:
-        print('Missing {} annotation{} : {}'.format(nbMissingAnnotations, 's' if nbMissingAnnotations > 1 else '',
-                                                    missingAnnotations))
-
-    # Checking if there is file that is not image nor annotation
     nbImages = len(images)
-    if len(names) - nbMissingImg - nbMissingAnnotations - nbImages != 0:
-        print('Be careful, there are not only required dataset files in this folder')
-
     # Creating masks for any image which has all required files and displaying progress
     for index in range(nbImages):
         file = images[index]

@@ -151,7 +151,8 @@ def fuse_masks(fused_results,
     scores = fused_results['scores']
     class_ids = fused_results['class_ids']
 
-    height, width = masks[:, :, 0].shape
+    height = masks.shape[0]
+    width = masks.shape[1]
     nbPx = height * width
 
     bbAreas = np.ones(len(class_ids), dtype=int) * -1
@@ -532,7 +533,8 @@ def export_annotations(image_name: str, results: dict, classes_info: [{int, str,
     rois = results['rois']
     masks = results['masks']
     class_ids = results['class_ids']
-    height, width = masks[:, :, 0].shape
+    height = masks.shape[0]
+    width = masks.shape[1]
     xmlData = adapter({"name": image_name, "height": height, 'width': width}, verbose=verbose)
 
     # For each prediction
@@ -548,7 +550,13 @@ def export_annotations(image_name: str, results: dict, classes_info: [{int, str,
 
         # Getting list of points coordinates and adding the prediction to XML
         points = getPoints(np.uint8(mask), xOffset=xStart, yOffset=yStart, show=False, waitSeconds=0, info=False)
-        classInfo = classes_info[class_ids[i]]
+        classInfo = None
+        iterator = 0
+        # Find the first class not to be ignored with the same id
+        while classInfo is None:
+            temp = classes_info[iterator]
+            if not temp["ignore"] and temp["inferenceID"] == class_ids[i]:
+                classInfo = temp
         xmlData.addAnnotation(classInfo, points)
 
     for classInfo in classes_info:
