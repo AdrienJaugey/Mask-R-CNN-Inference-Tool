@@ -557,6 +557,7 @@ def export_annotations(image_name: str, results: dict, classes_info: [{int, str,
             temp = classes_info[iterator]
             if not temp["ignore"] and temp["inferenceID"] == class_ids[i]:
                 classInfo = temp
+            iterator += 1
         xmlData.addAnnotation(classInfo, points)
 
     for classInfo in classes_info:
