@@ -1252,6 +1252,8 @@ def compute_matches(gt_boxes, gt_class_ids, gt_masks, pred_boxes,
                 confusion_matrix[gt_class_ids[j]][pred_class_ids[i]] += 1
 
             # If ground truth box is already matched, go to next one
+            # TODO : Rework that part, specially for confusion matrix, we are counting positive predictions for each
+            #        match with a gt_mask not only the first time
             if not done and gt_match[j] > -1:
                 continue
 
