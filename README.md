@@ -1,2 +1,7 @@
-# Custom-Mask-R-CNN-
-Project for specific cells detection using Mask R-CNN from matterport
+# Custom Mask R-CNN for Kidney's cell recognition
+
+This repository contains every files except images and annotations to train and run Mask R-CNN on kidney images. This is based on [matterport's Mask R-CNN](https://github.com/matterport/Mask_RCNN) and [navidyou's repository](https://github.com/navidyou/Mask-RCNN-implementation-for-cell-nucleus-detection-executable-on-google-colab-).
+
+You can find additional information in the repository's [wiki](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki)
+
+This repository has been started during my internship at the [LEAD Laboratory](http://leadserv.u-bourgogne.fr/en/) (Dijon, France) from April 2020 to June 2020 for my second-to-last year of master’s degree in Software Engineering at [ESIREM](https://esirem.u-bourgogne.fr/).
