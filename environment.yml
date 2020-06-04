@@ -1,4 +1,4 @@
-name: TensorFlow1_7
+name: Skinet
 channels:
   - defaults
 dependencies:
