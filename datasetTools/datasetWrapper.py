@@ -118,7 +118,7 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
     for noMask, (datasetClass, maskPoints) in enumerate(masks):
         # Converting class id to class name if needed
         if type(datasetClass) is int:
-            if classesInfo[datasetClass]["id"] == datasetClass:
+            if len(classesInfo) > datasetClass == classesInfo[datasetClass]["id"]:
                 maskClass = classesInfo[datasetClass]["name"]
             else:
                 for classInfo in classesInfo:
@@ -350,8 +350,7 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
 
     nbImages = len(images)
     # Creating masks for any image which has all required files and displaying progress
-    for index in range(nbImages):
-        file = images[index]
+    for index, file in enumerate(nbImages):
         print('Creating masks for {} image {}/{} ({:.2f}%)'.format(file, index + 1, nbImages,
                                                                    (index + 1) / nbImages * 100))
         createMasksOfImage(rawDatasetPath, file, datasetName, adapter)

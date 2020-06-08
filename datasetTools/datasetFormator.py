@@ -230,28 +230,29 @@ def checkNSG(datasetPath: str):
     print("Total : {}".format(totalDiff))
 
 
-dW.getInfoRawDataset('raw_dataset', verbose=True, adapter=None)
-dW.startWrapper('raw_dataset', 'temp_nephrology_dataset', deleteBaseCortexMasks=True, adapter=None)
-infoNephrologyDataset('temp_nephrology_dataset')
-checkNSG('temp_nephrology_dataset')
+if __name__ == "__main__":
+    dW.getInfoRawDataset('raw_dataset', verbose=True, adapter=None)
+    dW.startWrapper('raw_dataset', 'temp_nephrology_dataset', deleteBaseCortexMasks=True, adapter=None)
+    infoNephrologyDataset('temp_nephrology_dataset')
+    checkNSG('temp_nephrology_dataset')
 
-sortImages(datasetPath='temp_nephrology_dataset',
-           createCortexDataset=True, cortexDatasetPath='nephrology_cortex_dataset',
-           unusedDirPath='nephrology_dataset_unused')
-infoNephrologyDataset('nephrology_cortex_dataset')
-createValDataset('nephrology_cortex_dataset', rename=True)
-infoNephrologyDataset('nephrology_cortex_dataset_train')
-infoNephrologyDataset('nephrology_cortex_dataset_val')
+    sortImages(datasetPath='temp_nephrology_dataset',
+               createCortexDataset=True, cortexDatasetPath='nephrology_cortex_dataset',
+               unusedDirPath='nephrology_dataset_unused')
+    infoNephrologyDataset('nephrology_cortex_dataset')
+    createValDataset('nephrology_cortex_dataset', rename=True)
+    infoNephrologyDataset('nephrology_cortex_dataset_train')
+    infoNephrologyDataset('nephrology_cortex_dataset_val')
 
-dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset', squareSideLength=1024)
-infoNephrologyDataset('nephrology_dataset')
+    dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset', squareSideLength=1024)
+    infoNephrologyDataset('nephrology_dataset')
 
-# # If you want to keep all cortex files comment dW.cleanCortexDir() lines
-# # If you want to check them and then delete them, comment these lines too and after checking use them
-# # dW.cleanCortexDir('temp_nephrology_dataset')
-# # dW.cleanCortexDir('nephrology_dataset')
+    # # If you want to keep all cortex files comment dW.cleanCortexDir() lines
+    # # If you want to check them and then delete them, comment these lines too and after checking use them
+    # # dW.cleanCortexDir('temp_nephrology_dataset')
+    # # dW.cleanCortexDir('nephrology_dataset')
 
-sortImages('nephrology_dataset', unusedDirPath='nephrology_dataset_unused')
-createValDataset('nephrology_dataset', rename=True)
-infoNephrologyDataset('nephrology_dataset_train')
-infoNephrologyDataset('nephrology_dataset_val')
+    sortImages('nephrology_dataset', unusedDirPath='nephrology_dataset_unused')
+    createValDataset('nephrology_dataset', rename=True)
+    infoNephrologyDataset('nephrology_dataset_train')
+    infoNephrologyDataset('nephrology_dataset_val')
