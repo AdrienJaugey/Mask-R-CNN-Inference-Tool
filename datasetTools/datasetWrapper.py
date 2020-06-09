@@ -6,7 +6,7 @@ from datasetTools.datasetDivider import getBWCount
 from datasetTools import AnnotationAdapter as adapt
 from datasetTools.AnnotationAdapter import AnnotationAdapter
 
-classesInfo = [
+classesInfoNephro = [
     {"id": 0, "name": "Background", "color": "", "ignore": True},
     {"id": 1, "name": "tubule_sain", "color": "#ff007f", "ignore": False},
     {"id": 2, "name": "tubule_atrophique", "color": "#55557f", "ignore": False},
@@ -58,16 +58,20 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
 
 
 def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'dataset_train',
-                       adapter: AnnotationAdapter = None):
+                       adapter: AnnotationAdapter = None, classesInfo: dict = None):
     """
     Create all the masks of a given image by parsing xml annotations file
     :param rawDatasetPath: path to the folder containing images and associated annotations
     :param imgName: name w/o extension of an image
     :param datasetName: name of the output dataset
     :param adapter: the annotation adapter to use to create masks, if None looking for an adapter that can read the file
+    :param classesInfos: Information about all classes that are used, by default will be nephrology classes Info
     :return: None
     """
     # Getting shape of original image (same for all this masks)
+    if classesInfo is None:
+        classesInfo = classesInfoNephro
+
     img = cv2.imread(os.path.join(rawDatasetPath, imgName + '.png'))
     if img is None:
         print('Problem with {} image'.format(imgName))
@@ -118,7 +122,7 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
     for noMask, (datasetClass, maskPoints) in enumerate(masks):
         # Converting class id to class name if needed
         if type(datasetClass) is int:
-            if len(classesInfo) > datasetClass == classesInfo[datasetClass]["id"]:
+            if datasetClass < len(classesInfo) and classesInfo[datasetClass]["id"] == datasetClass:
                 maskClass = classesInfo[datasetClass]["name"]
             else:
                 for classInfo in classesInfo:
@@ -249,7 +253,6 @@ def cleanImage(datasetPath: str, imageName: str, medullaMinPart=0.05, onlyMasks=
         cv2.imwrite(medullaFilePath, medulla)
 
 
-
 def convertImage(inputImagePath: str, outputImagePath: str):
     """
     Convert an image from a format to another one
@@ -350,7 +353,8 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
 
     nbImages = len(images)
     # Creating masks for any image which has all required files and displaying progress
-    for index, file in enumerate(nbImages):
+    for index in range(nbImages):
+        file = images[index]
         print('Creating masks for {} image {}/{} ({:.2f}%)'.format(file, index + 1, nbImages,
                                                                    (index + 1) / nbImages * 100))
         createMasksOfImage(rawDatasetPath, file, datasetName, adapter)

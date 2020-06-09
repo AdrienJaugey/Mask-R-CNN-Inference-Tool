@@ -71,7 +71,7 @@ def fuse_results(results, input_image, division_size=1024, div_ids=None):
     for division_index, res in enumerate(results):
         # Getting the division ID based on iterator or given ids and getting its coordinates
         divId = division_index if div_ids is None else div_ids[division_index]
-        xStart, xEnd, yStart, yEnd = div.getDivisionByID(xStarts, yStarts, divId, div_side_length)
+        xStart, xEnd, yStart, yEnd = div.getDivisionByID(xStarts, yStarts, divId, division_size)
 
         # Formatting and adding all the division's predictions to global ones
         r = results[division_index]
@@ -80,7 +80,17 @@ def fuse_results(results, input_image, division_size=1024, div_ids=None):
             class_ids[lastIndex] = r['class_ids'][prediction_index]
 
             if division_size != "noDiv":
-                masks[yStart:yEnd, xStart:xEnd, lastIndex] = r['masks'][:, :, prediction_index]
+                mask = r['masks'][:, :, prediction_index]
+                if mask.shape[0] != division_size or mask.shape[1] != division_size:
+                    tempWidthRatio = division_size / mask.shape[1]
+                    tempHeightRatio = division_size / mask.shape[0]
+                    roi = r['rois'][prediction_index]
+                    roi[0] *= tempHeightRatio
+                    roi[1] *= tempWidthRatio
+                    roi[2] *= tempHeightRatio
+                    roi[3] *= tempWidthRatio
+                    mask = cv2.resize(np.uint8(mask), (division_size, division_size))
+                masks[yStart:yEnd, xStart:xEnd, lastIndex] = mask
             else:
                 mask = np.uint8(r['masks'][:, :, prediction_index])
                 masks[:, :, lastIndex] = cv2.resize(mask, (width, height), interpolation=cv2.INTER_CUBIC)
@@ -449,6 +459,43 @@ def filter_fused_masks(fused_results,
     return {"rois": rois, "class_ids": class_ids, "scores": scores, "masks": masks}
 
 
+def getCountAndArea(results: dict, classesInfo: dict, selectedClasses: [str]):
+    """
+    Computing count and area of classes from results
+    :param results: the results
+    :param classesInfo: the dict with information about name, inference id, id... parameters of each class
+    :param selectedClasses: list of classes' names that you want to get statistics on
+    :return: List of {"name": className, "count": int, "area": int} dict containing statistics on each classes
+    """
+    res = []
+
+    rois = results['rois']
+    masks = results['masks']
+    class_ids = results['class_ids']
+
+    # Getting the inferenceIDs of the wanted classes
+    selectedClassesID = []
+    for classInfo in classesInfo:
+        if classInfo["name"] in selectedClasses:
+            selectedClassesID.append(classInfo["inferenceID"])
+            res.append({"name": classInfo["name"], "count": 0, "area": 0})
+
+    # For each predictions, if class ID matching with one we want
+    for index, classID in enumerate(class_ids):
+        if classID in selectedClassesID:
+            # Getting current values of count and area
+            resID = selectedClassesID.index(classID)
+            res[resID]["count"] += 1
+            # Getting the area of current mask
+            yStart, xStart, yEnd, xEnd = rois[index]
+            area = div.getBWCount(np.uint8(masks[yStart:yEnd, xStart:xEnd, index]), using='np')[1]
+            res[resID]["area"] += area
+
+    return res
+
+
+
+
 def getPoints(mask, xOffset=0, yOffset=0, epsilon=1,
               show=False, waitSeconds=10, info=False):
     """
@@ -463,47 +510,49 @@ def getPoints(mask, xOffset=0, yOffset=0, epsilon=1,
     approximated points...) or not
     :return: 2D-array of points coordinates : [[x, y]]
     """
+    pts = None
     contours, _ = cv2.findContours(mask, method=cv2.RETR_TREE, mode=cv2.CHAIN_APPROX_SIMPLE)
 
-    # https://stackoverflow.com/questions/41879315/opencv-visualize-polygonal-curves-extracted-with-cv2-approxpolydp
-    # Finding biggest area
-    cnt = contours[0]
-    max_area = cv2.contourArea(cnt)
+    if len(contours) > 0:
+        # https://stackoverflow.com/questions/41879315/opencv-visualize-polygonal-curves-extracted-with-cv2-approxpolydp
+        # Finding biggest area
+        cnt = contours[0]
+        max_area = cv2.contourArea(cnt)
 
-    for cont in contours:
-        if cv2.contourArea(cont) > max_area:
-            cnt = cont
-            max_area = cv2.contourArea(cont)
+        for cont in contours:
+            if cv2.contourArea(cont) > max_area:
+                cnt = cont
+                max_area = cv2.contourArea(cont)
 
-    res = cv2.approxPolyDP(cnt, epsilon, True)
-    pts = []
-    for point in res:
-        # Casting coordinates to int, not doing this makes crash json dump
-        pts.append([int(point[0][0] + xOffset), int(point[0][1] + yOffset)])
+        res = cv2.approxPolyDP(cnt, epsilon, True)
+        pts = []
+        for point in res:
+            # Casting coordinates to int, not doing this makes crash json dump
+            pts.append([int(point[0][0] + xOffset), int(point[0][1] + yOffset)])
 
-    if info:
-        maskHeight, maskWidth = mask.shape
-        nbPtPred = contours[0].shape[0]
-        nbPtApprox = len(pts)
-        print("Mask size : {}x{}".format(maskWidth, maskHeight))
-        print("Nb points prediction : {}".format(nbPtPred))
-        print("Nb points approx : {}".format(nbPtApprox))
-        print("Compression rate : {:5.2f}%".format(nbPtPred / nbPtApprox * 100))
-        temp = np.array(pts)
-        xMin = np.amin(temp[:, 0])
-        xMax = np.amax(temp[:, 0])
-        yMin = np.amin(temp[:, 1])
-        yMax = np.amax(temp[:, 1])
-        print("{} <= X <= {}".format(xMin, xMax))
-        print("{} <= Y <= {}".format(yMin, yMax))
-        print()
+        if info:
+            maskHeight, maskWidth = mask.shape
+            nbPtPred = contours[0].shape[0]
+            nbPtApprox = len(pts)
+            print("Mask size : {}x{}".format(maskWidth, maskHeight))
+            print("Nb points prediction : {}".format(nbPtPred))
+            print("Nb points approx : {}".format(nbPtApprox))
+            print("Compression rate : {:5.2f}%".format(nbPtPred / nbPtApprox * 100))
+            temp = np.array(pts)
+            xMin = np.amin(temp[:, 0])
+            xMax = np.amax(temp[:, 0])
+            yMin = np.amin(temp[:, 1])
+            yMax = np.amax(temp[:, 1])
+            print("{} <= X <= {}".format(xMin, xMax))
+            print("{} <= Y <= {}".format(yMin, yMax))
+            print()
 
-    if show:
-        img = np.zeros(mask.shape, np.int8)
-        img = cv2.drawContours(img, [res], -1, 255, 2)
-        cv2.imshow('before {}'.format(img.shape), mask * 255)
-        cv2.imshow("approxPoly", img * 255)
-        cv2.waitKey(max(waitSeconds, 1) * 1000)
+        if show:
+            img = np.zeros(mask.shape, np.int8)
+            img = cv2.drawContours(img, [res], -1, 255, 2)
+            cv2.imshow('before {}'.format(img.shape), mask * 255)
+            cv2.imshow("approxPoly", img * 255)
+            cv2.waitKey(max(waitSeconds, 1) * 1000)
 
     return pts
 
@@ -550,6 +599,8 @@ def export_annotations(image_name: str, results: dict, classes_info: [{int, str,
 
         # Getting list of points coordinates and adding the prediction to XML
         points = getPoints(np.uint8(mask), xOffset=xStart, yOffset=yStart, show=False, waitSeconds=0, info=False)
+        if points is None:
+            continue
         classInfo = None
         iterator = 0
         # Find the first class not to be ignored with the same id

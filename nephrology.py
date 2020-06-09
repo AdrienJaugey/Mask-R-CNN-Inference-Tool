@@ -1,9 +1,8 @@
+import os
 import warnings
-from datetime import datetime
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
-    import os
     import sys
     import random
     import math
@@ -21,6 +20,7 @@ with warnings.catch_warnings():
     from datasetTools import datasetWrapper as wr
     from datasetTools.ASAPAdapter import ASAPAdapter
     from datasetTools.LabelMeAdapter import LabelMeAdapter
+    from datetime import datetime
     from mrcnn import config
     from mrcnn import utils
     from mrcnn import model
@@ -148,6 +148,7 @@ class NephrologyInferenceModel:
             fullImage = cv2.cvtColor(fullImage, cv2.COLOR_BGR2RGB)
             image = fullImage.copy()
             height, width, _ = fullImage.shape
+            cortexArea = height * width
             xStarts = [0] if self.__DIVISION_SIZE == "noDiv" else div.computeStartsOfInterval(
                 maxVal=width, intervalLength=self.__DIVISION_SIZE
             )
@@ -164,10 +165,17 @@ class NephrologyInferenceModel:
             if annotationExists:
                 if not silent:
                     print(" - Annotation file found: creating dataset files and cleaning image if possible")
-                wr.createMasksOfImage(dirPath, image_name, 'data')
+                wr.createMasksOfImage(dirPath, image_name, 'data', classesInfo=self.__CLASSES_INFO)
+                wr.fuseCortices('data', image_name, deleteBaseMasks=True)
                 wr.cleanImage('data', image_name, onlyMasks=False)
                 maskDirs = os.listdir(os.path.join('data', image_name))
-                # If full_images directory exists it means than image has been cleaned so we have to get it another time
+                if "cortex" in maskDirs:
+                    cortexDirPath = os.path.join('data', image_name, 'cortex')
+                    cortexImageFilePath = os.listdir(cortexDirPath)[0]
+                    cortex = cv2.imread(os.path.join(cortexDirPath, cortexImageFilePath), cv2.IMREAD_UNCHANGED)
+                    cortexArea = div.getBWCount(cortex)[1]
+                # If full_images directory exists it means than image has been cleaned so we have to get it another
+                # time
                 if 'full_images' in maskDirs:
                     imagesDirPath = os.path.join('data', image_name, 'images')
                     imageFilePath = os.listdir(imagesDirPath)[0]
@@ -183,7 +191,7 @@ class NephrologyInferenceModel:
                     if classToPredict in maskDirs:
                         has_annotation = True
                         break
-                if has_annotation:
+                if has_annotation and not silent:
                     print("    - AP and confusion matrix will be computed")
 
             imageInfo = {
@@ -196,7 +204,8 @@ class NephrologyInferenceModel:
                 "NB_DIV": nbDiv,
                 "X_STARTS": xStarts,
                 "Y_STARTS": yStarts,
-                "HAS_ANNOTATION": has_annotation
+                "HAS_ANNOTATION": has_annotation,
+                "CORTEX_AREA": cortexArea
             }
         return image, fullImage, imageInfo, image_results_path
 
@@ -291,7 +300,8 @@ class NephrologyInferenceModel:
                             temp_DIR = path + '/' + masks_dir
                             # Adding length of directory https://stackoverflow.com/questions/2632205/how-to-count-the-number-of-files-in-a-directory-using-python
                             number_of_masks += len(
-                                [name for name in os.listdir(temp_DIR) if os.path.isfile(os.path.join(temp_DIR, name))])
+                                [name for name in os.listdir(temp_DIR) if
+                                 os.path.isfile(os.path.join(temp_DIR, name))])
 
                         mask = np.zeros([imageInfo["HEIGHT"], imageInfo["WIDTH"], number_of_masks], dtype=np.uint8)
                         iterator = 0
@@ -372,17 +382,30 @@ class NephrologyInferenceModel:
                                                                      nb_class=self.__NB_CLASS,
                                                                      confusion_iou_threshold=0.1)
 
-                    print("{} - Average Precision is about {:5.2f}%".format("" if displayOnlyAP else "   ", AP * 100))
+                    print(
+                        "{} - Average Precision is about {:5.2f}%".format("" if displayOnlyAP else "   ", AP * 100))
                     self.__CONFUSION_MATRIX = np.add(self.__CONFUSION_MATRIX, confusion_matrix)
                     self.__APs.append(AP)
                     if save_results:
                         name = "{} Confusion Matrix".format(imageInfo["NAME"])
                         name2 = "{} Normalized Confusion Matrix".format(imageInfo["NAME"])
-                        visualize.display_confusion_matrix(confusion_matrix, dataset_val.get_class_names(), title=name,
-                                                           cmap=cmap, show=False, fileName=image_results_path + name)
-                        visualize.display_confusion_matrix(confusion_matrix, dataset_val.get_class_names(), title=name2,
+                        visualize.display_confusion_matrix(confusion_matrix, dataset_val.get_class_names(),
+                                                           title=name,
+                                                           cmap=cmap, show=False,
+                                                           fileName=image_results_path + name)
+                        visualize.display_confusion_matrix(confusion_matrix, dataset_val.get_class_names(),
+                                                           title=name2,
                                                            cmap=cmap, show=False, normalize=True,
                                                            fileName=image_results_path + name2)
+
+            print(" - Computing statistics on predictions")
+            stats = utils.getCountAndArea(res, classesInfo=self.__CLASSES_INFO,
+                                          selectedClasses=["nsg", "nsg_complet", "nsg_partiel", "pac",
+                                                           "tubule_sain", "tubule_atrophique"])
+            print("    - cortex : area = {}".format(imageInfo["CORTEX_AREA"]))
+            for classStats in stats:
+                print("    - {} : count = {}, area = {} px".format(classStats["name"], classStats["count"],
+                                                                   classStats["area"]))
 
             if not displayOnlyAP:
                 print(" - Applying masks on image")

@@ -39,7 +39,7 @@ LABELME_SCHEMA = {
                                     "anyOf": [
                                         {
                                             "type": "array",
-                                            "items": {"anyOf": [{"type": "integer"}]}
+                                            "items": {"anyOf": [{"type": "number"}]}
                                         }
                                     ]
                                 }

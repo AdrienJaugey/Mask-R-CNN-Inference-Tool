@@ -35,6 +35,9 @@ if tf.test.is_gpu_available():
     tf.device(tf.test.gpu_device_name())
 
 
+def terminate_session():
+    K.get_session().close()
+
 ############################################################
 #  Utility Functions
 ############################################################
