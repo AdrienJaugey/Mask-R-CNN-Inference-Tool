@@ -400,8 +400,7 @@ class NephrologyInferenceModel:
 
             print(" - Computing statistics on predictions")
             stats = utils.getCountAndArea(res, classesInfo=self.__CLASSES_INFO,
-                                          selectedClasses=["nsg", "nsg_complet", "nsg_partiel", "pac",
-                                                           "tubule_sain", "tubule_atrophique"])
+                                          selectedClasses=self.__CELLS_CLASS_NAMES)
             print("    - cortex : area = {}".format(imageInfo["CORTEX_AREA"]))
             for classStats in stats:
                 print("    - {} : count = {}, area = {} px".format(classStats["name"], classStats["count"],
@@ -436,8 +435,8 @@ class NephrologyInferenceModel:
                 AP = -1
             if save_results:
                 with open(logsPath, 'a') as results_log:
-                    apText = "{:4.3f}".format(AP).replace(".", ",")
-                    results_log.write("{}; {}; {};\n".format(imageInfo["NAME"], final_time, apText))
+                    apText = "{:4.3f}".format(AP * 100).replace(".", ",")
+                    results_log.write("{}; {}; {}%;\n".format(imageInfo["NAME"], final_time, apText))
             plt.close('all')
 
         if len(self.__APs) > 0:
@@ -461,4 +460,4 @@ class NephrologyInferenceModel:
         if save_results:
             with open(logsPath, 'a') as results_log:
                 mapText = "{:4.3f}".format(mAP).replace(".", ",")
-                results_log.write("GLOBAL; {}; {};\n".format(total_time, mapText))
+                results_log.write("GLOBAL; {}; {}%;\n".format(total_time, mapText))
