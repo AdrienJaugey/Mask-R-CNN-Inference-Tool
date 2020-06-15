@@ -439,7 +439,7 @@ class NephrologyInferenceModel:
                     results_log.write("{}; {}; {}%;\n".format(imageInfo["NAME"], final_time, apText))
             plt.close('all')
 
-        if len(self.__APs) > 0:
+        if len(self.__APs) > 1:
             mAP = np.mean(self.__APs) * 100
             print("Mean Average Precision is about {:5.2f}%".format(mAP))
             name = "Final Confusion Matrix"
