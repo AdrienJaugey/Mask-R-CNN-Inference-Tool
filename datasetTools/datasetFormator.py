@@ -184,8 +184,8 @@ def createValDataset(datasetPath: str, valDatasetPath: str = None, valDatasetSiz
     :param valDatasetPath: path to the val dataset
     :param valDatasetSizePart: the part of the base dataset to be moved to the val one
     :param valDatasetMinSize: the minimum size of the validation dataset
-    :param rename: whether or not you want to rename the base dataset after creation of the val one
-    :param customRename: new name of the training dataset
+    :param rename: whether you want to rename the base dataset after creation of the val one
+    :param customRename: the new name of the training dataset
     :return: None
     """
     assert 0 < valDatasetSizePart < 1
@@ -232,27 +232,49 @@ def checkNSG(datasetPath: str):
 
 if __name__ == "__main__":
     dW.getInfoRawDataset('raw_dataset', verbose=True, adapter=None)
+    # Creating masks and making per image directories
     dW.startWrapper('raw_dataset', 'temp_nephrology_dataset', deleteBaseCortexMasks=True, adapter=None)
     infoNephrologyDataset('temp_nephrology_dataset')
     checkNSG('temp_nephrology_dataset')
 
+    # Sorting images to keep those that can be used to train cortex
     sortImages(datasetPath='temp_nephrology_dataset',
                createCortexDataset=True, cortexDatasetPath='nephrology_cortex_dataset',
                unusedDirPath='nephrology_dataset_unused')
     infoNephrologyDataset('nephrology_cortex_dataset')
+    # Taking some images from the cortex dataset to make the validation cortex dataset
     createValDataset('nephrology_cortex_dataset', rename=True)
     infoNephrologyDataset('nephrology_cortex_dataset_train')
     infoNephrologyDataset('nephrology_cortex_dataset_val')
 
-    dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset', squareSideLength=1024)
-    infoNephrologyDataset('nephrology_dataset')
+    if False:
+        # Dividing main dataset in 1024*1024 divisions
+        dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset', squareSideLength=1024)
+        infoNephrologyDataset('nephrology_dataset')
 
-    # # If you want to keep all cortex files comment dW.cleanCortexDir() lines
-    # # If you want to check them and then delete them, comment these lines too and after checking use them
-    # # dW.cleanCortexDir('temp_nephrology_dataset')
-    # # dW.cleanCortexDir('nephrology_dataset')
+        # # If you want to keep all cortex files comment dW.cleanCortexDir() lines
+        # # If you want to check them and then delete them, comment these lines too and after checking use them
+        # # dW.cleanCortexDir('temp_nephrology_dataset')
+        # # dW.cleanCortexDir('nephrology_dataset')
 
-    sortImages('nephrology_dataset', unusedDirPath='nephrology_dataset_unused')
-    createValDataset('nephrology_dataset', rename=True)
+        # Removing unusable images by moving them into a specific directory
+        sortImages('nephrology_dataset', unusedDirPath='nephrology_dataset_unused')
+        # Taking some images from the main dataset to make the validation dataset
+        createValDataset('nephrology_dataset', rename=True)
+    else:  # To avoid having divisions of same image to be dispatched in main and validation dataset
+        # Removing unusable images by moving them into a specific directory
+        sortImages('temp_nephrology_dataset', unusedDirPath='nephrology_dataset_unused')
+        # Taking some images from the main dataset to make the validation dataset
+        createValDataset('temp_nephrology_dataset', valDatasetPath='temp_nephrology_dataset_val', rename=False)
+
+        # Dividing the main dataset after having separated images for the validation dataset
+        # then removing unusable divisions
+        dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset_train', squareSideLength=1024)
+        sortImages('nephrology_dataset_train', unusedDirPath='nephrology_dataset_unused')
+
+        # Same thing with the validation dataset directly
+        dD.divideDataset('temp_nephrology_dataset_val', 'nephrology_dataset_val', squareSideLength=1024)
+        sortImages('nephrology_dataset_val', unusedDirPath='nephrology_dataset_unused')
+
     infoNephrologyDataset('nephrology_dataset_train')
     infoNephrologyDataset('nephrology_dataset_val')
