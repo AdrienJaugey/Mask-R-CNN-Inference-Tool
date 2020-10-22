@@ -2,7 +2,7 @@ import os
 from shutil import move, copy, copytree
 import numpy as np
 
-from datasetTools import datasetWrapper as dW
+from datasetTools import datasetWrapper as dW, AnnotationAdapter
 from datasetTools import datasetDivider as dD
 from datasetTools.ASAPAdapter import ASAPAdapter
 from datasetTools.LabelMeAdapter import LabelMeAdapter
@@ -230,51 +230,95 @@ def checkNSG(datasetPath: str):
     print("Total : {}".format(totalDiff))
 
 
-if __name__ == "__main__":
-    dW.getInfoRawDataset('raw_dataset', verbose=True, adapter=None)
+def createDataset(rawDataset='raw_dataset', tempDataset='temp_dataset',
+                  cortexDatasetPath='nephrology_cortex_dataset', unusedDirPath='nephrology_dataset_unused',
+                  mainDataset='main_dataset', mainDatasetUnusedDirPath='main_dataset_unused',
+                  deleteBaseCortexMasks=True, createCortexDataset=False, adapter: AnnotationAdapter = None,
+                  separateDivInsteadOfImage=False, divisionSize=1024, minDivisionOverlapping=0.33,
+                  cleanBeforeStart=False):
+    """
+    Generates datasets folder from a base directory, all paths are customizable, and it can also remove previous
+    directories
+    :param rawDataset: path to the base directory
+    :param tempDataset: path to a temporary directory
+    :param cortexDatasetPath: path to the cortex directory, used to also define cortex training and validation directories
+    :param unusedDirPath: path to the unused files' directory
+    :param mainDataset: path to the main dataset directory, used to also define main training and validation directories
+    :param mainDatasetUnusedDirPath: path to unused files' directory of main dataset
+    :param deleteBaseCortexMasks: whether to delete base cortex masks or not
+    :parma createCortexDataset: whether to create cortex dataset or not, default is False
+    :param adapter: the adapter used to read annotations files, if None, will detect automatically which one to use
+    :param separateDivInsteadOfImage: if True, divisions of same image can be separated into training and val directories
+    :param divisionSize: the size of a division, default is 1024
+    :param minDivisionOverlapping: the min overlapping between two divisions, default is 33%
+    :param cleanBeforeStart: if True, will delete previous directories that could still exist
+    :return:
+    """
+    if cleanBeforeStart:
+        # Removing temp directories
+        import shutil
+        dirToDel = [tempDataset, unusedDirPath,
+                    cortexDatasetPath, cortexDatasetPath + '_train', cortexDatasetPath + '_val',
+                    'temp_' + mainDataset + '_val', mainDataset + '_val', mainDataset + '_train']
+        for directory in dirToDel:
+            if os.path.exists(directory):
+                shutil.rmtree(directory, ignore_errors=True)
+
+    dW.getInfoRawDataset(rawDataset, verbose=True, adapter=adapter)
     # Creating masks and making per image directories
-    dW.startWrapper('raw_dataset', 'temp_nephrology_dataset', deleteBaseCortexMasks=True, adapter=None)
-    infoNephrologyDataset('temp_nephrology_dataset')
-    checkNSG('temp_nephrology_dataset')
+    dW.startWrapper(rawDataset, tempDataset, deleteBaseCortexMasks=deleteBaseCortexMasks, adapter=adapter)
+    infoNephrologyDataset(tempDataset)
+    checkNSG(tempDataset)
 
     # Sorting images to keep those that can be used to train cortex
-    sortImages(datasetPath='temp_nephrology_dataset',
-               createCortexDataset=True, cortexDatasetPath='nephrology_cortex_dataset',
-               unusedDirPath='nephrology_dataset_unused')
-    infoNephrologyDataset('nephrology_cortex_dataset')
-    # Taking some images from the cortex dataset to make the validation cortex dataset
-    createValDataset('nephrology_cortex_dataset', rename=True)
-    infoNephrologyDataset('nephrology_cortex_dataset_train')
-    infoNephrologyDataset('nephrology_cortex_dataset_val')
+    sortImages(datasetPath=tempDataset,
+               createCortexDataset=createCortexDataset, cortexDatasetPath=cortexDatasetPath,
+               unusedDirPath=unusedDirPath)
+    if createCortexDataset:
+        infoNephrologyDataset(cortexDatasetPath)
 
-    if False:
+        # Taking some images from the cortex dataset to make the validation cortex dataset
+        createValDataset(cortexDatasetPath, rename=True)
+        infoNephrologyDataset(cortexDatasetPath + '_train')
+        infoNephrologyDataset(cortexDatasetPath + '_val')
+
+    if separateDivInsteadOfImage:
         # Dividing main dataset in 1024*1024 divisions
-        dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset', squareSideLength=1024)
-        infoNephrologyDataset('nephrology_dataset')
+        dD.divideDataset(tempDataset, mainDataset,
+                         squareSideLength=divisionSize, min_overlap_part=minDivisionOverlapping)
+        infoNephrologyDataset(mainDataset)
 
         # # If you want to keep all cortex files comment dW.cleanCortexDir() lines
         # # If you want to check them and then delete them, comment these lines too and after checking use them
-        # # dW.cleanCortexDir('temp_nephrology_dataset')
-        # # dW.cleanCortexDir('nephrology_dataset')
+        # # dW.cleanCortexDir(tempDataset)
+        # # dW.cleanCortexDir(mainDataset)
 
         # Removing unusable images by moving them into a specific directory
-        sortImages('nephrology_dataset', unusedDirPath='nephrology_dataset_unused')
+        sortImages(mainDataset, unusedDirPath=mainDatasetUnusedDirPath)
         # Taking some images from the main dataset to make the validation dataset
-        createValDataset('nephrology_dataset', rename=True)
+        createValDataset(mainDataset, rename=True)
     else:  # To avoid having divisions of same image to be dispatched in main and validation dataset
         # Removing unusable images by moving them into a specific directory
-        sortImages('temp_nephrology_dataset', unusedDirPath='nephrology_dataset_unused')
+        sortImages(tempDataset, unusedDirPath=mainDatasetUnusedDirPath)
         # Taking some images from the main dataset to make the validation dataset
-        createValDataset('temp_nephrology_dataset', valDatasetPath='temp_nephrology_dataset_val', rename=False)
+        createValDataset(tempDataset, valDatasetPath='temp_' + mainDataset + '_val', rename=False)
 
         # Dividing the main dataset after having separated images for the validation dataset
         # then removing unusable divisions
-        dD.divideDataset('temp_nephrology_dataset', 'nephrology_dataset_train', squareSideLength=1024)
-        sortImages('nephrology_dataset_train', unusedDirPath='nephrology_dataset_unused')
+        dD.divideDataset(tempDataset, mainDataset + '_train',
+                         squareSideLength=divisionSize, min_overlap_part=minDivisionOverlapping)
+        sortImages(mainDataset + '_train', unusedDirPath=mainDatasetUnusedDirPath)
 
         # Same thing with the validation dataset directly
-        dD.divideDataset('temp_nephrology_dataset_val', 'nephrology_dataset_val', squareSideLength=1024)
-        sortImages('nephrology_dataset_val', unusedDirPath='nephrology_dataset_unused')
+        dD.divideDataset('temp_' + mainDataset + '_val', mainDataset + '_val',
+                         squareSideLength=divisionSize, min_overlap_part=minDivisionOverlapping)
+        sortImages(mainDataset + '_val', unusedDirPath=mainDatasetUnusedDirPath)
 
-    infoNephrologyDataset('nephrology_dataset_train')
-    infoNephrologyDataset('nephrology_dataset_val')
+    infoNephrologyDataset(mainDataset + '_train')
+    infoNephrologyDataset(mainDataset + '_val')
+    print("\nDataset made, nothing left to do")
+
+
+if __name__ == "__main__":
+    createDataset(mainDataset='nephrology_dataset', mainDatasetUnusedDirPath='nephrology_dataset_unused',
+                  createCortexDataset=False, cleanBeforeStart=True)

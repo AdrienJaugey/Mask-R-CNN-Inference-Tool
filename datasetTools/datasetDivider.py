@@ -1,3 +1,4 @@
+import math
 import os
 import cv2
 import numpy as np
@@ -8,35 +9,29 @@ MIN_PART_OF_CORTEX = 10.0
 MIN_PART_OF_MASK = 10.0
 
 
-def computeStartsOfInterval(maxVal: int, intervalLength=1024):
+def computeStartsOfInterval(maxVal: int, intervalLength=1024, min_overlap_part=0.33):
     """
-    Divide the [0; maxVal] interval into the least overlapping (or not) intervals of given length
+    Divide the [0; maxVal] interval into a uniform distribution with at least min_overlap_part of overlapping
     :param maxVal: end of the base interval
     :param intervalLength: length of the new intervals
+    :param min_overlap_part: min overlapping part of intervals, if less, adds intervals with length / 2 offset
     :return: list of starting coordinates for the new intervals
     """
-    nbIteration = maxVal // intervalLength
-    assert nbIteration > 0
-    # First interval always starts on coordinate 0
-    startCoordinates = [0]
-    if maxVal / intervalLength != nbIteration:
-        if VERBOSE:
-            print('{} is not a multiplier of {}'.format(intervalLength, maxVal))
-
-        # offset = ((nbIteration - 1) * intervalLength - (num - 2 * intervalLength)) / 2  # Ok but no middle overlaps
-        offset = ((nbIteration - 1) * intervalLength - (maxVal - 2 * intervalLength)) / (nbIteration + 1)
-        nbIteration -= 1  # There are (num // intervalLength) + 1 intervals but the first and last are already counted
-        for i in range(nbIteration):
-            startCoordinates.append(round((i + 1) * (intervalLength - offset)))
-
-        # Last interval
-        startCoordinates.append(maxVal - intervalLength)
-    else:
-        if VERBOSE:
-            print('{} is a multiplier of {}'.format(intervalLength, maxVal))
-        for i in range(1, nbIteration):
-            startCoordinates.append(i * intervalLength)
-    return startCoordinates
+    nbDiv = math.ceil(maxVal / intervalLength)
+    # Computing gap to get something that tends to a uniform distribution
+    gap = (nbDiv * intervalLength - maxVal) / (nbDiv - 1)
+    coordinates = []
+    for i in range(nbDiv):
+        coordinate = round(i * (intervalLength - gap))
+        if i == nbDiv - 1:
+            # Should not be useful but acting as a security
+            coordinates.append(maxVal - intervalLength)
+        else:
+            coordinates.append(coordinate)
+            # If gap is not enough, we add division with a intervalLength / 2 offset
+            if gap < intervalLength * min_overlap_part:
+                coordinates.append(coordinate + intervalLength // 2)
+    return coordinates
 
 
 def getDivisionsCount(xStarts: [int], yStarts: [int]):
@@ -134,13 +129,14 @@ def getRepresentativePercentage(blackMask: int, whiteMask: int, divisionImage):
     return partOfDiv, partOfMask, partOfImage
 
 
-def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSideLength=1024):
+def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSideLength=1024, min_overlap_part=0.33):
     """
     Divide a dataset using images bigger than a wanted size into equivalent dataset with square-images divisions of
     the wanted size
     :param inputDatasetPath: path to the base dataset to divide
     :param outputDatasetPath: path to the output divided dataset
     :param squareSideLength: length of a division side
+    :param min_overlap_part: min overlapping part of intervals, if less, adds intervals with length / 2 offset
     :return: None
     """
     if outputDatasetPath is None:
@@ -157,8 +153,8 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
         image = cv2.imread(imagePath)
         height, width, _ = image.shape
 
-        xStarts = computeStartsOfInterval(width, squareSideLength)
-        yStarts = computeStartsOfInterval(height, squareSideLength)
+        xStarts = computeStartsOfInterval(width, squareSideLength, min_overlap_part)
+        yStarts = computeStartsOfInterval(height, squareSideLength, min_overlap_part)
 
         '''###################################
         ### Exclusion of Useless Divisions ###
