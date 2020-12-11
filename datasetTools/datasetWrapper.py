@@ -6,7 +6,7 @@ from datasetTools.datasetDivider import getBWCount
 from datasetTools import AnnotationAdapter as adapt
 from datasetTools.AnnotationAdapter import AnnotationAdapter
 
-classesInfoNephro = [
+NEPHRO_CLASSES = [
     {"id": 0, "name": "Background", "color": "", "ignore": True},
     {"id": 1, "name": "tubule_sain", "color": "#ff007f", "ignore": False},
     {"id": 2, "name": "tubule_atrophique", "color": "#55557f", "ignore": False},
@@ -21,9 +21,16 @@ classesInfoNephro = [
     {"id": 11, "name": "media", "color": "#aa5500", "ignore": True}
 ]
 
+CORTICES_CLASSES = [
+    {"id": 0, "name": "Background", "color": "", "ignore": True},
+    {"id": 1, "name": "cortex", "color": "#ffaa00", "ignore": False},
+    {"id": 2, "name": "medullaire", "color": "#ff0000", "ignore": False},
+    {"id": 3, "name": "capsule", "color": "#ff00ff", "ignore": False}
+]
+
 
 def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 'dataset_train',
-               maskClass: str = 'masks'):
+               maskClass: str = 'masks', imageFormat="png"):
     """
     Create the mask image based on its polygon points
     :param imgName: name w/o extension of the base image
@@ -32,6 +39,7 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
     :param ptsMask: array of [x, y] coordinates which are all the polygon points representing the mask
     :param datasetName: name of the output dataset
     :param maskClass: name of the associated class of the current mask
+    :param imageFormat: output format of the masks' images
     :return: None
     """
     # Formatting the suffix for the image representing the mask
@@ -53,36 +61,59 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
     cv2.fillPoly(mask, [ptsMask], 255)
 
     # Saving result image
-    output_name = imgName + maskName + '.png'
+    output_name = imgName + maskName + '.' + imageFormat
     cv2.imwrite(output_directory + output_name, mask)
 
 
+def resizeMasks(baseMasks, xRatio: float, yRatio: float):
+    """
+    Resize mask's base points to fit the targeted size
+    :param baseMasks array of [x, y] coordinates which are all the polygon points representing the mask
+    :param xRatio width ratio that will be applied to coordinates
+    :param yRatio height ratio that will be applied to coordinates
+    """
+    res = []
+    for pt in baseMasks:
+        xTemp = float(pt[0])
+        yTemp = float(pt[1])
+        res.append([xTemp * xRatio, yTemp * yRatio])
+    return res
+
+
 def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'dataset_train',
-                       adapter: AnnotationAdapter = None, classesInfo: dict = None):
+                       adapter: AnnotationAdapter = None, classesInfo: dict = None, imageFormat="png", resize=None):
     """
     Create all the masks of a given image by parsing xml annotations file
     :param rawDatasetPath: path to the folder containing images and associated annotations
     :param imgName: name w/o extension of an image
     :param datasetName: name of the output dataset
     :param adapter: the annotation adapter to use to create masks, if None looking for an adapter that can read the file
-    :param classesInfos: Information about all classes that are used, by default will be nephrology classes Info
+    :param classesInfo: Information about all classes that are used, by default will be nephrology classes Info
+    :param imageFormat: output format of the image and masks
+    :param resize: if the image and masks have to be resized
     :return: None
     """
     # Getting shape of original image (same for all this masks)
     if classesInfo is None:
-        classesInfo = classesInfoNephro
+        classesInfo = NEPHRO_CLASSES
 
-    img = cv2.imread(os.path.join(rawDatasetPath, imgName + '.png'))
+    img = cv2.imread(os.path.join(rawDatasetPath, imgName + '.' + imageFormat))
     if img is None:
         print('Problem with {} image'.format(imgName))
         return
     shape = img.shape
+    if resize is not None:
+        yRatio = resize[0] / shape[0]
+        xRatio = resize[1] / shape[1]
+        assert yRatio > 0 and xRatio > 0, "Error resize ratio not correct ({}, {})".format(yRatio, xRatio)
+        img = cv2.resize(img, resize, interpolation=cv2.INTER_CUBIC)
+        shape = img.shape
 
     # Copying the original image in the dataset
     targetDirectoryPath = datasetName + '/' + imgName + '/images/'
     if not os.path.exists(targetDirectoryPath):
         os.makedirs(targetDirectoryPath)
-        cv2.imwrite(targetDirectoryPath + imgName + '.png', img)
+        cv2.imwrite(targetDirectoryPath + imgName + '.' + imageFormat, img)
 
     # Finding annotation files
     formats = adapt.ANNOTATION_FORMAT
@@ -131,7 +162,10 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
                         break
         else:
             maskClass = datasetClass
-        createMask(imgName, shape, noMask, maskPoints, datasetName, maskClass)
+            if resize is not None:
+                resizedMasks = resizeMasks(maskPoints, xRatio, yRatio)
+        createMask(imgName, shape, noMask, maskPoints if resize is None else resizedMasks, datasetName, maskClass,
+                   imageFormat)
 
 
 def fuseCortices(datasetPath: str, imageName: str, deleteBaseMasks=False):
@@ -277,6 +311,7 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAda
     images = []  # list of image that can be used to compute masks
     missingImages = []  # list of missing images
     missingAnnotations = []  # list of missing annotations
+    usedFormat = None
     if adapter is None:
         formats = adapt.ANNOTATION_FORMAT
     else:
@@ -291,6 +326,13 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAda
             # Testing if there is an png image with that name
             pngPath = os.path.join(rawDatasetPath, name + '.png')
             pngExists = os.path.exists(pngPath)
+            if usedFormat is None and pngExists:
+                usedFormat = "png"
+            # Same thing with jp2 format
+            jpgPath = os.path.join(rawDatasetPath, name + '.jpg')
+            jpgExists = os.path.exists(jpgPath)
+            if usedFormat is None and jpgExists:
+                usedFormat = "jpg"
 
             # Same thing with jp2 format
             jp2Path = os.path.join(rawDatasetPath, name + '.jp2')
@@ -300,16 +342,18 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAda
             annotationsExist = False
             for ext in formats:
                 annotationsExist = annotationsExist or os.path.exists(os.path.join(rawDatasetPath, name + '.' + ext))
-            if pngExists or jp2Exists:  # At least one image exists
+            if pngExists or jpgExists or jp2Exists:  # At least one image exists
                 if not annotationsExist:  # Annotations are missing
                     missingAnnotations.append(name)
                 else:
                     if verbose:
                         print("Adding {} image".format(name))
-                    if not pngExists:  # Only jp2 exists
+                    outPath = pngPath if usedFormat == "png" else jpgPath
+                    outExists = pngExists if usedFormat == "png" else jpgExists
+                    if not outExists:  # Only jp2 exists
                         if verbose:
                             print("\tCreating png version")
-                        convertImage(jp2Path, pngPath)
+                        convertImage(jpgPath if jpgExists else jp2Path if jp2Exists else pngPath, outPath)
                     images.append(name)  # Adding this image to the list
             elif annotationsExist:  # There is no image file but xml found
                 missingImages.append(name)
@@ -336,27 +380,37 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAda
 
         if not problem:
             print("Raw Dataset has no problem. Number of Images : {}".format(nbImages))
-    return names, images, missingImages, missingAnnotations
+    return names, images, missingImages, missingAnnotations, usedFormat
 
 
 def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', deleteBaseCortexMasks=False,
-                 adapter: AnnotationAdapter = None):
+                 adapter: AnnotationAdapter = None, resize=None, cortexMode=False, classesInfo=None):
     """
     Start wrapping the raw dataset into the wanted format
     :param deleteBaseCortexMasks: delete the base masks images after fusion
     :param rawDatasetPath: path to the folder containing images and associated annotations
     :param datasetName: name of the output dataset
     :param adapter: Adapter to use to read annotations, if None compatible adapter will be searched
+    :param resize: If tuple given, the images and their masks will be resized to the tuple value
+    :param cortexMode: If in cortex mode, will not clean the image nor fuse cortex masks
+    :param classesInfo: Information about the classes that will be used
     :return: None
     """
-    names, images, missingImages, missingAnnotations = getInfoRawDataset(rawDatasetPath, verbose=True, adapter=adapter)
-
+    names, images, missingImages, missingAnnotations, usedFormat = getInfoRawDataset(rawDatasetPath, verbose=True,
+                                                                                     adapter=adapter)
+    if classesInfo is None:
+        if cortexMode:
+            classesInfo = CORTICES_CLASSES
+        else:
+            classesInfo = NEPHRO_CLASSES
     nbImages = len(images)
     # Creating masks for any image which has all required files and displaying progress
     for index in range(nbImages):
         file = images[index]
         print('Creating masks for {} image {}/{} ({:.2f}%)'.format(file, index + 1, nbImages,
                                                                    (index + 1) / nbImages * 100))
-        createMasksOfImage(rawDatasetPath, file, datasetName, adapter)
-        fuseCortices(datasetName, file, deleteBaseMasks=deleteBaseCortexMasks)
-        cleanImage(datasetName, file)
+        createMasksOfImage(rawDatasetPath, file, datasetName, adapter, classesInfo=classesInfo, resize=resize,
+                           imageFormat=usedFormat)
+        if not cortexMode:
+            fuseCortices(datasetName, file, deleteBaseMasks=deleteBaseCortexMasks)
+            cleanImage(datasetName, file)

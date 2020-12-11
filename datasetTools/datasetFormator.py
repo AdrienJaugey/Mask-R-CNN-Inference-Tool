@@ -98,22 +98,76 @@ def infoNephrologyDataset(datasetPath: str, silent=False):
     return nbImg, histogram, cortexMissing, multiCortices, maxClasses, maxClassesNoCortex, missingDataImages
 
 
-def sortImages(datasetPath: str, createCortexDataset=False, cortexDatasetPath: str = None, unusedDirPath: str = None):
+def infoPatients(rawDataset, mode: str = "main"):
+    names = dW.getInfoRawDataset(rawDatasetPath=rawDataset)[0]
+    patients = []
+    patients_biopsy = []
+    patients_nephrectomy = []
+    for name in names:
+        patient = name[2:6]
+        if patient not in patients:
+            patients.append(patient)
+        if mode == "main":
+            biopsie = name[6] == "B"
+            if biopsie:
+                if patient not in patients_biopsy:
+                    patients_biopsy.append(patient)
+            elif patient not in patients_nephrectomy:
+                patients_nephrectomy.append(patient)
+    patients.sort()
+    patients_biopsy.sort()
+    patients_nephrectomy.sort()
+    return patients, patients_biopsy, patients_nephrectomy
+
+
+def selectPatients(patientsBiopsie, patientsNephrectomie, nbPatientBiopsie=5, nbPatientNephrectomie=4):
+    communs = []
+    for pb in patientsBiopsie:
+        for pn in patientsNephrectomie:
+            if pb == pn and pb not in communs:
+                communs.append(pb)
+    for patient in communs:
+        patientsBiopsie.remove(patient)
+        patientsNephrectomie.remove(patient)
+
+    patientsBiopsie = np.array(patientsBiopsie)
+    patientsNephrectomie = np.array(patientsNephrectomie)
+    if max(len(communs), nbPatientBiopsie, nbPatientNephrectomie) == len(communs):
+        communs = np.array(communs)
+        selected = np.random.choice(communs, size=max(nbPatientBiopsie, nbPatientNephrectomie), replace=False)
+    else:
+        selected = communs.copy()
+        nbPatientBiopsie -= len(communs)
+        if nbPatientBiopsie > 0:
+            temp = np.random.choice(patientsBiopsie, size=nbPatientBiopsie, replace=False)
+            for patient in temp:
+                selected.append(patient)
+        nbPatientNephrectomie -= len(communs)
+        if nbPatientNephrectomie > 0:
+            temp = np.random.choice(patientsNephrectomie, size=nbPatientNephrectomie, replace=False)
+            for patient in temp:
+                selected.append(patient)
+    return selected
+
+
+def sortImages(datasetPath: str, unusedDirPath: str = None, mode: str = "main"):
     """
     Move images that cannot be used in main training/inference, can also create cortex dataset
     :param datasetPath: path to the base dataset
-    :param createCortexDataset: whether the cortex dataset should be created or not
-    :param cortexDatasetPath: path to the cortex dataset
     :param unusedDirPath: path to the directory where unused files will be moved
+    :param mode: Choosing between sort for main segmentation or sort for cortices segmentation
     :return: None
     """
     # Setting paths if not given
     if unusedDirPath is None:
         unusedDirPath = datasetPath + '_unused'
 
-    TO_UNCOUNT = ['images', 'full_images', 'cortex', 'medullaire', 'background']
-    if createCortexDataset and cortexDatasetPath is None:
-        cortexDatasetPath = datasetPath + '_cortex'
+    NOT_TO_COUNT = ['images', 'full_images']
+    if mode == "main":
+        NOT_TO_COUNT.extend(['cortex', 'medullaire', 'capsule'])
+    else:
+        NOT_TO_COUNT.extend(["nsg", "nsg_complet", "nsg_partiel", "tubule_sain", "tubule_atrophique", "vaisseau",
+                             "intima", "media", "pac", "artefact", "veine"])
 
     # Getting list of images directories without data
     info = infoNephrologyDataset(datasetPath, silent=True)
@@ -131,40 +185,11 @@ def sortImages(datasetPath: str, createCortexDataset=False, cortexDatasetPath: s
 
         masksDirList = os.listdir(os.path.join(datasetPath, imageDir))
         if imageDir not in noCortex:
-            for uncount in TO_UNCOUNT:
+            for uncount in NOT_TO_COUNT:
                 if uncount in masksDirList:
                     masksDirList.remove(uncount)
             if len(masksDirList) == 0:
                 toBeMoved.append(imageDir)
-
-        if createCortexDataset:
-            # Init : getting paths & making dest dir
-            imageDirPath = os.path.join(datasetPath, imageDir)
-            dstDirPath = os.path.join(cortexDatasetPath, imageDir)
-            destImagesDirPath = os.path.join(dstDirPath, 'images')
-            os.makedirs(destImagesDirPath, exist_ok=True)
-
-            # Copy image from full_images (images if not present) dir to dest
-            imageFileName = imageDir + '.png'
-            if os.path.exists(os.path.join(imageDirPath, 'full_images')):
-                srcImageFilePath = os.path.join(imageDirPath, 'full_images', imageFileName)
-            else:
-                srcImageFilePath = os.path.join(imageDirPath, 'images', imageFileName)
-            fullImageDstPath = os.path.join(destImagesDirPath, imageFileName)
-            copy(srcImageFilePath, fullImageDstPath)
-
-            # Copy cortex directory to dest if exists
-            cortexDirPath = os.path.join(imageDirPath, 'cortex')
-            if os.path.exists(cortexDirPath):
-                copytree(cortexDirPath, os.path.join(dstDirPath, 'cortex'))
-
-            # Move background & medulla directories to dest if present
-            medullaDirPath = os.path.join(imageDirPath, 'medullaire')
-            if os.path.exists(medullaDirPath):
-                move(medullaDirPath, dstDirPath)
-            backgroundDirPath = os.path.join(imageDirPath, 'fond')
-            if os.path.exists(backgroundDirPath):
-                move(backgroundDirPath, dstDirPath)
 
     # Moving directories that will not be used in main dataset
     if len(toBeMoved) > 0:
@@ -209,6 +234,37 @@ def createValDataset(datasetPath: str, valDatasetPath: str = None, valDatasetSiz
         move(datasetPath, newName)
 
 
+def createValDatasetByPeople(rawDataset, datasetPath: str, valDatasetPath: str = None, nbPatientBiopsie=5,
+                             nbPatientNephrectomie=4):
+    """
+    Create the validation dataset by moving a set of base dataset's images from a few patients
+    If a patient has biopsy and nephrectomy images, it will count in both categories
+    :param rawDataset: path to the raw dataset
+    :param datasetPath: path to the dataset where to take images'directories
+    :param valDatasetPath: path to the val dataset, if None, datasetPath + _val is used
+    :param nbPatientBiopsie: number of patient with a biopsy to use as validation data
+    :param nbPatientNephrectomie: number of patient with a nephrectomy to use as validation data
+    :return: None
+    """
+    if valDatasetPath is None:
+        valDatasetPath = datasetPath + "_val"
+    _, pB, pN = infoPatients(rawDataset)
+    selected = selectPatients(pB, pN, nbPatientBiopsie, nbPatientNephrectomie)
+    toMove = []
+    imagesFolder = os.listdir(datasetPath)
+    for folder in imagesFolder:
+        for patient in selected:
+            if patient in folder:
+                toMove.append(folder)
+
+    os.makedirs(valDatasetPath, exist_ok=True)
+    if len(toMove) > 0:
+        print("Moving {} images directories into val dataset".format(len(toMove)))
+        for dirName in toMove:
+            # print(os.path.join(datasetPath, dirName), " vers ", os.path.join(valDatasetPath, dirName))
+            move(os.path.join(datasetPath, dirName), os.path.join(valDatasetPath, dirName))
+
+
 def checkNSG(datasetPath: str):
     totalDiff = 0
     for imageDir in os.listdir(datasetPath):
@@ -230,25 +286,24 @@ def checkNSG(datasetPath: str):
     print("Total : {}".format(totalDiff))
 
 
-def createDataset(rawDataset='raw_dataset', tempDataset='temp_dataset',
-                  cortexDatasetPath='nephrology_cortex_dataset', unusedDirPath='nephrology_dataset_unused',
+def createDataset(rawDataset='raw_dataset', tempDataset='temp_dataset', unusedDirPath='nephrology_dataset_unused',
                   mainDataset='main_dataset', mainDatasetUnusedDirPath='main_dataset_unused',
-                  deleteBaseCortexMasks=True, createCortexDataset=False, adapter: AnnotationAdapter = None,
-                  separateDivInsteadOfImage=False, divisionSize=1024, minDivisionOverlapping=0.33,
+                  deleteBaseCortexMasks=True, adapter: AnnotationAdapter = None,
+                  separateDivInsteadOfImage=False, separateByPatient=True, divisionSize=1024,
+                  minDivisionOverlapping=0.33,
                   cleanBeforeStart=False):
     """
     Generates datasets folder from a base directory, all paths are customizable, and it can also remove previous
     directories
     :param rawDataset: path to the base directory
     :param tempDataset: path to a temporary directory
-    :param cortexDatasetPath: path to the cortex directory, used to also define cortex training and validation directories
     :param unusedDirPath: path to the unused files' directory
     :param mainDataset: path to the main dataset directory, used to also define main training and validation directories
     :param mainDatasetUnusedDirPath: path to unused files' directory of main dataset
     :param deleteBaseCortexMasks: whether to delete base cortex masks or not
-    :parma createCortexDataset: whether to create cortex dataset or not, default is False
     :param adapter: the adapter used to read annotations files, if None, will detect automatically which one to use
     :param separateDivInsteadOfImage: if True, divisions of same image can be separated into training and val directories
+    :param separateByPatient: if True and not separateDivInsteadOfImage, will create validation directory based on patient
     :param divisionSize: the size of a division, default is 1024
     :param minDivisionOverlapping: the min overlapping between two divisions, default is 33%
     :param cleanBeforeStart: if True, will delete previous directories that could still exist
@@ -258,7 +313,6 @@ def createDataset(rawDataset='raw_dataset', tempDataset='temp_dataset',
         # Removing temp directories
         import shutil
         dirToDel = [tempDataset, unusedDirPath,
-                    cortexDatasetPath, cortexDatasetPath + '_train', cortexDatasetPath + '_val',
                     'temp_' + mainDataset + '_val', mainDataset + '_val', mainDataset + '_train']
         for directory in dirToDel:
             if os.path.exists(directory):
@@ -271,17 +325,7 @@ def createDataset(rawDataset='raw_dataset', tempDataset='temp_dataset',
     checkNSG(tempDataset)
 
     # Sorting images to keep those that can be used to train cortex
-    sortImages(datasetPath=tempDataset,
-               createCortexDataset=createCortexDataset, cortexDatasetPath=cortexDatasetPath,
-               unusedDirPath=unusedDirPath)
-    if createCortexDataset:
-        infoNephrologyDataset(cortexDatasetPath)
-
-        # Taking some images from the cortex dataset to make the validation cortex dataset
-        createValDataset(cortexDatasetPath, rename=True)
-        infoNephrologyDataset(cortexDatasetPath + '_train')
-        infoNephrologyDataset(cortexDatasetPath + '_val')
-
+    sortImages(datasetPath=tempDataset, unusedDirPath=unusedDirPath)
     if separateDivInsteadOfImage:
         # Dividing main dataset in 1024*1024 divisions
         dD.divideDataset(tempDataset, mainDataset,
@@ -299,9 +343,13 @@ def createDataset(rawDataset='raw_dataset', tempDataset='temp_dataset',
         createValDataset(mainDataset, rename=True)
     else:  # To avoid having divisions of same image to be dispatched in main and validation dataset
         # Removing unusable images by moving them into a specific directory
-        sortImages(tempDataset, unusedDirPath=mainDatasetUnusedDirPath)
-        # Taking some images from the main dataset to make the validation dataset
-        createValDataset(tempDataset, valDatasetPath='temp_' + mainDataset + '_val', rename=False)
+        if separateByPatient:
+            createValDatasetByPeople(rawDataset=rawDataset, datasetPath=tempDataset,
+                                     valDatasetPath='temp_' + mainDataset + '_val',
+                                     nbPatientBiopsie=5, nbPatientNephrectomie=4)
+        else:
+            # Taking some images from the main dataset to make the validation dataset
+            createValDataset(tempDataset, valDatasetPath='temp_' + mainDataset + '_val', rename=False)
 
         # Dividing the main dataset after having separated images for the validation dataset
         # then removing unusable divisions
@@ -319,6 +367,29 @@ def createDataset(rawDataset='raw_dataset', tempDataset='temp_dataset',
     print("\nDataset made, nothing left to do")
 
 
+def generateCortexDataset(rawDataset: str, outputDataset="nephrology_cortex_dataset", cleanBeforeStart=True,
+                          resize=(2048, 2048), overlap=0.):
+    # Removing former dataset directories
+    if cleanBeforeStart:
+        import shutil
+        dirToDel = ["temp_" + outputDataset, outputDataset, outputDataset + '_train', outputDataset + '_val']
+        for directory in dirToDel:
+            if os.path.exists(directory):
+                shutil.rmtree(directory, ignore_errors=True)
+    # Creating masks for cortices images
+    dW.startWrapper(rawDataset, "temp_" + outputDataset, resize=resize, cortexMode=True)
+    # If size is greater than 1024x1024, dataset must be divided
+    if resize is not None and not resize[0] == resize[1] == 1024:
+        dD.divideDataset("temp_" + outputDataset, outputDataset, squareSideLength=1024, min_overlap_part=overlap,
+                         mode="cortex")
+    # Creating val dataset by
+    createValDataset(outputDataset, valDatasetPath=outputDataset + '_val', rename=True,
+                     valDatasetSizePart=0.05, valDatasetMinSize=10)
+    infoNephrologyDataset(outputDataset + '_train')
+    infoNephrologyDataset(outputDataset + '_val')
+    print("\nDataset made, nothing left to do")
+
+
 if __name__ == "__main__":
     createDataset(mainDataset='nephrology_dataset', mainDatasetUnusedDirPath='nephrology_dataset_unused',
-                  createCortexDataset=False, cleanBeforeStart=True)
+                  cleanBeforeStart=True)

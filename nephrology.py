@@ -3,34 +3,22 @@ import warnings
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
-    import sys
-    import random
-    import math
-    import re
     import time
     import numpy as np
     import cv2
-    import matplotlib
     import matplotlib.pyplot as plt
-    import json
-    from time import time, ctime
-    from skimage.io import imread, imsave, imshow, imread_collection, concatenate_images
-    from skimage.transform import resize
+    from time import time
+    from skimage.io import imread, imsave
     from datasetTools import datasetDivider as div, AnnotationAdapter
     from datasetTools import datasetWrapper as wr
     from datasetTools.ASAPAdapter import ASAPAdapter
     from datasetTools.LabelMeAdapter import LabelMeAdapter
     from datetime import datetime
-    from mrcnn import config
-    from mrcnn import utils
-    from mrcnn import model
-    from mrcnn import visualize
 
     from mrcnn.config import Config
     from mrcnn import utils
     from mrcnn import model as modellib
     from mrcnn import visualize
-    from mrcnn.model import log
 
 
 def get_ax(rows=1, cols=1, size=8):
@@ -46,12 +34,14 @@ def listAvailableImage(dirPath: str):
         name = file.split('.')[0]
         extension = file.split('.')[-1]
         if extension == 'jp2':
-            if (name + '.png') not in image:
+            if (name + '.png') not in image and (name + '.jpg') not in image:
                 if os.path.exists(os.path.join(dirPath, name + '.png')):
                     image.append(name + '.png')
+                elif os.path.exists(os.path.join(dirPath, name + '.jpg')):
+                    image.append(name + '.jpg')
                 else:
                     image.append(file)
-        elif extension == 'png':
+        elif extension == 'png' or extension == "jpg":
             image.append(file)
     for i in range(len(image)):
         image[i] = os.path.join(dirPath, image[i])
@@ -60,11 +50,14 @@ def listAvailableImage(dirPath: str):
 
 class NephrologyInferenceModel:
 
-    def __init__(self, classesInfo, modelPath, divisionSize=1024):
+    def __init__(self, classesInfo, modelPath, divisionSize=1024, min_overlap_part=0.33, cortex_size=None):
         print("Initialisation")
         self.__CLASSES_INFO = classesInfo
+        self.__CORTEX_MODE = not classesInfo[0]["ignore"]
         self.__MODEL_PATH = modelPath
         self.__DIVISION_SIZE = divisionSize
+        self.__MIN_OVERLAP_PART = min_overlap_part
+        self.__CORTEX_SIZE = None if not self.__CORTEX_MODE else (1024, 1024) if cortex_size is None else cortex_size
         self.__CELLS_CLASS_NAMES = []
         for classInfo in classesInfo:
             if not classInfo["ignore"]:
@@ -129,10 +122,17 @@ class NephrologyInferenceModel:
             image_name = image_file_name.split('.')[0]
             image_extension = image_file_name.split('.')[-1]
 
-            fullImage = imread(imagePath)
-            if image_extension != "png":
+            if self.__CORTEX_MODE:
+                fullImage = cv2.imread(imagePath)
+                height, width, _ = fullImage.shape
+                fullImage = cv2.resize(fullImage, self.__CORTEX_SIZE)
+                fullImage = cv2.cvtColor(fullImage, cv2.COLOR_BGR2RGB)
+            else:
+                fullImage = imread(imagePath)
+            if image_extension not in ["png", "jpg"]:
                 # print('Converting to png')
                 tempPath = dirPath + image_name + '.png'
+                image_extension = "png"
                 imsave(tempPath, fullImage)
                 imagePath = tempPath
 
@@ -144,16 +144,18 @@ class NephrologyInferenceModel:
             else:
                 image_results_path = None
 
-            fullImage = cv2.imread(imagePath)
-            fullImage = cv2.cvtColor(fullImage, cv2.COLOR_BGR2RGB)
+            if not self.__CORTEX_MODE:
+                fullImage = cv2.imread(imagePath)
+                fullImage = cv2.cvtColor(fullImage, cv2.COLOR_BGR2RGB)
             image = fullImage.copy()
-            height, width, _ = fullImage.shape
+            if not self.__CORTEX_MODE:
+                height, width, _ = fullImage.shape
             cortexArea = height * width
             xStarts = [0] if self.__DIVISION_SIZE == "noDiv" else div.computeStartsOfInterval(
-                maxVal=width, intervalLength=self.__DIVISION_SIZE
+                maxVal=self.__CORTEX_SIZE[0] if self.__CORTEX_MODE else width, intervalLength=self.__DIVISION_SIZE, min_overlap_part=self.__MIN_OVERLAP_PART
             )
             yStarts = [0] if self.__DIVISION_SIZE == "noDiv" else div.computeStartsOfInterval(
-                maxVal=height, intervalLength=self.__DIVISION_SIZE
+                maxVal=self.__CORTEX_SIZE[1] if self.__CORTEX_MODE else height, intervalLength=self.__DIVISION_SIZE, min_overlap_part=self.__MIN_OVERLAP_PART
             )
 
             nbDiv = div.getDivisionsCount(xStarts, yStarts)
@@ -165,22 +167,25 @@ class NephrologyInferenceModel:
             if annotationExists:
                 if not silent:
                     print(" - Annotation file found: creating dataset files and cleaning image if possible")
-                wr.createMasksOfImage(dirPath, image_name, 'data', classesInfo=self.__CLASSES_INFO)
-                wr.fuseCortices('data', image_name, deleteBaseMasks=True)
-                wr.cleanImage('data', image_name, onlyMasks=False)
+                wr.createMasksOfImage(dirPath, image_name, 'data', classesInfo=self.__CLASSES_INFO,
+                                      imageFormat=image_extension, resize=self.__CORTEX_SIZE)
+                if not self.__CORTEX_MODE:
+                    wr.fuseCortices('data', image_name, deleteBaseMasks=True)
+                    wr.cleanImage('data', image_name, onlyMasks=False)
                 maskDirs = os.listdir(os.path.join('data', image_name))
-                if "cortex" in maskDirs:
-                    cortexDirPath = os.path.join('data', image_name, 'cortex')
-                    cortexImageFilePath = os.listdir(cortexDirPath)[0]
-                    cortex = cv2.imread(os.path.join(cortexDirPath, cortexImageFilePath), cv2.IMREAD_UNCHANGED)
-                    cortexArea = div.getBWCount(cortex)[1]
-                # If full_images directory exists it means than image has been cleaned so we have to get it another
-                # time
-                if 'full_images' in maskDirs:
-                    imagesDirPath = os.path.join('data', image_name, 'images')
-                    imageFilePath = os.listdir(imagesDirPath)[0]
-                    image = cv2.imread(os.path.join(imagesDirPath, imageFilePath))
-                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                if not self.__CORTEX_MODE:
+                    if "cortex" in maskDirs:
+                        cortexDirPath = os.path.join('data', image_name, 'cortex')
+                        cortexImageFilePath = os.listdir(cortexDirPath)[0]
+                        cortex = cv2.imread(os.path.join(cortexDirPath, cortexImageFilePath), cv2.IMREAD_UNCHANGED)
+                        cortexArea = div.getBWCount(cortex)[1]
+                    # If full_images directory exists it means than image has been cleaned so we have to get it another
+                    # time
+                    if 'full_images' in maskDirs:
+                        imagesDirPath = os.path.join('data', image_name, 'images')
+                        imageFilePath = os.listdir(imagesDirPath)[0]
+                        image = cv2.imread(os.path.join(imagesDirPath, imageFilePath))
+                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
                 # We want to know if image has annotation, if we don't want to detect cortex and this mask exist
                 # as we need it to clean the image, we remove it from the mask list before checking if a class
@@ -198,6 +203,7 @@ class NephrologyInferenceModel:
                 "PATH": imagePath,
                 "DIR_PATH": dirPath,
                 "FILE_NAME": image_file_name,
+                "IMAGE_FORMAT": image_extension,
                 "NAME": image_name,
                 "HEIGHT": height,
                 "WIDTH": width,
@@ -209,6 +215,25 @@ class NephrologyInferenceModel:
             }
         return image, fullImage, imageInfo, image_results_path
 
+    def init_results_dir(self, results_path):
+        if results_path is None or results_path in ['.', './', "/"]:
+            lastDir = "results"
+            remainingPath = ""
+        else:
+            if results_path[-1] == '/':
+                index = -2
+            else:
+                index = -1
+            lastDir = results_path.split('/')[index].replace('/', '')
+            remainingPath = results_path[0:results_path.index(lastDir)]
+        results_path = remainingPath + "{}_{}/".format(lastDir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+        os.makedirs(results_path)
+        print("Results will be saved to {}".format(results_path))
+        logsPath = os.path.join(results_path, 'inference_data.csv')
+        with open(logsPath, 'w') as results_log:
+            results_log.write("Image; Duration (s); Precision;\n")
+        return results_path, logsPath
+
     def inference(self, images: list, results_path=None, save_results=True,
                   fusion_bb_threshold=0., fusion_mask_threshold=0.1,
                   filter_bb_threshold=0.5, filter_mask_threshold=0.9,
@@ -218,22 +243,7 @@ class NephrologyInferenceModel:
 
         # If results have to be saved, setting the results path and creating directory
         if save_results:
-            if results_path is None or results_path in ['.', './', "/"]:
-                lastDir = "results"
-                remainingPath = ""
-            else:
-                if results_path[-1] == '/':
-                    index = -2
-                else:
-                    index = -1
-                lastDir = results_path.split('/')[index].replace('/', '')
-                remainingPath = results_path[0:results_path.index(lastDir)]
-            results_path = remainingPath + "{}_{}/".format(lastDir, datetime.now().strftime("%Y%m%d_%H%M%S"))
-            os.makedirs(results_path)
-            print("Results will be saved to {}".format(results_path))
-            logsPath = os.path.join(results_path, 'inference_data.csv')
-            with open(logsPath, 'w') as results_log:
-                results_log.write("Image; Duration (s); Precision;\n")
+            results_path, logsPath = self.init_results_dir(results_path)
         else:
             print("No result will be saved")
             results_path = None
@@ -251,9 +261,11 @@ class NephrologyInferenceModel:
             if imageInfo["HAS_ANNOTATION"]:
                 class LightCellsDataset(utils.Dataset):
 
-                    def __init__(self, cells_class_names):
+                    def __init__(self, cells_class_names, cortex_mode, cortex_size):
                         super().__init__()
                         self.__CELLS_CLASS_NAMES = cells_class_names.copy()
+                        self.__CORTEX_MODE = cortex_mode
+                        self.__CORTEX_SIZE = cortex_size
 
                     def get_class_names(self):
                         return self.__CELLS_CLASS_NAMES.copy()
@@ -303,7 +315,9 @@ class NephrologyInferenceModel:
                                 [name for name in os.listdir(temp_DIR) if
                                  os.path.isfile(os.path.join(temp_DIR, name))])
 
-                        mask = np.zeros([imageInfo["HEIGHT"], imageInfo["WIDTH"], number_of_masks], dtype=np.uint8)
+                        mask = np.zeros([self.__CORTEX_SIZE[0] if self.__CORTEX_MODE else imageInfo["HEIGHT"],
+                                         self.__CORTEX_SIZE[1] if self.__CORTEX_MODE else imageInfo["WIDTH"],
+                                         number_of_masks], dtype=np.uint8)
                         iterator = 0
                         class_ids = np.zeros((number_of_masks,), dtype=int)
                         for masks_dir in os.listdir(path):
@@ -322,7 +336,7 @@ class NephrologyInferenceModel:
                             occlusion = np.logical_and(occlusion, np.logical_not(mask[:, :, i]))
                         return mask, class_ids.astype(np.int32)
 
-                dataset_val = LightCellsDataset(self.__CELLS_CLASS_NAMES)
+                dataset_val = LightCellsDataset(self.__CELLS_CLASS_NAMES, self.__CORTEX_MODE, self.__CORTEX_SIZE)
                 dataset_val.load_cells()
                 dataset_val.prepare()
 
@@ -334,8 +348,8 @@ class NephrologyInferenceModel:
                         print(" - Applying annotations on file to get expected results")
                     fileName = image_results_path + "{} Expected".format(imageInfo["NAME"])
                     visualize.display_instances(fullImage, gt_bbox, gt_mask, gt_class_id, dataset_val.class_names,
-                                                colorPerClass=True, figsize=(imageInfo["WIDTH"] / 100,
-                                                                             imageInfo["HEIGHT"] / 100),
+                                                colorPerClass=True, figsize=((1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
+                                                                             (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100),
                                                 title="{} Expected".format(imageInfo["NAME"]),
                                                 fileName=fileName, silent=True)
 
@@ -352,11 +366,13 @@ class NephrologyInferenceModel:
                 res.append(results[0])
 
             # Post-processing of the predictions
-
+            # if not self.__CORTEX_MODE:
             if not displayOnlyAP:
                 print(" - Fusing results of all divisions")
-            res = utils.fuse_results(res, image, division_size=self.__DIVISION_SIZE)
-
+            res = utils.fuse_results(res, image, division_size=self.__DIVISION_SIZE,
+                                     min_overlap_part=self.__MIN_OVERLAP_PART)
+            # else:
+            #     res = res[0]
             if not displayOnlyAP:
                 print(" - Fusing overlapping masks")
             with warnings.catch_warnings():
@@ -398,13 +414,14 @@ class NephrologyInferenceModel:
                                                            cmap=cmap, show=False, normalize=True,
                                                            fileName=image_results_path + name2)
 
-            print(" - Computing statistics on predictions")
-            stats = utils.getCountAndArea(res, classesInfo=self.__CLASSES_INFO,
-                                          selectedClasses=self.__CELLS_CLASS_NAMES)
-            print("    - cortex : area = {}".format(imageInfo["CORTEX_AREA"]))
-            for classStats in stats:
-                print("    - {} : count = {}, area = {} px".format(classStats["name"], classStats["count"],
-                                                                   classStats["area"]))
+            if not self.__CORTEX_MODE:
+                print(" - Computing statistics on predictions")
+                stats = utils.getCountAndArea(res, classesInfo=self.__CLASSES_INFO,
+                                              selectedClasses=self.__CELLS_CLASS_NAMES)
+                print("    - cortex : area = {}".format(imageInfo["CORTEX_AREA"]))
+                for classStats in stats:
+                    print("    - {} : count = {}, area = {} px".format(classStats["name"], classStats["count"],
+                                                                       classStats["area"]))
 
             if not displayOnlyAP:
                 print(" - Applying masks on image")
@@ -416,7 +433,8 @@ class NephrologyInferenceModel:
                 visualize.display_instances(fullImage, res['rois'], res['masks'], res['class_ids'], names,
                                             res['scores'],
                                             colorPerClass=True, fileName=fileName, onlyImage=True, silent=True,
-                                            figsize=(imageInfo["WIDTH"] / 100, imageInfo["HEIGHT"] / 100))
+                                            figsize=((1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
+                                                     (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100))
 
                 # Annotations Extraction
                 if not displayOnlyAP:

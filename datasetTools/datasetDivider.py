@@ -4,10 +4,6 @@ import cv2
 import numpy as np
 
 VERBOSE = False
-MIN_PART_OF_DIV = 10.0
-MIN_PART_OF_CORTEX = 10.0
-MIN_PART_OF_MASK = 10.0
-
 
 def computeStartsOfInterval(maxVal: int, intervalLength=1024, min_overlap_part=0.33):
     """
@@ -129,7 +125,8 @@ def getRepresentativePercentage(blackMask: int, whiteMask: int, divisionImage):
     return partOfDiv, partOfMask, partOfImage
 
 
-def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSideLength=1024, min_overlap_part=0.33):
+def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSideLength=1024, min_overlap_part=0.33,
+                  min_part_of_div=10.0, min_part_of_cortex=10.0, min_part_of_mask=10.0, mode: str = "main"):
     """
     Divide a dataset using images bigger than a wanted size into equivalent dataset with square-images divisions of
     the wanted size
@@ -137,6 +134,10 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
     :param outputDatasetPath: path to the output divided dataset
     :param squareSideLength: length of a division side
     :param min_overlap_part: min overlapping part of intervals, if less, adds intervals with length / 2 offset
+    :param min_part_of_div: min part of div, used to decide whether the div will be used or not
+    :param min_part_of_cortex: min part of cortex, used to decide whether the div will be used or not
+    :param min_part_of_mask: min part of mask, used to decide whether the div will be used or not
+    :param mode: Whether it is main or cortex dataset
     :return: None
     """
     if outputDatasetPath is None:
@@ -150,6 +151,11 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
         imageDirPath = os.path.join(inputDatasetPath, imageDir)
 
         imagePath = os.path.join(imageDirPath, 'images/{}.png'.format(imageDir))
+        if os.path.exists(imagePath):
+            IMAGE_EXT = '.png'
+        else:
+            imagePath = os.path.join(imageDirPath, 'images/{}.jpg'.format(imageDir))
+            IMAGE_EXT = '.jpg'
         image = cv2.imread(imagePath)
         height, width, _ = image.shape
 
@@ -169,24 +175,31 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
                 print("{} : No cortex".format(imageDir))
         else:
             cortexImgPath = os.path.join(cortexDirPath, os.listdir(cortexDirPath)[0])
-            cortexImg = cv2.imread(cortexImgPath, cv2.IMREAD_UNCHANGED)
-            black, white = getBWCount(cortexImg)
+            usefulPart = cv2.imread(cortexImgPath, cv2.IMREAD_UNCHANGED)
+            if mode == "cortex":
+                for dir in os.listdir(imageDirPath):
+                    if dir not in ['images', 'fullimages']:
+                        maskdir = os.path.join(imageDirPath, dir)
+                        for mask in os.listdir(maskdir):
+                            mask = cv2.imread(os.path.join(maskdir, mask), cv2.IMREAD_UNCHANGED)
+                            usefulPart = cv2.bitwise_or(usefulPart, mask)
+            black, white = getBWCount(usefulPart)
             total = white + black
             if VERBOSE:
                 print("Cortex is {:.3f}% of base image".format(white / total * 100))
                 print("\t[ID] : Part of Div | of Cortex | of Image")
             for divId in range(getDivisionsCount(xStarts, yStarts)):
-                div = getImageDivision(cortexImg, xStarts, yStarts, divId, squareSideLength)
+                div = getImageDivision(usefulPart, xStarts, yStarts, divId, squareSideLength)
                 partOfDiv, partOfCortex, partOfImage = getRepresentativePercentage(black, white, div)
-                excluded = partOfDiv < MIN_PART_OF_DIV or partOfCortex < MIN_PART_OF_CORTEX
+                excluded = partOfDiv < min_part_of_div or partOfCortex < min_part_of_cortex
                 if excluded:
                     excludedDivisions.append(divId)
                 if VERBOSE and partOfDiv != 0:
                     print("\t[{}{}] : {:.3f}% | {:.3f}% | {:.3f}% {}".format('0' if divId < 10 else '', divId,
                                                                              partOfDiv, partOfCortex, partOfImage,
                                                                              'EXCLUDED' if excluded else ''))
-            if VERBOSE:
-                print("\tExcluded Divisions : {} \n".format(excludedDivisions))
+                if VERBOSE:
+                    print("\tExcluded Divisions : {} \n".format(excludedDivisions))
 
         '''####################################################
         ### Creating output dataset files for current image ###
@@ -201,8 +214,8 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
                     divisionOutputDirPath = imageOutputDirPath + divSuffix
                     outputImagePath = os.path.join(divisionOutputDirPath, masksDir)
                     os.makedirs(outputImagePath, exist_ok=True)
-                    outputImagePath = os.path.join(outputImagePath, imageDir + divSuffix + ".png")
-                    tempPath = os.path.join(os.path.join(imageDirPath, masksDir), '{}.png'.format(imageDir))
+                    outputImagePath = os.path.join(outputImagePath, imageDir + divSuffix + IMAGE_EXT)
+                    tempPath = os.path.join(os.path.join(imageDirPath, masksDir), '{}{}'.format(imageDir, IMAGE_EXT))
                     tempImage = cv2.imread(tempPath)
                     cv2.imwrite(outputImagePath, getImageDivision(tempImage, xStarts, yStarts, divId, squareSideLength))
             else:
@@ -220,12 +233,12 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
                         divMaskImage = getImageDivision(maskImage, xStarts, yStarts, divId, squareSideLength)
 
                         _, partOfMask, _ = getRepresentativePercentage(blackMask, whiteMask, divMaskImage)
-                        if partOfMask >= MIN_PART_OF_MASK:
+                        if partOfMask >= min_part_of_mask:
                             divSuffix = "_{}{}".format('0' if divId < 10 else '', divId)
                             divisionOutputDirPath = imageOutputDirPath + divSuffix
                             maskOutputDirPath = os.path.join(divisionOutputDirPath, masksDir)
                             os.makedirs(maskOutputDirPath, exist_ok=True)
-                            outputMaskPath = os.path.join(maskOutputDirPath, mask.split('.')[0] + divSuffix + ".png")
+                            outputMaskPath = os.path.join(maskOutputDirPath, mask.split('.')[0] + divSuffix + IMAGE_EXT)
                             cv2.imwrite(outputMaskPath, divMaskImage)
 
         if tryCleaning:
@@ -234,7 +247,7 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
                 divisionOutputDirPath = imageOutputDirPath + divSuffix
                 if len(os.listdir(divisionOutputDirPath)) == 1:
                     imagesDirPath = os.path.join(divisionOutputDirPath, 'images')
-                    imageDivPath = os.path.join(imagesDirPath, imageDir + divSuffix + '.png')
+                    imageDivPath = os.path.join(imagesDirPath, imageDir + divSuffix + IMAGE_EXT)
                     os.remove(imageDivPath)  # Removing the .png image in /images
                     os.removedirs(imagesDirPath)  # Removing the /images folder
         iterator += 1
