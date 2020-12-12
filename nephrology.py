@@ -123,9 +123,9 @@ class NephrologyInferenceModel:
             image_extension = image_file_name.split('.')[-1]
 
             if self.__CORTEX_MODE:
-                fullImage = cv2.imread(imagePath)
-                height, width, _ = fullImage.shape
-                fullImage = cv2.resize(fullImage, self.__CORTEX_SIZE)
+                fullResImage = cv2.imread(imagePath)
+                height, width, _ = fullResImage.shape
+                fullImage = cv2.resize(fullResImage, self.__CORTEX_SIZE)
                 fullImage = cv2.cvtColor(fullImage, cv2.COLOR_BGR2RGB)
             else:
                 fullImage = imread(imagePath)
@@ -152,10 +152,12 @@ class NephrologyInferenceModel:
                 height, width, _ = fullImage.shape
             cortexArea = height * width
             xStarts = [0] if self.__DIVISION_SIZE == "noDiv" else div.computeStartsOfInterval(
-                maxVal=self.__CORTEX_SIZE[0] if self.__CORTEX_MODE else width, intervalLength=self.__DIVISION_SIZE, min_overlap_part=self.__MIN_OVERLAP_PART
+                maxVal=self.__CORTEX_SIZE[0] if self.__CORTEX_MODE else width, intervalLength=self.__DIVISION_SIZE,
+                min_overlap_part=self.__MIN_OVERLAP_PART
             )
             yStarts = [0] if self.__DIVISION_SIZE == "noDiv" else div.computeStartsOfInterval(
-                maxVal=self.__CORTEX_SIZE[1] if self.__CORTEX_MODE else height, intervalLength=self.__DIVISION_SIZE, min_overlap_part=self.__MIN_OVERLAP_PART
+                maxVal=self.__CORTEX_SIZE[1] if self.__CORTEX_MODE else height, intervalLength=self.__DIVISION_SIZE,
+                min_overlap_part=self.__MIN_OVERLAP_PART
             )
 
             nbDiv = div.getDivisionsCount(xStarts, yStarts)
@@ -213,6 +215,8 @@ class NephrologyInferenceModel:
                 "HAS_ANNOTATION": has_annotation,
                 "CORTEX_AREA": cortexArea
             }
+            if self.__CORTEX_MODE:
+                imageInfo['FULL_RES_IMAGE'] = fullResImage
         return image, fullImage, imageInfo, image_results_path
 
     def init_results_dir(self, results_path):
@@ -346,10 +350,11 @@ class NephrologyInferenceModel:
                 if save_results:
                     if not displayOnlyAP:
                         print(" - Applying annotations on file to get expected results")
-                    fileName = image_results_path + "{} Expected".format(imageInfo["NAME"])
+                    fileName = image_results_path + "{}_Expected".format(imageInfo["NAME"])
                     visualize.display_instances(fullImage, gt_bbox, gt_mask, gt_class_id, dataset_val.class_names,
-                                                colorPerClass=True, figsize=((1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                                                                             (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100),
+                                                colorPerClass=True,
+                                                figsize=((1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
+                                                         (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100),
                                                 title="{} Expected".format(imageInfo["NAME"]),
                                                 fileName=fileName, silent=True)
 
@@ -408,11 +413,11 @@ class NephrologyInferenceModel:
                         visualize.display_confusion_matrix(confusion_matrix, dataset_val.get_class_names(),
                                                            title=name,
                                                            cmap=cmap, show=False,
-                                                           fileName=image_results_path + name)
+                                                           fileName=image_results_path + name.replace(' ', '_'))
                         visualize.display_confusion_matrix(confusion_matrix, dataset_val.get_class_names(),
                                                            title=name2,
                                                            cmap=cmap, show=False, normalize=True,
-                                                           fileName=image_results_path + name2)
+                                                           fileName=image_results_path + name2.replace(' ', '_'))
 
             if not self.__CORTEX_MODE:
                 print(" - Computing statistics on predictions")
@@ -427,7 +432,42 @@ class NephrologyInferenceModel:
                 print(" - Applying masks on image")
 
             if save_results:
-                fileName = image_results_path + "{} Predicted".format(imageInfo["NAME"])
+                if self.__CORTEX_MODE:
+                    if not displayOnlyAP:
+                        print(" - Cleaning full resolution image")
+                    allCortice = None
+                    allCorticeROI = None
+                    for idxMask, classMask in enumerate(res['class_ids']):
+                        if classMask == 1:
+                            if allCortice is None:
+                                allCortice = res['masks'][:, :, idxMask].copy() * 255
+                                allCorticeROI = res['rois'][idxMask].copy()
+                            else:
+                                allCortice = cv2.bitwise_or(allCortice, res['masks'][idxMask] * 255)
+                                allCorticeROI[0] = min(allCorticeROI[0], res['rois'][idxMask][0])
+                                allCorticeROI[1] = min(allCorticeROI[1], res['rois'][idxMask][1])
+                                allCorticeROI[2] = max(allCorticeROI[2], res['rois'][idxMask][2])
+                                allCorticeROI[3] = max(allCorticeROI[3], res['rois'][idxMask][3])
+                    
+                    if allCortice is not None:
+                        yRatio = imageInfo['HEIGHT'] / self.__CORTEX_SIZE[0]
+                        xRatio = imageInfo['WIDTH'] / self.__CORTEX_SIZE[1]
+                        allCorticeROI[0] = int(allCorticeROI[0] * yRatio)
+                        allCorticeROI[1] = int(allCorticeROI[1] * xRatio)
+                        allCorticeROI[2] = int(allCorticeROI[2] * yRatio)
+                        allCorticeROI[3] = int(allCorticeROI[3] * xRatio)
+
+                        allCortice = cv2.resize(np.uint8(allCortice), (imageInfo['WIDTH'], imageInfo['HEIGHT']),
+                                                interpolation=cv2.INTER_CUBIC)
+                        temp = np.zeros(imageInfo['FULL_RES_IMAGE'].shape, dtype=np.uint8)
+                        temp[:, :, 0] = allCortice
+                        temp[:, :, 1] = allCortice
+                        temp[:, :, 2] = allCortice
+                        imageInfo['FULL_RES_IMAGE'] = cv2.bitwise_and(imageInfo['FULL_RES_IMAGE'], temp)
+                        cv2.imwrite(image_results_path + "{}_cleaned.jpg".format(imageInfo["NAME"]),
+                                    imageInfo['FULL_RES_IMAGE'][allCorticeROI[0]: allCorticeROI[2],
+                                    allCorticeROI[1]:allCorticeROI[3], :])
+                fileName = image_results_path + "{}_predicted".format(imageInfo["NAME"])
                 names = self.__CELLS_CLASS_NAMES.copy()
                 names.insert(0, 'background')
                 visualize.display_instances(fullImage, res['rois'], res['masks'], res['class_ids'], names,
@@ -464,10 +504,12 @@ class NephrologyInferenceModel:
             name2 = "Final Normalized Confusion Matrix"
             visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, dataset_val.get_class_names(), title=name,
                                                cmap=cmap, show=False,
-                                               fileName=(results_path + name) if save_results else None)
+                                               fileName=(results_path + name.replace(' ',
+                                                                                     '_')) if save_results else None)
             visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, dataset_val.get_class_names(), title=name2,
                                                cmap=cmap, show=False, normalize=True,
-                                               fileName=(results_path + name2) if save_results else None)
+                                               fileName=(results_path + name2.replace(' ',
+                                                                                      '_')) if save_results else None)
         else:
             mAP = -1
         total_time = round(time() - total_start_time)
