@@ -435,38 +435,43 @@ class NephrologyInferenceModel:
                 if self.__CORTEX_MODE:
                     if not displayOnlyAP:
                         print(" - Cleaning full resolution image")
-                    allCortice = None
-                    allCorticeROI = None
+                    allCortices = None
+                    allCorticesROI = None
+                    # Gathering every cortex masks into one
                     for idxMask, classMask in enumerate(res['class_ids']):
                         if classMask == 1:
-                            if allCortice is None:
-                                allCortice = res['masks'][:, :, idxMask].copy() * 255
-                                allCorticeROI = res['rois'][idxMask].copy()
-                            else:
-                                allCortice = cv2.bitwise_or(allCortice, res['masks'][idxMask] * 255)
-                                allCorticeROI[0] = min(allCorticeROI[0], res['rois'][idxMask][0])
-                                allCorticeROI[1] = min(allCorticeROI[1], res['rois'][idxMask][1])
-                                allCorticeROI[2] = max(allCorticeROI[2], res['rois'][idxMask][2])
-                                allCorticeROI[3] = max(allCorticeROI[3], res['rois'][idxMask][3])
-                    
-                    if allCortice is not None:
+                            if allCortices is None:  # First mask found
+                                allCortices = res['masks'][:, :, idxMask].copy() * 255
+                                allCorticesROI = res['rois'][idxMask].copy()
+                            else:  # Additional masks found
+                                allCortices = cv2.bitwise_or(allCortices, res['masks'][:, :, idxMask] * 255)
+                                allCorticesROI[0] = min(allCorticesROI[0], res['rois'][idxMask][0])
+                                allCorticesROI[1] = min(allCorticesROI[1], res['rois'][idxMask][1])
+                                allCorticesROI[2] = max(allCorticesROI[2], res['rois'][idxMask][2])
+                                allCorticesROI[3] = max(allCorticesROI[3], res['rois'][idxMask][3])
+                    # To avoid cleaning an image without cortex
+                    if allCortices is not None:
+                        # Computing coordinates at full resolution
                         yRatio = imageInfo['HEIGHT'] / self.__CORTEX_SIZE[0]
                         xRatio = imageInfo['WIDTH'] / self.__CORTEX_SIZE[1]
-                        allCorticeROI[0] = int(allCorticeROI[0] * yRatio)
-                        allCorticeROI[1] = int(allCorticeROI[1] * xRatio)
-                        allCorticeROI[2] = int(allCorticeROI[2] * yRatio)
-                        allCorticeROI[3] = int(allCorticeROI[3] * xRatio)
+                        allCorticesROI[0] = int(allCorticesROI[0] * yRatio)
+                        allCorticesROI[1] = int(allCorticesROI[1] * xRatio)
+                        allCorticesROI[2] = int(allCorticesROI[2] * yRatio)
+                        allCorticesROI[3] = int(allCorticesROI[3] * xRatio)
 
-                        allCortice = cv2.resize(np.uint8(allCortice), (imageInfo['WIDTH'], imageInfo['HEIGHT']),
+                        # Resizing and adding the 2 missing channels of the cortices mask
+                        allCortices = cv2.resize(np.uint8(allCortices), (imageInfo['WIDTH'], imageInfo['HEIGHT']),
                                                 interpolation=cv2.INTER_CUBIC)
                         temp = np.zeros(imageInfo['FULL_RES_IMAGE'].shape, dtype=np.uint8)
-                        temp[:, :, 0] = allCortice
-                        temp[:, :, 1] = allCortice
-                        temp[:, :, 2] = allCortice
+                        temp[:, :, 0] = allCortices
+                        temp[:, :, 1] = allCortices
+                        temp[:, :, 2] = allCortices
+
+                        # Masking the image and saving it
                         imageInfo['FULL_RES_IMAGE'] = cv2.bitwise_and(imageInfo['FULL_RES_IMAGE'], temp)
                         cv2.imwrite(image_results_path + "{}_cleaned.jpg".format(imageInfo["NAME"]),
-                                    imageInfo['FULL_RES_IMAGE'][allCorticeROI[0]: allCorticeROI[2],
-                                    allCorticeROI[1]:allCorticeROI[3], :])
+                                    imageInfo['FULL_RES_IMAGE'][allCorticesROI[0]: allCorticesROI[2],
+                                    allCorticesROI[1]:allCorticesROI[3], :])
                 fileName = image_results_path + "{}_predicted".format(imageInfo["NAME"])
                 names = self.__CELLS_CLASS_NAMES.copy()
                 names.insert(0, 'background')
