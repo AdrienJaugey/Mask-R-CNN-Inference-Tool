@@ -512,31 +512,31 @@ def getCountAndArea(results: dict, classesInfo: dict, selectedClasses: [str]):
     :param results: the results
     :param classesInfo: the dict with information about name, inference id, id... parameters of each class
     :param selectedClasses: list of classes' names that you want to get statistics on
-    :return: List of {"name": className, "count": int, "area": int} dict containing statistics on each classes
+    :return: Dict of "className": {"count": int, "area": int} elements for each classes
     """
-    res = []
+    res = {}
 
     rois = results['rois']
     masks = results['masks']
     class_ids = results['class_ids']
 
     # Getting the inferenceIDs of the wanted classes
-    selectedClassesID = []
+    selectedClassesID = {}
     for classInfo in classesInfo:
         if classInfo["name"] in selectedClasses:
-            selectedClassesID.append(classInfo["inferenceID"])
-            res.append({"name": classInfo["name"], "count": 0, "area": 0})
+            selectedClassesID[classInfo["inferenceID"]] = classInfo["name"]
+            res[classInfo["name"]] = {"count": 0, "area": 0}
 
     # For each predictions, if class ID matching with one we want
     for index, classID in enumerate(class_ids):
-        if classID in selectedClassesID:
+        if classID in selectedClassesID.keys():
             # Getting current values of count and area
-            resID = selectedClassesID.index(classID)
-            res[resID]["count"] += 1
+            className = selectedClassesID[classID]
+            res[className]["count"] += 1
             # Getting the area of current mask
             yStart, xStart, yEnd, xEnd = rois[index]
             area = div.getBWCount(np.uint8(masks[yStart:yEnd, xStart:xEnd, index]), using='np')[1]
-            res[resID]["area"] += area
+            res[className]["area"] += int(area)  # Cast to int to avoid "json 'int64' not serializable"
 
     return res
 

@@ -1,3 +1,4 @@
+import json
 import os
 import warnings
 
@@ -128,7 +129,7 @@ class NephrologyInferenceModel:
                 fullImage = cv2.resize(fullResImage, self.__CORTEX_SIZE)
                 fullImage = cv2.cvtColor(fullImage, cv2.COLOR_BGR2RGB)
             else:
-                fullImage = imread(imagePath)
+                fullImage = cv2.imread(imagePath)
             if image_extension not in ["png", "jpg"]:
                 # print('Converting to png')
                 tempPath = dirPath + image_name + '.png'
@@ -424,9 +425,13 @@ class NephrologyInferenceModel:
                 stats = utils.getCountAndArea(res, classesInfo=self.__CLASSES_INFO,
                                               selectedClasses=self.__CELLS_CLASS_NAMES)
                 print("    - cortex : area = {}".format(imageInfo["CORTEX_AREA"]))
-                for classStats in stats:
-                    print("    - {} : count = {}, area = {} px".format(classStats["name"], classStats["count"],
-                                                                       classStats["area"]))
+                for className in self.__CELLS_CLASS_NAMES:
+                    print("    - {} : count = {}, area = {} px".format(className, stats[className]["count"],
+                                                                       stats[className]["area"]))
+                if save_results:
+                    with open(image_results_path + imageInfo["NAME"] + "_stats.json", "w") as saveFile:
+                        stats["cortex"] = {"count": 1, "area": imageInfo["CORTEX_AREA"]}
+                        json.dump(stats, saveFile, indent='\t')
 
             if not displayOnlyAP:
                 print(" - Applying masks on image")
@@ -461,7 +466,7 @@ class NephrologyInferenceModel:
 
                         # Resizing and adding the 2 missing channels of the cortices mask
                         allCortices = cv2.resize(np.uint8(allCortices), (imageInfo['WIDTH'], imageInfo['HEIGHT']),
-                                                interpolation=cv2.INTER_CUBIC)
+                                                 interpolation=cv2.INTER_CUBIC)
                         temp = np.zeros(imageInfo['FULL_RES_IMAGE'].shape, dtype=np.uint8)
                         temp[:, :, 0] = allCortices
                         temp[:, :, 1] = allCortices
