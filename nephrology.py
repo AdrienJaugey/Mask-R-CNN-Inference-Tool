@@ -49,6 +49,10 @@ def listAvailableImage(dirPath: str):
     return image
 
 
+def stop():
+    modellib.terminate_session()
+
+
 class NephrologyInferenceModel:
 
     def __init__(self, classesInfo, modelPath, divisionSize=1024, min_overlap_part=0.33, cortex_size=None):
@@ -130,6 +134,7 @@ class NephrologyInferenceModel:
                 fullImage = cv2.cvtColor(fullImage, cv2.COLOR_BGR2RGB)
             else:
                 fullImage = cv2.imread(imagePath)
+                fullImage = cv2.cvtColor(fullImage, cv2.COLOR_BGR2RGB)
             if image_extension not in ["png", "jpg"]:
                 # print('Converting to png')
                 tempPath = dirPath + image_name + '.png'
@@ -242,7 +247,8 @@ class NephrologyInferenceModel:
     def inference(self, images: list, results_path=None, save_results=True,
                   fusion_bb_threshold=0., fusion_mask_threshold=0.1,
                   filter_bb_threshold=0.5, filter_mask_threshold=0.9,
-                  priority_table=None, displayOnlyAP=False):
+                  priority_table=None, nbMaxDivPerAxis=3, fusionDivThreshold=0.1,
+                  displayOnlyAP=False):
 
         assert len(images) > 0, "images list cannot be empty"
 
@@ -454,8 +460,15 @@ class NephrologyInferenceModel:
                                 allCorticesROI[1] = min(allCorticesROI[1], res['rois'][idxMask][1])
                                 allCorticesROI[2] = max(allCorticesROI[2], res['rois'][idxMask][2])
                                 allCorticesROI[3] = max(allCorticesROI[3], res['rois'][idxMask][3])
+                    # TODO : Use mrcnn.utils.extract_bboxes() instead of given rois => most refined bbox
                     # To avoid cleaning an image without cortex
                     if allCortices is not None:
+                        fusion_dir = os.path.join(image_results_path, '{}_fusion'.format(imageInfo['NAME']))
+                        os.makedirs(fusion_dir, exist_ok=True)
+                        allCorticesSmall = allCortices[allCorticesROI[0]:allCorticesROI[2],
+                                                       allCorticesROI[1]:allCorticesROI[3]]
+                        cv2.imwrite(os.path.join(fusion_dir, "{}_cortex.jpg".format(imageInfo["NAME"])),
+                                    allCorticesSmall)
                         # Computing coordinates at full resolution
                         yRatio = imageInfo['HEIGHT'] / self.__CORTEX_SIZE[0]
                         xRatio = imageInfo['WIDTH'] / self.__CORTEX_SIZE[1]
@@ -473,10 +486,65 @@ class NephrologyInferenceModel:
                         temp[:, :, 2] = allCortices
 
                         # Masking the image and saving it
-                        imageInfo['FULL_RES_IMAGE'] = cv2.bitwise_and(imageInfo['FULL_RES_IMAGE'], temp)
-                        cv2.imwrite(image_results_path + "{}_cleaned.jpg".format(imageInfo["NAME"]),
-                                    imageInfo['FULL_RES_IMAGE'][allCorticesROI[0]: allCorticesROI[2],
-                                    allCorticesROI[1]:allCorticesROI[3], :])
+                        imageInfo['FULL_RES_IMAGE'] = cv2.bitwise_and(
+                            imageInfo['FULL_RES_IMAGE'][allCorticesROI[0]: allCorticesROI[2],
+                                                        allCorticesROI[1]:allCorticesROI[3], :],
+                            temp[allCorticesROI[0]: allCorticesROI[2],
+                                 allCorticesROI[1]:allCorticesROI[3], :])
+                        cv2.imwrite(os.path.join(fusion_dir, "{}_cleaned.jpg".format(imageInfo["NAME"])),
+                                    imageInfo['FULL_RES_IMAGE'])
+
+                        #########################################################
+                        # Preparing to export all "fusion" divisions with stats #
+                        #########################################################
+                        fusion_info_file_path = os.path.join(image_results_path, "{}_fusion_info.skinet".format(imageInfo["NAME"]))
+                        fusionInfo = {"image": imageInfo["NAME"]}
+
+                        # Computing ratio between full resolution image and the low one
+                        height, width, _ = imageInfo['FULL_RES_IMAGE'].shape
+                        smallHeight, smallWidth = allCorticesSmall.shape
+                        xRatio = width / smallWidth
+                        yRatio = height / smallHeight
+
+                        # Computing divisions coordinates for full and low resolution images
+                        divisionSize = div.getMaxSizeForDivAmount(nbMaxDivPerAxis, self.__DIVISION_SIZE, self.__MIN_OVERLAP_PART)
+                        xStarts = div.computeStartsOfInterval(width, intervalLength=divisionSize, min_overlap_part=0)
+                        yStarts = div.computeStartsOfInterval(height, intervalLength=divisionSize, min_overlap_part=0)
+
+                        xStartsEquivalent = [round(x / xRatio) for x in xStarts]
+                        yStartsEquivalent = [round(y / yRatio) for y in yStarts]
+                        xDivSide = round(divisionSize / xRatio)
+                        yDivSide = round(divisionSize / yRatio)
+
+                        # Preparing informations to write into the .skinet file
+                        fusionInfo["division_size"] = divisionSize
+                        fusionInfo["min_overlap_part"] = 0
+                        fusionInfo["xStarts"] = xStarts
+                        fusionInfo["yStarts"] = yStarts
+                        fusionInfo["max_div_per_axis"] = nbMaxDivPerAxis
+                        fusionInfo["cortex_area"] = div.getBWCount(allCortices)[1]
+                        fusionInfo["divisions"] = {}
+
+                        # Extracting and saving all divisions
+                        for divID in range(div.getDivisionsCount(xStarts, yStarts)):
+                            cortexDiv = div.getImageDivision(allCorticesSmall, xStartsEquivalent, yStartsEquivalent,
+                                                             divID, divisionSize=(xDivSide, yDivSide))
+                            black, white = div.getBWCount(cortexDiv.astype(np.uint8))
+                            partOfDiv = white / (white + black)
+                            fusionInfo["divisions"][divID] = {"cortex_area": white,
+                                                              "cortex_representative_part": partOfDiv,
+                                                              "used": partOfDiv > fusionDivThreshold}
+                            if partOfDiv > fusionDivThreshold:
+                                x, xEnd, y, yEnd = div.getDivisionByID(xStarts, yStarts, divID, divisionSize)
+                                fusionInfo["divisions"][divID]["coordinates"] = {"x1": x, "x2": xEnd, "y1": y,
+                                                                                 "y2": yEnd}
+                                imageDivision = div.getImageDivision(imageInfo['FULL_RES_IMAGE'], xStarts, yStarts, divID, divisionSize)
+                                cv2.imwrite(os.path.join(fusion_dir, "{}_{}.jpg".format(imageInfo["NAME"], divID)), imageDivision)
+
+                        # Writing informations into the .skinet file
+                        with open(fusion_info_file_path, 'w') as fusionInfoFile:
+                            json.dump(fusionInfo, fusionInfoFile, indent="\t")
+
                 fileName = image_results_path + "{}_predicted".format(imageInfo["NAME"])
                 names = self.__CELLS_CLASS_NAMES.copy()
                 names.insert(0, 'background')

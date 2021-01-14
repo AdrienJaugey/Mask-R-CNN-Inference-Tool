@@ -5,6 +5,7 @@ import numpy as np
 
 VERBOSE = False
 
+
 def computeStartsOfInterval(maxVal: int, intervalLength=1024, min_overlap_part=0.33):
     """
     Divide the [0; maxVal] interval into a uniform distribution with at least min_overlap_part of overlapping
@@ -30,6 +31,13 @@ def computeStartsOfInterval(maxVal: int, intervalLength=1024, min_overlap_part=0
     return coordinates
 
 
+def getMaxSizeForDivAmount(divAmount: int, intervalLength=1024, min_overlap_part=0.33):
+    res = intervalLength * int(2. - min_overlap_part)
+    while len(computeStartsOfInterval(res + 1, intervalLength, min_overlap_part)) <= divAmount:
+        res += 1
+    return res
+
+
 def getDivisionsCount(xStarts: [int], yStarts: [int]):
     """
     Return the number of division for given starting x and y coordinates
@@ -40,25 +48,26 @@ def getDivisionsCount(xStarts: [int], yStarts: [int]):
     return len(xStarts) * len(yStarts)
 
 
-def getDivisionByID(xStarts: [int], yStarts: [int], idDivision: int, squareSideLength=1024):
+def getDivisionByID(xStarts: [int], yStarts: [int], idDivision: int, divisionSize=1024):
     """
     Return x and y starting and ending coordinates for a specific division
     :param xStarts: the x-axis starting coordinates
     :param yStarts: the y-axis starting coordinates
     :param idDivision: the ID of the division you want the coordinates. 0 <= ID < number of divisions
-    :param squareSideLength: length of the new intervals
+    :param divisionSize: length of the new intervals
     :return: x, xEnd, y, yEnd coordinates
     """
+    # assert divisionSize is int or divisionSize is tuple
     if not 0 <= idDivision < len(xStarts) * len(yStarts):
         return -1, -1, -1, -1
     yIndex = idDivision // len(xStarts)
     xIndex = idDivision - yIndex * len(xStarts)
 
     x = xStarts[xIndex]
-    xEnd = x + squareSideLength
+    xEnd = x + (divisionSize if type(divisionSize) is int else divisionSize[0])
 
     y = yStarts[yIndex]
-    yEnd = y + squareSideLength
+    yEnd = y + (divisionSize if type(divisionSize) is int else divisionSize[1])
     return x, xEnd, y, yEnd
 
 
@@ -76,17 +85,18 @@ def getDivisionID(xStarts: [int], yStarts: [int], xStart: int, yStart: int):
     return yIndex * len(xStarts) + xIndex
 
 
-def getImageDivision(img, xStarts: [int], yStarts: [int], idDivision: int, squareSideLength=1024):
+def getImageDivision(img, xStarts: [int], yStarts: [int], idDivision: int, divisionSize=1024):
     """
     Return the wanted division of an Image
     :param img: the base image
     :param xStarts: the x-axis starting coordinates
     :param yStarts: the y-axis starting coordinates
     :param idDivision: the ID of the division you want to get. 0 <= ID < number of divisions
-    :param squareSideLength: length of division side
+    :param divisionSize: length of division side
     :return: the image division
     """
-    x, xEnd, y, yEnd = getDivisionByID(xStarts, yStarts, idDivision, squareSideLength)
+    # assert divisionSize is int or divisionSize is tuple
+    x, xEnd, y, yEnd = getDivisionByID(xStarts, yStarts, idDivision, divisionSize)
     if len(img.shape) == 2:
         return img[y:yEnd, x:xEnd]
     else:
@@ -97,7 +107,7 @@ def getBWCount(mask, using='cv2', bins=None):
     """
     Return number of black (0) and white (255) pixels in a mask image
     :param mask: the mask image
-    :param using: 'numpy' or 'cv2', chosing how to compute histo
+    :param using: 'numpy' or 'cv2', choosing how to compute histogram
     :param bins: bins parameter of numpy.histogram method
     :return: number of black pixels, number of white pixels
     """
@@ -177,11 +187,11 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
             cortexImgPath = os.path.join(cortexDirPath, os.listdir(cortexDirPath)[0])
             usefulPart = cv2.imread(cortexImgPath, cv2.IMREAD_UNCHANGED)
             if mode == "cortex":
-                for dir in os.listdir(imageDirPath):
-                    if dir not in ['images', 'fullimages']:
-                        maskdir = os.path.join(imageDirPath, dir)
-                        for mask in os.listdir(maskdir):
-                            mask = cv2.imread(os.path.join(maskdir, mask), cv2.IMREAD_UNCHANGED)
+                for folder in os.listdir(imageDirPath):
+                    if folder not in ['images', 'fullimages']:
+                        maskDir = os.path.join(imageDirPath, folder)
+                        for mask in os.listdir(maskDir):
+                            mask = cv2.imread(os.path.join(maskDir, mask), cv2.IMREAD_UNCHANGED)
                             usefulPart = cv2.bitwise_or(usefulPart, mask)
             black, white = getBWCount(usefulPart)
             total = white + black

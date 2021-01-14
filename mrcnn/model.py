@@ -31,12 +31,15 @@ from distutils.version import LooseVersion
 assert LooseVersion(tf.__version__) >= LooseVersion("1.3")
 assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
 
-if tf.test.is_gpu_available():
-    tf.device(tf.test.gpu_device_name())
+tf_config = tf.ConfigProto()
+tf_config.gpu_options.allow_growth = True
+sess = tf.Session(config=tf_config)
+K.set_session(sess)
 
 
 def terminate_session():
-    K.get_session().close()
+   sess.close()
+
 
 ############################################################
 #  Utility Functions
