@@ -69,13 +69,15 @@ def stop():
 
 class NephrologyInferenceModel:
 
-    def __init__(self, classesInfo, modelPath, divisionSize=1024, min_overlap_part=0.33, cortex_size=None):
+    def __init__(self, classesInfo, modelPath, divisionSize=1024, min_overlap_part_main=0.33, min_overlap_part_cortex=0.5, cortex_size=None):
         print("Initialisation")
         self.__CLASSES_INFO = classesInfo
         self.__CORTEX_MODE = not classesInfo[0]["ignore"]
         self.__MODEL_PATH = modelPath
         self.__DIVISION_SIZE = divisionSize
-        self.__MIN_OVERLAP_PART = min_overlap_part
+        self.__MIN_OVERLAP_PART_MAIN = min_overlap_part_main
+        self.__MIN_OVERLAP_PART_CORTEX = min_overlap_part_cortex
+        self.__MIN_OVERLAP_PART = min_overlap_part_cortex if self.__CORTEX_MODE else min_overlap_part_main
         self.__CORTEX_SIZE = None if not self.__CORTEX_MODE else (1024, 1024) if cortex_size is None else cortex_size
         self.__CELLS_CLASS_NAMES = []
         for classInfo in classesInfo:
@@ -298,13 +300,17 @@ class NephrologyInferenceModel:
                 globalStats = None
                 for imageFolder in os.listdir(results_path):
                     if (fusionInfo['image'] + '_') in imageFolder:
-                        divID = int(imageFolder.split('_')[-1])
-                        if fusionInfo["divisions"][str(divID)]["used"]:
+                        divID = imageFolder.split('_')[-1]
+                        if fusionInfo["divisions"][divID]["used"]:
                             imagePath = os.path.join(results_path, imageFolder,
                                                      imageFolder + "_predicted_clean.png")
                             statsPath = os.path.join(results_path, imageFolder, imageFolder + "_stats.json")
                             with open(statsPath, 'r') as tempStatsFile:
                                 tempStats = json.load(tempStatsFile)
+                            if "cortex" in tempStats:
+                                tempStats["cortex"]["area"] = fusionInfo["divisions"][divID]["cortex_area"]
+                                with open(statsPath, 'w') as tempStatsFile:
+                                    json.dump(tempStats, tempStatsFile, indent="\t")
                             if globalStats is None:
                                 globalStats = tempStats
                             else:
@@ -314,7 +320,7 @@ class NephrologyInferenceModel:
                                     globalStats[className]["count"] += tempStats[className]["count"]
                                     globalStats[className]["area"] += tempStats[className]["area"]
                             image = cv2.imread(imagePath)
-                            coo = fusionInfo["divisions"][str(divID)]["coordinates"]
+                            coo = fusionInfo["divisions"][divID]["coordinates"]
                             cleanedImage[coo["y1"]:coo["y2"], coo["x1"]:coo["x2"], :] = image
                             shutil.move(os.path.join(results_path, imageFolder),
                                         os.path.join(image_results_path, "divisions", imageFolder))
@@ -568,7 +574,7 @@ class NephrologyInferenceModel:
                             yRatio = height / smallHeight
 
                             # Computing divisions coordinates for full and low resolution images
-                            divisionSize = div.getMaxSizeForDivAmount(nbMaxDivPerAxis, self.__DIVISION_SIZE, self.__MIN_OVERLAP_PART)
+                            divisionSize = div.getMaxSizeForDivAmount(nbMaxDivPerAxis, self.__DIVISION_SIZE, self.__MIN_OVERLAP_PART_MAIN)
                             xStarts = div.computeStartsOfInterval(width, intervalLength=divisionSize, min_overlap_part=0)
                             yStarts = div.computeStartsOfInterval(height, intervalLength=divisionSize, min_overlap_part=0)
 
