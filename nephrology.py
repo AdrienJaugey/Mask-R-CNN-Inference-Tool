@@ -514,22 +514,31 @@ class NephrologyInferenceModel:
                         if not displayOnlyAP:
                             print(" - Cleaning full resolution image")
                         allCortices = None
-                        allCorticesROI = None
+                        allMedulla = None
                         # Gathering every cortex masks into one
                         for idxMask, classMask in enumerate(res['class_ids']):
                             if classMask == 1:
                                 if allCortices is None:  # First mask found
                                     allCortices = res['masks'][:, :, idxMask].copy() * 255
-                                    allCorticesROI = res['rois'][idxMask].copy()
                                 else:  # Additional masks found
                                     allCortices = cv2.bitwise_or(allCortices, res['masks'][:, :, idxMask] * 255)
-                                    allCorticesROI[0] = min(allCorticesROI[0], res['rois'][idxMask][0])
-                                    allCorticesROI[1] = min(allCorticesROI[1], res['rois'][idxMask][1])
-                                    allCorticesROI[2] = max(allCorticesROI[2], res['rois'][idxMask][2])
-                                    allCorticesROI[3] = max(allCorticesROI[3], res['rois'][idxMask][3])
-                        # TODO : Use mrcnn.utils.extract_bboxes() instead of given rois => most refined bbox
+                            elif classMask == 2:
+                                if allMedulla is None:
+                                    allMedulla = res['masks'][:, :, idxMask].copy() * 255
+                                else:
+                                    allMedulla = cv2.bitwise_or(allMedulla, res['masks'][:, :, idxMask] * 255)
+
                         # To avoid cleaning an image without cortex
                         if allCortices is not None:
+                            # If Medulla mask found, we clean the cortex with those
+                            if allMedulla is not None:
+                                allMedulla = cv2.bitwise_not(allMedulla.astype(np.uint8))
+                                allCortices = cv2.bitwise_and(allCortices.astype(np.uint8), allMedulla)
+
+                            # Extracting the new Bbox
+                            tempMask = np.expand_dims(allCortices, axis=2)
+                            allCorticesROI = utils.extract_bboxes(tempMask)[0, :]
+
                             fusion_dir = os.path.join(image_results_path, '{}_fusion'.format(imageInfo['NAME']))
                             os.makedirs(fusion_dir, exist_ok=True)
                             allCorticesSmall = allCortices[allCorticesROI[0]:allCorticesROI[2],
