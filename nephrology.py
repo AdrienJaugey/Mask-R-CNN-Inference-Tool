@@ -50,13 +50,16 @@ def listAvailableImage(dirPath: str):
                 fusionInfo = json.load(skinetFile)
                 fusionDir = fusionInfo['image'] + "_fusion"
                 if fusionDir in files:
+                    divExists = False
                     divPath = os.path.join(fusionDir, fusionInfo['image'] + '_{}.jpg')
                     for divID in range(len(fusionInfo["divisions"])):
                         if fusionInfo["divisions"][str(divID)]["used"] and os.path.exists(os.path.join(dirPath, divPath.format(divID))):
                             image.append(divPath.format(divID))
+                            divExists = True
                         elif fusionInfo["divisions"][str(divID)]["used"]:
                             print("Div n°{} of {} missing".format(divID))
-                    image.append(file)
+                    if divExists:
+                        image.append(file)
 
     for i in range(len(image)):
         image[i] = os.path.join(dirPath, image[i])
