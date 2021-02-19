@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 VERBOSE = False
-
+CV2_IMWRITE_PARAM = [int(cv2.IMWRITE_JPEG_QUALITY), 100, cv2.IMWRITE_PNG_COMPRESSION, 9]
 
 def computeStartsOfInterval(maxVal: int, intervalLength=1024, min_overlap_part=0.33):
     """
@@ -103,21 +103,16 @@ def getImageDivision(img, xStarts: [int], yStarts: [int], idDivision: int, divis
         return img[y:yEnd, x:xEnd, :]
 
 
-def getBWCount(mask, using='cv2', bins=None):
+def getBWCount(mask):
     """
-    Return number of black (0) and white (255) pixels in a mask image
+    Return number of black (0) and white (>0) pixels in a mask image
     :param mask: the mask image
-    :param using: 'numpy' or 'cv2', choosing how to compute histogram
-    :param bins: bins parameter of numpy.histogram method
     :return: number of black pixels, number of white pixels
     """
-    if bins is None:
-        bins = [0, 1, 2]
-    if using == 'cv2':
-        histogram = cv2.calcHist([mask], [0], None, [256], [0, 256])
-        return int(histogram[0]), int(histogram[255])
-    else:
-        return np.histogram(mask, bins=bins)[0]
+    mask = mask.astype(np.bool).flatten()
+    totalPx = int(mask.shape[0])
+    whitePx = int(np.sum(mask))
+    return totalPx - whitePx, whitePx
 
 
 def getRepresentativePercentage(blackMask: int, whiteMask: int, divisionImage):
@@ -227,7 +222,8 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
                     outputImagePath = os.path.join(outputImagePath, imageDir + divSuffix + IMAGE_EXT)
                     tempPath = os.path.join(os.path.join(imageDirPath, masksDir), '{}{}'.format(imageDir, IMAGE_EXT))
                     tempImage = cv2.imread(tempPath)
-                    cv2.imwrite(outputImagePath, getImageDivision(tempImage, xStarts, yStarts, divId, squareSideLength))
+                    cv2.imwrite(outputImagePath, getImageDivision(tempImage, xStarts, yStarts, divId, squareSideLength),
+                                CV2_IMWRITE_PARAM)
             else:
                 maskDirPath = os.path.join(imageDirPath, masksDir)
                 # Going through every mask file in current directory
@@ -249,7 +245,7 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
                             maskOutputDirPath = os.path.join(divisionOutputDirPath, masksDir)
                             os.makedirs(maskOutputDirPath, exist_ok=True)
                             outputMaskPath = os.path.join(maskOutputDirPath, mask.split('.')[0] + divSuffix + IMAGE_EXT)
-                            cv2.imwrite(outputMaskPath, divMaskImage)
+                            cv2.imwrite(outputMaskPath, divMaskImage, CV2_IMWRITE_PARAM)
 
         if tryCleaning:
             for divId in range(getDivisionsCount(xStarts, yStarts)):
