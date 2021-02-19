@@ -263,6 +263,7 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
         current = 1
         start_time = time()
         duration = ""
+        progressBar(0, total, prefix=displayProgress)
     for idxI, roi1 in enumerate(rois):
         # Computation of the bounding box area if not done yet
         if bbAreas[idxI] == -1:
@@ -449,6 +450,7 @@ def filter_fused_masks(fused_results, bb_threshold=0.5, mask_threshold=0.9, prio
         current = 1
         start_time = time()
         duration = ""
+        progressBar(0, total, prefix=displayProgress)
     for i, roi1 in enumerate(rois):
         # If this RoI has already been selected for deletion, we skip it
         if i in toDelete:

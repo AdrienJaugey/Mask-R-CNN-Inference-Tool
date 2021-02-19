@@ -187,13 +187,14 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
                    imageFormat, config=config)
 
 
-def fuseCortices(datasetPath: str, imageName: str, imageFormat="jpg", deleteBaseMasks=False):
+def fuseCortices(datasetPath: str, imageName: str, imageFormat="jpg", deleteBaseMasks=False, silent=False):
     """
     Fuse each cortex masks into one
     :param datasetPath: the dataset that have been wrapped
     :param imageName: the image you want its cortex to be fused
     :param imageFormat: format to use to save the final cortex masks
     :param deleteBaseMasks: delete the base masks images after fusion
+    :param silent: if True will not print
     :return: None
     """
     # Getting the image directory path
@@ -204,7 +205,8 @@ def fuseCortices(datasetPath: str, imageName: str, imageFormat="jpg", deleteBase
     image = cv2.imread(imagePath)
     if os.path.exists(cortexDir):
         listCortexImages = os.listdir(cortexDir)
-        print("Fusing {} cortices masks".format(imageName))
+        if not silent:
+            print("Fusing {} cortices masks".format(imageName))
         fusion = loadSameResImage(os.path.join(cortexDir, listCortexImages[0]), imageShape=image.shape)
         listCortexImages.remove(listCortexImages[0])
         for maskName in listCortexImages:  # Adding each mask to the same image

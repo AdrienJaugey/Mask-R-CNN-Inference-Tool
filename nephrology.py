@@ -201,7 +201,7 @@ class NephrologyInferenceModel:
                 dW.createMasksOfImage(dirPath, image_name, 'data', classesInfo=self.__CLASSES_INFO,
                                       imageFormat=image_extension, resize=self.__CORTEX_SIZE, config=self.__CONFIG)
                 if not self.__CORTEX_MODE:
-                    dW.fuseCortices('data', image_name, imageFormat=image_extension, deleteBaseMasks=True)
+                    dW.fuseCortices('data', image_name, imageFormat=image_extension, deleteBaseMasks=True, silent=True)
                     dW.cleanImage('data', image_name, onlyMasks=False)
                 maskDirs = os.listdir(os.path.join('data', image_name))
                 if not self.__CORTEX_MODE:
@@ -448,6 +448,8 @@ class NephrologyInferenceModel:
                 skipped = 0
                 skippedText = ""
                 inference_start_time = time()
+                if not displayOnlyAP:
+                    progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference ')
                 for divId in range(imageInfo["NB_DIV"]):
                     division = dD.getImageDivision(image, imageInfo["X_STARTS"], imageInfo["Y_STARTS"], divId)
                     grayDivision = cv2.cvtColor(division, cv2.COLOR_RGB2GRAY)
