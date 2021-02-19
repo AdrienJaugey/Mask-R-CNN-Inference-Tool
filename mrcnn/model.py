@@ -38,7 +38,7 @@ K.set_session(sess)
 
 
 def terminate_session():
-   sess.close()
+    sess.close()
 
 
 ############################################################
@@ -1262,8 +1262,9 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None,
         det = augmentation.to_deterministic()
         image = det.augment_image(image)
         # Change mask to np.uint8 because imgaug doesn't support np.bool
-        mask = det.augment_image(mask.astype(np.uint8),
-                                 hooks=imgaug.HooksImages(activator=hook))
+        mask = det.augment_images(np.moveaxis(mask.astype(np.uint8), -1, 0),
+                                  hooks=imgaug.HooksImages(activator=hook))
+        mask = np.moveaxis(mask, 0, -1)
         # Verify that shapes didn't change
         assert image.shape == image_shape, "Augmentation shouldn't change image size"
         assert mask.shape == mask_shape, "Augmentation shouldn't change mask size"
@@ -1912,7 +1913,7 @@ class MaskRCNN():
             _, C2, C3, C4, C5 = resnet_graph(input_image, config.BACKBONE,
                                              stage5=True, train_bn=config.TRAIN_BN)
         # Top-down Layers
-        # TODO: add assert to varify feature map sizes match what's in config
+        # TODO: add assert to verify feature map sizes match what's in config
         P5 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (1, 1), name='fpn_c5p5')(C5)
         P4 = KL.Add(name="fpn_p4add")([
             KL.UpSampling2D(size=(2, 2), name="fpn_p5upsampled")(P5),
@@ -2313,11 +2314,11 @@ class MaskRCNN():
                     imgaug.augmenters.Fliplr(0.5),
                     imgaug.augmenters.GaussianBlur(sigma=(0.0, 5.0))
                 ])
-	    custom_callbacks: Optional. Add custom callbacks to be called
-	        with the keras fit_generator method. Must be list of type keras.callbacks.
-        no_augmentation_sources: Optional. List of sources to exclude for
-            augmentation. A source is string that identifies a dataset and is
-            defined in the Dataset class.
+	    custom_callbacks: Optional. Add custom callbacks to be called with
+	      the keras fit_generator method. Must be list of type keras.callbacks.
+          no_augmentation_sources: Optional. List of sources to exclude for
+          augmentation. A source is string that identifies a dataset and is
+          defined in the Dataset class.
         """
         assert self.mode == "training", "Create model in training mode."
 
