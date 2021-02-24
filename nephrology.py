@@ -589,7 +589,7 @@ class NephrologyInferenceModel:
                                 temp[allCorticesROI[0]: allCorticesROI[2],
                                 allCorticesROI[1]:allCorticesROI[3], :])
                             cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_cleaned.jpg"),
-                                        cv2.cvtColor(imageInfo['FULL_RES_IMAGE'], cv2.COLOR_RGB2BGR, CV2_IMWRITE_PARAM))
+                                        cv2.cvtColor(imageInfo['FULL_RES_IMAGE'], cv2.COLOR_RGB2BGR), CV2_IMWRITE_PARAM)
 
                             #########################################################
                             # Preparing to export all "fusion" divisions with stats #
@@ -642,7 +642,7 @@ class NephrologyInferenceModel:
                                     imageDivision = dD.getImageDivision(imageInfo['FULL_RES_IMAGE'], xStarts, yStarts,
                                                                         divID, divisionSize)
                                     cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_{divID}.jpg"),
-                                                cv2.cvtColor(imageDivision, cv2.COLOR_RGB2BGR, CV2_IMWRITE_PARAM))
+                                                cv2.cvtColor(imageDivision, cv2.COLOR_RGB2BGR), CV2_IMWRITE_PARAM)
 
                             # Writing informations into the .skinet file
                             with open(fusion_info_file_path, 'w') as fusionInfoFile:
