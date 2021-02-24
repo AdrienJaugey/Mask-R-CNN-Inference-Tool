@@ -22,7 +22,7 @@ def progressBar(value, maxValue, prefix="", suffix="", forceNewLine=False, size=
     bar = full * nbFullChar + (cursor if percent > 0 and nbFullChar < size else "")
     emptyBar = empty * (size - len(bar))
     print(f'\r{prefix}{bar}{emptyBar} {percent: 6.2%}{suffix}',
-          end='\n' if value == maxValue or forceNewLine else "")
+          end='\n' if value == maxValue or forceNewLine else "", flush=True)
 
 
 def progressText(value, maxValue, onlyRaw=False, onlyPercent=False):

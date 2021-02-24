@@ -69,10 +69,6 @@ def listAvailableImage(dirPath: str):
     return image
 
 
-def stop():
-    modellib.terminate_session()
-
-
 class NephrologyInferenceModel:
 
     def __init__(self, classesInfo, modelPath, divisionSize=1024, min_overlap_part_main=0.33,

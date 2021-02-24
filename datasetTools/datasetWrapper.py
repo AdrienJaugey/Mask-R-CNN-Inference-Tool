@@ -1,10 +1,15 @@
 import os
+from time import time
+
 import cv2
 import numpy as np
+from skimage.io import imread
+
+from common_utils import progressBar, progressText, formatTime
 from datasetTools import AnnotationAdapter as adapt
 from datasetTools.AnnotationAdapter import AnnotationAdapter
 from datasetTools.datasetDivider import getBWCount, CV2_IMWRITE_PARAM
-from mrcnn import utils
+from mrcnn.utils import extract_bboxes, expand_mask, minimize_mask
 
 NEPHRO_CLASSES = [
     {"id": 0, "name": "Background", "color": "", "ignore": True},
@@ -60,8 +65,8 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
 
     bbox_coordinates = ""
     if config is not None and config.USE_MINI_MASK:
-        bbox = utils.extract_bboxes(mask)
-        mask = utils.minimize_mask(bbox, mask, config.MINI_MASK_SHAPE)
+        bbox = extract_bboxes(mask)
+        mask = minimize_mask(bbox, mask, config.MINI_MASK_SHAPE)
         mask = mask.astype(np.uint8) * 255
         y1, x1, y2, x2 = bbox
         bbox_coordinates = f"_{y1}_{x1}_{y2}_{x2}"
@@ -181,6 +186,8 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
                         break
         else:
             maskClass = datasetClass
+            if maskClass == "None":
+                print(f" /!\\ {imgName} : None class present /!\\ ")
             if resize is not None:
                 resizedMasks = resizeMasks(maskPoints, xRatio, yRatio)
         createMask(imgName, shape, noMask, maskPoints if resize is None else resizedMasks, datasetName, maskClass,
@@ -316,7 +323,7 @@ def loadSameResImage(imagePath, imageShape):
     mask = cv2.imread(imagePath, cv2.IMREAD_UNCHANGED)
     if mask.shape[0] != imageShape[0] or mask.shape[1] != imageShape[1]:
         bbox = getBboxFromName(imagePath)
-        mask = utils.expand_mask(bbox, mask, image_shape=imageShape)
+        mask = expand_mask(bbox, mask, image_shape=imageShape)
         mask = mask.astype(np.uint8) * 255
     return mask
 
@@ -328,16 +335,18 @@ def convertImage(inputImagePath: str, outputImagePath: str):
     :param outputImagePath: path to the output image
     :return: None
     """
-    image = cv2.imread(inputImagePath)
+    image = imread(inputImagePath)
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     cv2.imwrite(outputImagePath, image, CV2_IMWRITE_PARAM)
 
 
-def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAdapter = None):
+def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAdapter = None, mainFormat="jpg"):
     """
     Listing all available images, those with missing information
     :param verbose: whether or not print should be executed
     :param rawDatasetPath: path to the raw dataset folder
     :param adapter:
+    :param mainFormat: the format to use for the dataset
     :return: list of unique files names, list of available images names, list of missing images names,
     list of missing annotations names
     """
@@ -345,54 +354,49 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAda
     images = []  # list of image that can be used to compute masks
     missingImages = []  # list of missing images
     missingAnnotations = []  # list of missing annotations
-    usedFormat = None
+    inputFormats = ["jpg", "jp2", "png"]
     if adapter is None:
-        formats = adapt.ANNOTATION_FORMAT
+        annotationFormats = adapt.ANNOTATION_FORMAT
     else:
-        formats = [adapter.getAnnotationFormat()]
+        annotationFormats = [adapter.getAnnotationFormat()]
+    fileList = os.listdir(rawDatasetPath)
     if verbose:
-        print("Listing files")
-    for file in os.listdir(rawDatasetPath):
+        progressBar(0, len(fileList), "Listing files ")
+    for idx, file in enumerate(fileList):
+        if verbose and (idx % 10 == 0 or idx + 1 == len(fileList)):
+            lastIdx = idx
+            progressBar(idx + 1, len(fileList), "Listing files ")
         name = file.split('.')[0]
         if name not in names:  # We want to do this only once per unique file name (without extension)
             names.append(name)
 
-            # Testing if there is an jpg image with that name
-            jpgPath = os.path.join(rawDatasetPath, name + '.jpg')
-            jpgExists = os.path.exists(jpgPath)
-            if usedFormat is None and jpgExists:
-                usedFormat = "jpg"
-
-            # Same thing with png format
-            pngPath = os.path.join(rawDatasetPath, name + '.png')
-            pngExists = os.path.exists(pngPath)
-            if usedFormat is None and pngExists:
-                usedFormat = "png"
-
-            # Same thing with jp2 format
-            jp2Path = os.path.join(rawDatasetPath, name + '.jp2')
-            jp2Exists = os.path.exists(jp2Path)
+            availableFormat = []
+            for format in inputFormats:
+                imgPath = os.path.join(rawDatasetPath, f"{name}.{format}")
+                if os.path.exists(imgPath):
+                    availableFormat.append(format)
 
             # Testing if annotation file exists for that name
             annotationsExist = False
-            for ext in formats:
-                annotationsExist = annotationsExist or os.path.exists(os.path.join(rawDatasetPath, name + '.' + ext))
-            if pngExists or jpgExists or jp2Exists:  # At least one image exists
+            for ext in annotationFormats:
+                annotationsExist = annotationsExist or os.path.exists(os.path.join(rawDatasetPath, f"{name}.{ext}"))
+            if len(availableFormat) > 0:  # At least one image exists
                 if not annotationsExist:  # Annotations are missing
                     missingAnnotations.append(name)
                 else:
-                    if verbose:
-                        print("Adding {} image".format(name))
-                    outPath = pngPath if usedFormat == "png" else jpgPath
-                    outExists = pngExists if usedFormat == "png" else jpgExists
-                    if not outExists:  # Only jp2 exists
-                        if verbose:
-                            print(f"\tConverting to {usedFormat}")
-                        convertImage(jpgPath if jpgExists else jp2Path if jp2Exists else pngPath, outPath)
+                    if mainFormat not in availableFormat:
+                        for format in inputFormats:
+                            if format in availableFormat:
+                                sourcePath = os.path.join(rawDatasetPath, f"{name}.{format}")
+                                outputPath = os.path.join(rawDatasetPath, f"{name}.{mainFormat}")
+                                convertImage(sourcePath, outputPath)
+                                break
                     images.append(name)  # Adding this image to the list
             elif annotationsExist:  # There is no image file but xml found
                 missingImages.append(name)
     if verbose:
+        if lastIdx + 1 != len(fileList):
+            progressBar(1, 1, "Listing files ")
         # Displaying missing image files
         problem = False
         nbMissingImg = len(missingImages)
@@ -415,11 +419,11 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAda
 
         if not problem:
             print("Raw Dataset has no problem. Number of Images : {}".format(nbImages))
-    return names, images, missingImages, missingAnnotations, usedFormat
+    return names, images, missingImages, missingAnnotations
 
 
 def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', deleteBaseCortexMasks=False,
-                 adapter: AnnotationAdapter = None, resize=None, cortexMode=False, classesInfo=None):
+                 adapter: AnnotationAdapter = None, resize=None, cortexMode=False, classesInfo=None, imageFormat="jpg"):
     """
     Start wrapping the raw dataset into the wanted format
     :param deleteBaseCortexMasks: delete the base masks images after fusion
@@ -429,23 +433,24 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
     :param resize: If tuple given, the images and their masks will be resized to the tuple value
     :param cortexMode: If in cortex mode, will not clean the image nor fuse cortex masks
     :param classesInfo: Information about the classes that will be used
+    :param imageFormat: the image format to use in the dataset
     :return: None
     """
-    names, images, missingImages, missingAnnotations, usedFormat = getInfoRawDataset(rawDatasetPath, verbose=True,
-                                                                                     adapter=adapter)
+    names, images, missingImages, missingAnnotations = getInfoRawDataset(rawDatasetPath, verbose=True,
+                                                                         adapter=adapter, mainFormat=imageFormat)
     if classesInfo is None:
         if cortexMode:
             classesInfo = CORTICES_CLASSES
         else:
             classesInfo = NEPHRO_CLASSES
-    nbImages = len(images)
     # Creating masks for any image which has all required files and displaying progress
-    for index in range(nbImages):
-        file = images[index]
-        print('Creating masks for {} image {}/{} ({:.2f}%)'.format(file, index + 1, nbImages,
-                                                                   (index + 1) / nbImages * 100))
-        createMasksOfImage(rawDatasetPath, file, datasetName, adapter, classesInfo=classesInfo, resize=resize,
-                           imageFormat=usedFormat)
+    start_time = time()
+    for index, file in enumerate(images):
+        progressBar(index, len(images), prefix='Creating masks ',
+                    suffix=f" {formatTime(round(time() - start_time))} Current : {file}")
+        createMasksOfImage(rawDatasetPath, file, datasetName, adapter, classesInfo=classesInfo,
+                           resize=resize, imageFormat=imageFormat)
         if not cortexMode:
-            fuseCortices(datasetName, file, deleteBaseMasks=deleteBaseCortexMasks)
+            fuseCortices(datasetName, file, deleteBaseMasks=deleteBaseCortexMasks, silent=True)
             cleanImage(datasetName, file)
+    progressBar(1, 1, prefix='Creating masks ', suffix=f" {formatTime(round(time() - start_time))}" + " " * 20)
