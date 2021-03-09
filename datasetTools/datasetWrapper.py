@@ -1,10 +1,15 @@
 import os
-import xml.etree.ElementTree as ET
-import numpy as np
+from time import time
+
 import cv2
-from datasetTools.datasetDivider import getBWCount
+import numpy as np
+from skimage.io import imread
+
+from common_utils import progressBar, progressText, formatTime
 from datasetTools import AnnotationAdapter as adapt
 from datasetTools.AnnotationAdapter import AnnotationAdapter
+from datasetTools.datasetDivider import getBWCount, CV2_IMWRITE_PARAM
+from mrcnn.utils import extract_bboxes, expand_mask, minimize_mask
 
 NEPHRO_CLASSES = [
     {"id": 0, "name": "Background", "color": "", "ignore": True},
@@ -16,9 +21,9 @@ NEPHRO_CLASSES = [
     {"id": 6, "name": "vaisseau", "color": "#55ff7f", "ignore": False},
     {"id": 7, "name": "artefact", "color": "#000000", "ignore": False},
     {"id": 8, "name": "veine", "color": "#0000ff", "ignore": False},
-    {"id": 9, "name": "nsg", "color": "#55007f", "ignore": True},
-    {"id": 10, "name": "intima", "color": "#aa0000", "ignore": True},
-    {"id": 11, "name": "media", "color": "#aa5500", "ignore": True}
+    {"id": 9, "name": "nsg", "color": "#55007f", "ignore": False},
+    {"id": 10, "name": "intima", "color": "#aa0000", "ignore": False},
+    {"id": 11, "name": "media", "color": "#aa5500", "ignore": False}
 ]
 
 CORTICES_CLASSES = [
@@ -30,7 +35,7 @@ CORTICES_CLASSES = [
 
 
 def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 'dataset_train',
-               maskClass: str = 'masks', imageFormat="png"):
+               maskClass: str = 'masks', imageFormat="jpg", config=None):
     """
     Create the mask image based on its polygon points
     :param imgName: name w/o extension of the base image
@@ -42,11 +47,9 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
     :param imageFormat: output format of the masks' images
     :return: None
     """
-    # Formatting the suffix for the image representing the mask
-    maskName = str('0' if idMask < 100 else '') + str('0' if idMask < 10 else '') + str(idMask)
     # Defining path where the result image will be stored and creating dir if not exists
     maskClass = maskClass.replace(" ", "_")
-    output_directory = datasetName + '/' + imgName + '/' + maskClass + '/'
+    output_directory = os.path.join(datasetName, imgName, maskClass)
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
 
@@ -60,9 +63,28 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
     mask = np.uint8(np.zeros((imgShape[0], imgShape[1])))
     cv2.fillPoly(mask, [ptsMask], 255)
 
+    bbox_coordinates = ""
+    if config is not None and config.USE_MINI_MASK:
+        bbox = extract_bboxes(mask)
+        mask = minimize_mask(bbox, mask, config.MINI_MASK_SHAPE)
+        mask = mask.astype(np.uint8) * 255
+        y1, x1, y2, x2 = bbox
+        bbox_coordinates = f"_{y1}_{x1}_{y2}_{x2}"
     # Saving result image
-    output_name = imgName + maskName + '.' + imageFormat
-    cv2.imwrite(output_directory + output_name, mask)
+    output_name = f"{imgName}_{idMask:03d}{bbox_coordinates}.{imageFormat}"
+    cv2.imwrite(os.path.join(output_directory, output_name), mask, CV2_IMWRITE_PARAM)
+
+
+def getBboxFromName(imageName):
+    """
+    Return the bbox coordinates stored in the image name
+    :param imageName: the image name from which you want the bbox
+    :return: the bbox as [y1, x1, y2, x2]
+    """
+    res = os.path.basename(imageName)
+    res = "".join(res.split('.')[:-1])
+    res = res.split("_")[2:]
+    return np.array([int(x) for x in res])
 
 
 def resizeMasks(baseMasks, xRatio: float, yRatio: float):
@@ -81,7 +103,8 @@ def resizeMasks(baseMasks, xRatio: float, yRatio: float):
 
 
 def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'dataset_train',
-                       adapter: AnnotationAdapter = None, classesInfo: dict = None, imageFormat="png", resize=None):
+                       adapter: AnnotationAdapter = None, classesInfo: dict = None, imageFormat="jpg", resize=None,
+                       config=None):
     """
     Create all the masks of a given image by parsing xml annotations file
     :param rawDatasetPath: path to the folder containing images and associated annotations
@@ -91,29 +114,30 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
     :param classesInfo: Information about all classes that are used, by default will be nephrology classes Info
     :param imageFormat: output format of the image and masks
     :param resize: if the image and masks have to be resized
+    :param config: config class of Mask R-CNN to use mini masks if enabled
     :return: None
     """
     # Getting shape of original image (same for all this masks)
     if classesInfo is None:
         classesInfo = NEPHRO_CLASSES
 
-    img = cv2.imread(os.path.join(rawDatasetPath, imgName + '.' + imageFormat))
+    img = cv2.imread(os.path.join(rawDatasetPath, f"{imgName}.{imageFormat}"))
     if img is None:
-        print('Problem with {} image'.format(imgName))
+        print(f'Problem with {imgName} image')
         return
     shape = img.shape
     if resize is not None:
         yRatio = resize[0] / shape[0]
         xRatio = resize[1] / shape[1]
-        assert yRatio > 0 and xRatio > 0, "Error resize ratio not correct ({}, {})".format(yRatio, xRatio)
+        assert yRatio > 0 and xRatio > 0, f"Error resize ratio not correct ({yRatio:3.2f}, {xRatio:3.2f})"
         img = cv2.resize(img, resize, interpolation=cv2.INTER_CUBIC)
         shape = img.shape
 
     # Copying the original image in the dataset
-    targetDirectoryPath = datasetName + '/' + imgName + '/images/'
+    targetDirectoryPath = os.path.join(datasetName, imgName, 'images')
     if not os.path.exists(targetDirectoryPath):
         os.makedirs(targetDirectoryPath)
-        cv2.imwrite(targetDirectoryPath + imgName + '.' + imageFormat, img)
+        cv2.imwrite(os.path.join(targetDirectoryPath, f"{imgName}.{imageFormat}"), img, CV2_IMWRITE_PARAM)
 
     # Finding annotation files
     formats = adapt.ANNOTATION_FORMAT
@@ -162,41 +186,47 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
                         break
         else:
             maskClass = datasetClass
+            if maskClass == "None":
+                print(f" /!\\ {imgName} : None class present /!\\ ")
             if resize is not None:
                 resizedMasks = resizeMasks(maskPoints, xRatio, yRatio)
         createMask(imgName, shape, noMask, maskPoints if resize is None else resizedMasks, datasetName, maskClass,
-                   imageFormat)
+                   imageFormat, config=config)
 
 
-def fuseCortices(datasetPath: str, imageName: str, deleteBaseMasks=False):
+def fuseCortices(datasetPath: str, imageName: str, imageFormat="jpg", deleteBaseMasks=False, silent=False):
     """
     Fuse each cortex masks into one
     :param datasetPath: the dataset that have been wrapped
     :param imageName: the image you want its cortex to be fused
+    :param imageFormat: format to use to save the final cortex masks
     :param deleteBaseMasks: delete the base masks images after fusion
+    :param silent: if True will not print
     :return: None
     """
     # Getting the image directory path
     imageDir = os.path.join(datasetPath, imageName)
     cortexDir = os.path.join(imageDir, 'cortex')
+    imagePath = os.path.join(datasetPath, imageName, "images")
+    imagePath = os.path.join(imagePath, os.listdir(imagePath)[0])
+    image = cv2.imread(imagePath)
     if os.path.exists(cortexDir):
         listCortexImages = os.listdir(cortexDir)
-        if len(listCortexImages) > 1:  # Fusing only if strictly more than one cortex mask image present
+        if not silent:
             print("Fusing {} cortices masks".format(imageName))
-            fusion = cv2.imread(os.path.join(cortexDir, listCortexImages[0]), cv2.IMREAD_UNCHANGED)
-            for maskName in os.listdir(cortexDir):  # Adding each mask to the same image
-                maskPath = os.path.join(cortexDir, maskName)
-                mask = cv2.imread(maskPath, cv2.IMREAD_UNCHANGED)
-                fusion = cv2.add(fusion, mask)
-            # temp = cv2.resize(fusion, None, fx=1 / 3, fy=1 / 3, interpolation=cv2.INTER_CUBIC)
-            # cv2.imshow("fusion_{}".format(imageName), temp)
-            # Saving the fused mask image
-            cv2.imwrite(os.path.join(cortexDir, imageName + "_cortex.png"), fusion)
-            if deleteBaseMasks:
-                for maskName in os.listdir(cortexDir):  # Deleting each cortex mask except the fused one
-                    if '_cortex.png' not in maskName:
-                        maskPath = os.path.join(cortexDir, maskName)
-                        os.remove(maskPath)
+        fusion = loadSameResImage(os.path.join(cortexDir, listCortexImages[0]), imageShape=image.shape)
+        listCortexImages.remove(listCortexImages[0])
+        for maskName in listCortexImages:  # Adding each mask to the same image
+            maskPath = os.path.join(cortexDir, maskName)
+            mask = loadSameResImage(maskPath, imageShape=image.shape)
+            fusion = cv2.add(fusion, mask)
+        # Saving the fused mask image
+        cv2.imwrite(os.path.join(cortexDir, f"{imageName}_cortex.{imageFormat}"), fusion, CV2_IMWRITE_PARAM)
+        if deleteBaseMasks:
+            for maskName in os.listdir(cortexDir):  # Deleting each cortex mask except the fused one
+                if f'_cortex.{imageFormat}' not in maskName:
+                    maskPath = os.path.join(cortexDir, maskName)
+                    os.remove(maskPath)
 
 
 def cleanCortexDir(datasetPath: str):
@@ -221,7 +251,7 @@ def cleanCortexDir(datasetPath: str):
                             os.remove(maskPath)
 
 
-def cleanImage(datasetPath: str, imageName: str, medullaMinPart=0.05, onlyMasks=False):
+def cleanImage(datasetPath: str, imageName: str, medullaMinPart=0.05, onlyMasks=False, imageFormat="jpg"):
     """
     Creating the full_images directory and cleaning the base image by removing non-cortex areas, creating medulla mask
     and cleaning background mask
@@ -229,6 +259,7 @@ def cleanImage(datasetPath: str, imageName: str, medullaMinPart=0.05, onlyMasks=
     :param imageName: the image you want its cortex to be fused
     :param medullaMinPart: least part of image to represent medulla for it to be kept
     :param onlyMasks: if true, will not create full_images directory and clean image
+    :param imageFormat: the image format to use to save the image
     :return: None
     """
     # Defining all the useful paths
@@ -249,15 +280,16 @@ def cleanImage(datasetPath: str, imageName: str, medullaMinPart=0.05, onlyMasks=
             # Copying the full image into the correct directory
             fullImageDirPath = os.path.join(currentImageDirPath, 'full_images')
             os.makedirs(fullImageDirPath, exist_ok=True)
-            cv2.imwrite(os.path.join(fullImageDirPath, imageFileName), image)
+            cv2.imwrite(os.path.join(fullImageDirPath, imageFileName), image, CV2_IMWRITE_PARAM)
 
-            # Cleaning the image
-            cortex = cv2.imread(cortexFilePath)
+            # Cleaning the image and saving it
+            cortex = loadSameResImage(cortexFilePath, image.shape)
+            cortex = np.repeat(cortex[:, :, np.newaxis], 3, axis=2)
             image = cv2.bitwise_and(image, cortex)
-            cv2.imwrite(imagePath, image)
+            cv2.imwrite(imagePath, image, CV2_IMWRITE_PARAM)
 
         # Starting medulla mask creation
-        cortex = cv2.imread(cortexFilePath, cv2.IMREAD_UNCHANGED)
+        cortex = loadSameResImage(cortexFilePath, image.shape)
         invertedCortex = np.bitwise_not(cortex)
         medulla = cortex
 
@@ -266,14 +298,14 @@ def cleanImage(datasetPath: str, imageName: str, medullaMinPart=0.05, onlyMasks=
         for backgroundFile in os.listdir(backgroundDirPath):
             # Second Medulla mask creation step
             backgroundFilePath = os.path.join(backgroundDirPath, backgroundFile)
-            backgroundImage = cv2.imread(backgroundFilePath, cv2.IMREAD_UNCHANGED)
+            backgroundImage = loadSameResImage(backgroundFilePath, image.shape)
             medulla = np.bitwise_or(medulla, backgroundImage)
 
             # Cleaning background image if cortex mask is present
             if cortexPresent:
                 # background = background && not(cortex)
                 backgroundImage = np.bitwise_and(backgroundImage, invertedCortex)
-                cv2.imwrite(backgroundFilePath, backgroundImage)
+                cv2.imwrite(backgroundFilePath, backgroundImage, CV2_IMWRITE_PARAM)
 
     # Last Medulla mask creation step if medulla > 1% of image
     black, white = getBWCount(medulla)
@@ -283,8 +315,17 @@ def cleanImage(datasetPath: str, imageName: str, medullaMinPart=0.05, onlyMasks=
         medulla = np.bitwise_not(medulla)
         medullaDirPath = os.path.join(currentImageDirPath, 'medullaire')
         os.makedirs(medullaDirPath, exist_ok=True)
-        medullaFilePath = os.path.join(medullaDirPath, imageName + '_medulla.png')
-        cv2.imwrite(medullaFilePath, medulla)
+        medullaFilePath = os.path.join(medullaDirPath, f"{imageName}_medulla.{imageFormat}")
+        cv2.imwrite(medullaFilePath, medulla, CV2_IMWRITE_PARAM)
+
+
+def loadSameResImage(imagePath, imageShape):
+    mask = cv2.imread(imagePath, cv2.IMREAD_UNCHANGED)
+    if mask.shape[0] != imageShape[0] or mask.shape[1] != imageShape[1]:
+        bbox = getBboxFromName(imagePath)
+        mask = expand_mask(bbox, mask, image_shape=imageShape)
+        mask = mask.astype(np.uint8) * 255
+    return mask
 
 
 def convertImage(inputImagePath: str, outputImagePath: str):
@@ -294,16 +335,18 @@ def convertImage(inputImagePath: str, outputImagePath: str):
     :param outputImagePath: path to the output image
     :return: None
     """
-    image = cv2.imread(inputImagePath)
-    cv2.imwrite(outputImagePath, image)
+    image = imread(inputImagePath)
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(outputImagePath, image, CV2_IMWRITE_PARAM)
 
 
-def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAdapter = None):
+def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAdapter = None, mainFormat="jpg"):
     """
     Listing all available images, those with missing information
     :param verbose: whether or not print should be executed
     :param rawDatasetPath: path to the raw dataset folder
     :param adapter:
+    :param mainFormat: the format to use for the dataset
     :return: list of unique files names, list of available images names, list of missing images names,
     list of missing annotations names
     """
@@ -311,53 +354,49 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAda
     images = []  # list of image that can be used to compute masks
     missingImages = []  # list of missing images
     missingAnnotations = []  # list of missing annotations
-    usedFormat = None
+    inputFormats = ["jpg", "jp2", "png"]
     if adapter is None:
-        formats = adapt.ANNOTATION_FORMAT
+        annotationFormats = adapt.ANNOTATION_FORMAT
     else:
-        formats = [adapter.getAnnotationFormat()]
+        annotationFormats = [adapter.getAnnotationFormat()]
+    fileList = os.listdir(rawDatasetPath)
     if verbose:
-        print("Listing files and creating png if not present")
-    for file in os.listdir(rawDatasetPath):
+        progressBar(0, len(fileList), "Listing files ")
+    for idx, file in enumerate(fileList):
+        if verbose and (idx % 10 == 0 or idx + 1 == len(fileList)):
+            lastIdx = idx
+            progressBar(idx + 1, len(fileList), "Listing files ")
         name = file.split('.')[0]
         if name not in names:  # We want to do this only once per unique file name (without extension)
             names.append(name)
 
-            # Testing if there is an png image with that name
-            pngPath = os.path.join(rawDatasetPath, name + '.png')
-            pngExists = os.path.exists(pngPath)
-            if usedFormat is None and pngExists:
-                usedFormat = "png"
-            # Same thing with jp2 format
-            jpgPath = os.path.join(rawDatasetPath, name + '.jpg')
-            jpgExists = os.path.exists(jpgPath)
-            if usedFormat is None and jpgExists:
-                usedFormat = "jpg"
-
-            # Same thing with jp2 format
-            jp2Path = os.path.join(rawDatasetPath, name + '.jp2')
-            jp2Exists = os.path.exists(jp2Path)
+            availableFormat = []
+            for format in inputFormats:
+                imgPath = os.path.join(rawDatasetPath, f"{name}.{format}")
+                if os.path.exists(imgPath):
+                    availableFormat.append(format)
 
             # Testing if annotation file exists for that name
             annotationsExist = False
-            for ext in formats:
-                annotationsExist = annotationsExist or os.path.exists(os.path.join(rawDatasetPath, name + '.' + ext))
-            if pngExists or jpgExists or jp2Exists:  # At least one image exists
+            for ext in annotationFormats:
+                annotationsExist = annotationsExist or os.path.exists(os.path.join(rawDatasetPath, f"{name}.{ext}"))
+            if len(availableFormat) > 0:  # At least one image exists
                 if not annotationsExist:  # Annotations are missing
                     missingAnnotations.append(name)
                 else:
-                    if verbose:
-                        print("Adding {} image".format(name))
-                    outPath = pngPath if usedFormat == "png" else jpgPath
-                    outExists = pngExists if usedFormat == "png" else jpgExists
-                    if not outExists:  # Only jp2 exists
-                        if verbose:
-                            print("\tCreating png version")
-                        convertImage(jpgPath if jpgExists else jp2Path if jp2Exists else pngPath, outPath)
+                    if mainFormat not in availableFormat:
+                        for format in inputFormats:
+                            if format in availableFormat:
+                                sourcePath = os.path.join(rawDatasetPath, f"{name}.{format}")
+                                outputPath = os.path.join(rawDatasetPath, f"{name}.{mainFormat}")
+                                convertImage(sourcePath, outputPath)
+                                break
                     images.append(name)  # Adding this image to the list
             elif annotationsExist:  # There is no image file but xml found
                 missingImages.append(name)
     if verbose:
+        if lastIdx + 1 != len(fileList):
+            progressBar(1, 1, "Listing files ")
         # Displaying missing image files
         problem = False
         nbMissingImg = len(missingImages)
@@ -380,11 +419,11 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAda
 
         if not problem:
             print("Raw Dataset has no problem. Number of Images : {}".format(nbImages))
-    return names, images, missingImages, missingAnnotations, usedFormat
+    return names, images, missingImages, missingAnnotations
 
 
 def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', deleteBaseCortexMasks=False,
-                 adapter: AnnotationAdapter = None, resize=None, cortexMode=False, classesInfo=None):
+                 adapter: AnnotationAdapter = None, resize=None, cortexMode=False, classesInfo=None, imageFormat="jpg"):
     """
     Start wrapping the raw dataset into the wanted format
     :param deleteBaseCortexMasks: delete the base masks images after fusion
@@ -394,23 +433,24 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
     :param resize: If tuple given, the images and their masks will be resized to the tuple value
     :param cortexMode: If in cortex mode, will not clean the image nor fuse cortex masks
     :param classesInfo: Information about the classes that will be used
+    :param imageFormat: the image format to use in the dataset
     :return: None
     """
-    names, images, missingImages, missingAnnotations, usedFormat = getInfoRawDataset(rawDatasetPath, verbose=True,
-                                                                                     adapter=adapter)
+    names, images, missingImages, missingAnnotations = getInfoRawDataset(rawDatasetPath, verbose=True,
+                                                                         adapter=adapter, mainFormat=imageFormat)
     if classesInfo is None:
         if cortexMode:
             classesInfo = CORTICES_CLASSES
         else:
             classesInfo = NEPHRO_CLASSES
-    nbImages = len(images)
     # Creating masks for any image which has all required files and displaying progress
-    for index in range(nbImages):
-        file = images[index]
-        print('Creating masks for {} image {}/{} ({:.2f}%)'.format(file, index + 1, nbImages,
-                                                                   (index + 1) / nbImages * 100))
-        createMasksOfImage(rawDatasetPath, file, datasetName, adapter, classesInfo=classesInfo, resize=resize,
-                           imageFormat=usedFormat)
+    start_time = time()
+    for index, file in enumerate(images):
+        progressBar(index, len(images), prefix='Creating masks ',
+                    suffix=f" {formatTime(round(time() - start_time))} Current : {file}")
+        createMasksOfImage(rawDatasetPath, file, datasetName, adapter, classesInfo=classesInfo,
+                           resize=resize, imageFormat=imageFormat)
         if not cortexMode:
-            fuseCortices(datasetName, file, deleteBaseMasks=deleteBaseCortexMasks)
+            fuseCortices(datasetName, file, deleteBaseMasks=deleteBaseCortexMasks, silent=True)
             cleanImage(datasetName, file)
+    progressBar(1, 1, prefix='Creating masks ', suffix=f" {formatTime(round(time() - start_time))}" + " " * 20)

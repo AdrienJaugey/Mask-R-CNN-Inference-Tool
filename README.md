@@ -7,7 +7,9 @@ You can find additional information in the repository's [wiki](https://github.co
 This repository has been started during my internship at the [LEAD Laboratory](http://leadserv.u-bourgogne.fr/en/) (Dijon, France) from April 2020 to June 2020 for my second-to-last year of master’s degree in Software Engineering at [ESIREM](https://esirem.u-bourgogne.fr/).
 
 ## Inference tool
-[![Open Inference Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/blob/master/Mask_R_CNN_Nephrology_Inference.ipynb) 
+Stable : [![Open Inference Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/blob/master/Mask_R_CNN_Nephrology_Inference.ipynb) 
+
+Experimental : [![Open Inference Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/blob/experimental/Mask_R_CNN_Nephrology_Inference.ipynb)
 
 ## Statistics Extractor tool
-[![Open Statistics Extractor Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/blob/master/SKINET_Stats_Extractor.ipynb) 
+[![Open Statistics Extractor Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/blob/master/Mask_R_CNN_Stats_Extractor.ipynb) 

@@ -98,7 +98,7 @@ class LabelMeAdapter(JSONAdapter):
             "imageHeight": self.imageInfo["height"],
             "imageWidth": self.imageInfo["width"],
             "imageData": None,
-            "imagePath": "{}.png".format(self.imageInfo["name"])
+            "imagePath": f"{self.imageInfo['name']}.{self.imageInfo['format']}"
         }
         self.classCount = {}
         self.nbAnnotation = 0

@@ -22,6 +22,8 @@ from matplotlib.patches import Polygon
 import IPython.display
 
 # Root directory of the project
+from datasetTools.datasetDivider import CV2_IMWRITE_PARAM
+
 ROOT_DIR = os.path.abspath("../../")
 
 # Import Mask RCNN
@@ -71,20 +73,27 @@ def random_colors(N, bright=True, shuffle=True):
     return colors
 
 
-def apply_mask(image, mask, color, alpha=0.5):
+def apply_mask(image, mask, color, alpha=0.5, bbox=None):
     """Apply the given mask to the image.
     """
+    if bbox is None:
+        y1, x1, y2, x2 = 0, 0, image.shape[0], image.shape[1]
+    else:
+        y1, x1, y2, x2 = bbox
+    if (y2 - y1) != mask.shape[0] or (x2 - x1) != mask.shape[1]:
+        _mask = mask[y1:y2, x1:x2]
+    else:
+        _mask = mask
     for c in range(3):
-        image[:, :, c] = np.where(mask == 1,
-                                  image[:, :, c] *
-                                  (1 - alpha) + alpha * color[c] * 255,
-                                  image[:, :, c])
+        image[y1:y2, x1:x2, c] = np.where(_mask > 0,
+                                          image[y1:y2, x1:x2, c] * (1 - alpha) + alpha * color[c] * 255,
+                                          image[y1:y2, x1:x2, c])
     return image
 
 
-def get_text_color(val, maxVal, colormap, light_threshold=0.5):
+def get_text_color_by_colormap(val, maxVal, colormap, light_threshold=0.5):
     """
-    Return black or white text color for confusion matrix depending on the background color
+    Return black or white text color for confusion matrix depending on the colormap and value given
     :param val: the current value
     :param maxVal: max value in the confusion matrix
     :param colormap: the colormap that is used to color the confusion matrix
@@ -95,7 +104,19 @@ def get_text_color(val, maxVal, colormap, light_threshold=0.5):
     # TODO: Add support to minVal != 0
     index = int(round((val / maxVal) * 256))
     red, green, blue, _ = colormap(index)
-    _, light, _ = colorsys.rgb_to_hls(red, green, blue)
+    return get_text_color(red, green, blue, light_threshold)
+
+
+def get_text_color(r, g, b, light_threshold=0.5):
+    """
+    Return black or white text color depending on the background color
+    :param r: amount of red color
+    :param g: amount of green color
+    :param b: amount of blue color
+    :param light_threshold: the threshold used to determine whether or not a color is dark or light
+    :return: "k" if background color is light else "w"
+    """
+    _, light, _ = colorsys.rgb_to_hls(r, g, b)
     return "k" if light >= light_threshold else "w"
 
 
@@ -151,7 +172,7 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     for i in range(NB_CLASS + 1):
         for j in range(NB_CLASS + 1):
             if matrix[i][j] != 0:
-                color = get_text_color(matrix[i][j], maxVal, cmap)
+                color = get_text_color_by_colormap(matrix[i][j], maxVal, cmap)
                 ax.text(j, i, round(matrix[i][j], 2), ha="center", va="center", color=color)
 
     # Auto resize of dimension
@@ -165,10 +186,10 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
 
 def display_instances(image, boxes, masks, class_ids, class_names,
                       scores=None, title="",
-                      figsize=(16, 16), ax=None, fig=None,
+                      figsize=(16, 16), ax=None, fig=None, image_format="jpg",
                       show_mask=True, show_bbox=True,
                       colors=None, colorPerClass=False, captions=None,
-                      fileName=None, onlyImage=False, silent=False):
+                      fileName=None, onlyImage=False, silent=False, config=None):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -231,13 +252,20 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             caption = "{} {:.3f}".format(label, score) if score else label
         else:
             caption = captions[i]
-        ax.text(x1, y1 + 8, caption,
-                color='w', size=11, backgroundcolor="none")
+        ax.text(x1 + 4, y1 + 19, caption, color=get_text_color(color[0], color[1], color[2]),
+                size=12, backgroundcolor=color)
 
         # Mask
         mask = masks[:, :, i]
+        bbox = boxes[i]
+        shift = np.array([0, 0])
+        if config is not None and config.USE_MINI_MASK:
+            shifted_bbox = utils.shift_bbox(bbox)
+            shift = bbox[:2]
+            mask = utils.expand_mask(shifted_bbox, mask, tuple(shifted_bbox[2:]))
+            mask = mask.astype(np.uint8) * 255
         if show_mask:
-            masked_image = apply_mask(masked_image, mask, color)
+            masked_image = apply_mask(masked_image, mask, color, bbox=bbox)
 
         # Mask Polygon
         # Pad to ensure proper polygons for masks that touch image edges.
@@ -246,21 +274,22 @@ def display_instances(image, boxes, masks, class_ids, class_names,
         padded_mask[1:-1, 1:-1] = mask
         contours = find_contours(padded_mask, 0.5)
         for verts in contours:
+            verts = verts + shift
             # Subtract the padding and flip (y, x) to (x, y)
             verts = np.fliplr(verts) - 1
             p = Polygon(verts, facecolor="none", edgecolor=color)
             ax.add_patch(p)
-    ax.imshow(masked_image.astype(np.uint8))
+    masked_image = masked_image.astype(np.uint8)
+    ax.imshow(masked_image)
     fig.tight_layout()
-    BGR_img = cv2.cvtColor(masked_image.astype(np.uint8), cv2.COLOR_RGB2BGR)
     if fileName is not None:
-        fig.savefig(fileName + ".png")
+        fig.savefig(f"{fileName}.{image_format}")
         if onlyImage:
-            cv2.imwrite(fileName + "_clean.png", BGR_img)
+            BGR_img = cv2.cvtColor(masked_image, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(f"{fileName}_clean.{image_format}", BGR_img, CV2_IMWRITE_PARAM)
     if auto_show:
         plt.show()
-    return masked_image.astype(np.uint8)
-
+    return masked_image
 
 
 def display_differences(image,

@@ -1,10 +1,14 @@
 import math
 import os
+from time import time
+
 import cv2
 import numpy as np
 
-VERBOSE = False
+from common_utils import progressBar, formatTime
 
+VERBOSE = False
+CV2_IMWRITE_PARAM = [int(cv2.IMWRITE_JPEG_QUALITY), 100, cv2.IMWRITE_PNG_COMPRESSION, 9]
 
 def computeStartsOfInterval(maxVal: int, intervalLength=1024, min_overlap_part=0.33):
     """
@@ -103,21 +107,16 @@ def getImageDivision(img, xStarts: [int], yStarts: [int], idDivision: int, divis
         return img[y:yEnd, x:xEnd, :]
 
 
-def getBWCount(mask, using='cv2', bins=None):
+def getBWCount(mask):
     """
-    Return number of black (0) and white (255) pixels in a mask image
+    Return number of black (0) and white (>0) pixels in a mask image
     :param mask: the mask image
-    :param using: 'numpy' or 'cv2', choosing how to compute histogram
-    :param bins: bins parameter of numpy.histogram method
     :return: number of black pixels, number of white pixels
     """
-    if bins is None:
-        bins = [0, 1, 2]
-    if using == 'cv2':
-        histogram = cv2.calcHist([mask], [0], None, [256], [0, 256])
-        return int(histogram[0]), int(histogram[255])
-    else:
-        return np.histogram(mask, bins=bins)[0]
+    mask = mask.astype(np.bool).flatten()
+    totalPx = int(mask.shape[0])
+    whitePx = int(np.sum(mask))
+    return totalPx - whitePx, whitePx
 
 
 def getRepresentativePercentage(blackMask: int, whiteMask: int, divisionImage):
@@ -136,7 +135,7 @@ def getRepresentativePercentage(blackMask: int, whiteMask: int, divisionImage):
 
 
 def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSideLength=1024, min_overlap_part=0.33,
-                  min_part_of_div=10.0, min_part_of_cortex=10.0, min_part_of_mask=10.0, mode: str = "main"):
+                  min_part_of_div=10.0, min_part_of_cortex=10.0, min_part_of_mask=10.0, mode: str = "main", verbose=0):
     """
     Divide a dataset using images bigger than a wanted size into equivalent dataset with square-images divisions of
     the wanted size
@@ -148,24 +147,25 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
     :param min_part_of_cortex: min part of cortex, used to decide whether the div will be used or not
     :param min_part_of_mask: min part of mask, used to decide whether the div will be used or not
     :param mode: Whether it is main or cortex dataset
+    :param verbose:
     :return: None
     """
     if outputDatasetPath is None:
         outputDatasetPath = inputDatasetPath + '_divided'
     print()
 
-    nbImages = len(os.listdir(inputDatasetPath))
-    iterator = 1
-    for imageDir in os.listdir(inputDatasetPath):
-        print("Dividing {} image {}/{} ({:.2f}%)".format(imageDir, iterator, nbImages, iterator / nbImages * 100))
+    imageList = os.listdir(inputDatasetPath)
+    start_time = time()
+    for idx, imageDir in enumerate(imageList):
+        if verbose > 0:
+            progressBar(idx, len(imageList), prefix="Dividing dataset ",
+                        suffix=f" {formatTime(time() - start_time)} Current : {imageDir}")
         imageDirPath = os.path.join(inputDatasetPath, imageDir)
 
-        imagePath = os.path.join(imageDirPath, 'images/{}.png'.format(imageDir))
-        if os.path.exists(imagePath):
-            IMAGE_EXT = '.png'
-        else:
-            imagePath = os.path.join(imageDirPath, 'images/{}.jpg'.format(imageDir))
-            IMAGE_EXT = '.jpg'
+        imagePath = os.path.join(imageDirPath, 'images')
+        imagePath = os.path.join(imagePath, os.listdir(imagePath)[0])
+        imageFormat = os.path.basename(imagePath).split('.')[-1]
+
         image = cv2.imread(imagePath)
         height, width, _ = image.shape
 
@@ -181,8 +181,6 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
         tryCleaning = False
         if not isThereCortex:
             tryCleaning = True
-            if VERBOSE:
-                print("{} : No cortex".format(imageDir))
         else:
             cortexImgPath = os.path.join(cortexDirPath, os.listdir(cortexDirPath)[0])
             usefulPart = cv2.imread(cortexImgPath, cv2.IMREAD_UNCHANGED)
@@ -194,22 +192,12 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
                             mask = cv2.imread(os.path.join(maskDir, mask), cv2.IMREAD_UNCHANGED)
                             usefulPart = cv2.bitwise_or(usefulPart, mask)
             black, white = getBWCount(usefulPart)
-            total = white + black
-            if VERBOSE:
-                print("Cortex is {:.3f}% of base image".format(white / total * 100))
-                print("\t[ID] : Part of Div | of Cortex | of Image")
             for divId in range(getDivisionsCount(xStarts, yStarts)):
                 div = getImageDivision(usefulPart, xStarts, yStarts, divId, squareSideLength)
                 partOfDiv, partOfCortex, partOfImage = getRepresentativePercentage(black, white, div)
                 excluded = partOfDiv < min_part_of_div or partOfCortex < min_part_of_cortex
                 if excluded:
                     excludedDivisions.append(divId)
-                if VERBOSE and partOfDiv != 0:
-                    print("\t[{}{}] : {:.3f}% | {:.3f}% | {:.3f}% {}".format('0' if divId < 10 else '', divId,
-                                                                             partOfDiv, partOfCortex, partOfImage,
-                                                                             'EXCLUDED' if excluded else ''))
-                if VERBOSE:
-                    print("\tExcluded Divisions : {} \n".format(excludedDivisions))
 
         '''####################################################
         ### Creating output dataset files for current image ###
@@ -220,14 +208,14 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
                 for divId in range(getDivisionsCount(xStarts, yStarts)):
                     if divId in excludedDivisions:
                         continue
-                    divSuffix = "_{}{}".format('0' if divId < 10 else '', divId)
-                    divisionOutputDirPath = imageOutputDirPath + divSuffix
+                    divisionOutputDirPath = f"{imageOutputDirPath}_{divId:02d}"
                     outputImagePath = os.path.join(divisionOutputDirPath, masksDir)
                     os.makedirs(outputImagePath, exist_ok=True)
-                    outputImagePath = os.path.join(outputImagePath, imageDir + divSuffix + IMAGE_EXT)
-                    tempPath = os.path.join(os.path.join(imageDirPath, masksDir), '{}{}'.format(imageDir, IMAGE_EXT))
+                    outputImagePath = os.path.join(outputImagePath, f"{imageDir}_{divId:02d}.{imageFormat}")
+                    tempPath = os.path.join(imageDirPath, masksDir, f'{imageDir}.{imageFormat}')
                     tempImage = cv2.imread(tempPath)
-                    cv2.imwrite(outputImagePath, getImageDivision(tempImage, xStarts, yStarts, divId, squareSideLength))
+                    cv2.imwrite(outputImagePath, getImageDivision(tempImage, xStarts, yStarts, divId, squareSideLength),
+                                CV2_IMWRITE_PARAM)
             else:
                 maskDirPath = os.path.join(imageDirPath, masksDir)
                 # Going through every mask file in current directory
@@ -244,20 +232,19 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
 
                         _, partOfMask, _ = getRepresentativePercentage(blackMask, whiteMask, divMaskImage)
                         if partOfMask >= min_part_of_mask:
-                            divSuffix = "_{}{}".format('0' if divId < 10 else '', divId)
-                            divisionOutputDirPath = imageOutputDirPath + divSuffix
+                            divisionOutputDirPath = f"{imageOutputDirPath}_{divId:02d}"
                             maskOutputDirPath = os.path.join(divisionOutputDirPath, masksDir)
                             os.makedirs(maskOutputDirPath, exist_ok=True)
-                            outputMaskPath = os.path.join(maskOutputDirPath, mask.split('.')[0] + divSuffix + IMAGE_EXT)
-                            cv2.imwrite(outputMaskPath, divMaskImage)
+                            outputMaskPath = os.path.join(maskOutputDirPath, f"{mask.split('.')[0]}_{divId:02d}.{imageFormat}")
+                            cv2.imwrite(outputMaskPath, divMaskImage, CV2_IMWRITE_PARAM)
 
         if tryCleaning:
             for divId in range(getDivisionsCount(xStarts, yStarts)):
-                divSuffix = "_{}{}".format('0' if divId < 10 else '', divId)
-                divisionOutputDirPath = imageOutputDirPath + divSuffix
+                divisionOutputDirPath = f"{imageOutputDirPath}_{divId:02d}"
                 if len(os.listdir(divisionOutputDirPath)) == 1:
                     imagesDirPath = os.path.join(divisionOutputDirPath, 'images')
-                    imageDivPath = os.path.join(imagesDirPath, imageDir + divSuffix + IMAGE_EXT)
+                    imageDivPath = os.path.join(imagesDirPath, f"{imageDir}_{divId:02d}.{imageFormat}")
                     os.remove(imageDivPath)  # Removing the .png image in /images
                     os.removedirs(imagesDirPath)  # Removing the /images folder
-        iterator += 1
+    if verbose > 0:
+        progressBar(1, 1, prefix="Dividing dataset ", suffix=f" {formatTime(time() - start_time)}" + " " * 20)
