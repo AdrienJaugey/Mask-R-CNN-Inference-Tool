@@ -303,7 +303,7 @@ def display_differences(image,
     gt_match, pred_match, overlaps, _ = utils.compute_matches(
         gt_box, gt_class_id, gt_mask,
         pred_box, pred_class_id, pred_score, pred_mask,
-        iou_threshold=iou_threshold, score_threshold=score_threshold)
+        ap_iou_threshold=iou_threshold, min_iou_to_count=score_threshold)
     # Ground truth = green. Predictions = red
     colors = [(0, 1, 0, .8)] * len(gt_match) \
              + [(1, 0, 0, 1)] * len(pred_match)

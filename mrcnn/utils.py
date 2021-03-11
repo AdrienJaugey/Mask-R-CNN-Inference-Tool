@@ -8,151 +8,126 @@ Written by Waleed Abdulla
 """
 
 import logging
-import os
 import random
-from time import time, ctime
+import shutil
+import urllib.request
+import warnings
+from distutils.version import LooseVersion
+
 import cv2
 import numpy as np
-import tensorflow as tf
 import scipy
 import skimage.color
 import skimage.io
 import skimage.transform
-import urllib.request
-import shutil
-import warnings
-from distutils.version import LooseVersion
-from datasetTools import datasetDivider as div
-from datasetTools.AnnotationAdapter import AnnotationAdapter
-from datasetTools.ASAPAdapter import ASAPAdapter
-from datasetTools.LabelMeAdapter import LabelMeAdapter
-from common_utils import formatTime, progressBar, combination
+import tensorflow as tf
+
+from mrcnn import compat
+from datasetTools import datasetDivider as dD
 
 # URL from which to download the latest COCO trained weights
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
 
 
 ############################################################
-#  Results Post-Processing
+#  Masks
 ############################################################
 
-def reduce_memory(results, config):
+def reduce_memory(results, config, allow_sparse=True):
+    """
+    Minimize all masks in the results dict from inference
+    :param results: dict containing results of the inference
+    :param config: the config object
+    :param allow_sparse: if False, will only keep biggest region of a mask
+    :return:
+    """
     _masks = results['masks']
     _bbox = results['rois']
-    results['masks'] = minimize_mask(_bbox, _masks, config.MINI_MASK_SHAPE)
+    if not allow_sparse:
+        emptyMasks = []
+        for idx in range(results['masks'].shape[-1]):
+            mask = unsparse_mask(results['masks'][:, :, idx])
+            if mask is None:
+                emptyMasks.append(idx)
+            else:
+                results['masks'][:, :, idx] = mask
+        if len(emptyMasks) > 0:
+            results['scores'] = np.delete(results['scores'], emptyMasks)
+            results['class_ids'] = np.delete(results['class_ids'], emptyMasks)
+            results['masks'] = np.delete(results['masks'], emptyMasks, axis=2)
+            results['rois'] = np.delete(results['rois'], emptyMasks, axis=0)
+        results['rois'] = extract_bboxes(results['masks'])
+    results['masks'] = minimize_mask(results['rois'], results['masks'], config.MINI_MASK_SHAPE)
     return results
 
 
-def fuse_results(results, image_shape, division_size=1024, min_overlap_part=0.33):
+def get_mask_area(mask, verbose=0):
     """
-    Fuse results of multiple predictions (divisions for example)
-    :param results: list of the results of the predictions
-    :param image_shape: the input image shape
-    :param division_size: Size of a division
-    :param min_overlap_part: Minimum overlap of divisions
-    :return: same structure contained in results
+    Computes mask area
+    :param mask: the array representing the mask
+    :param verbose: 0 : nothing, 1+ : errors/problems
+    :return: the area of the mask and verbose output (None when nothing to print)
     """
-    # Getting base input image information
-    div_side_length = results[0]['masks'].shape[0]
-    use_mini_mask = division_size != "noDiv" and division_size != div_side_length
-    height, width, _ = image_shape
-    xStarts = [0] if division_size == "noDiv" else div.computeStartsOfInterval(width, division_size,
-                                                                               min_overlap_part=min_overlap_part)
-    yStarts = [0] if division_size == "noDiv" else div.computeStartsOfInterval(height, division_size,
-                                                                               min_overlap_part=min_overlap_part)
-    widthRatio = width / div_side_length
-    heightRatio = height / div_side_length
-    # Counting total sum of predicted masks
-    size = 0
-    for res in results:
-        size += len(res['scores'])
+    maskHistogram = dD.getBWCount(mask)
+    display = None
+    if verbose > 0:
+        nbPx = mask.shape[0] * mask.shape[1]
+        tempSum = maskHistogram[0] + maskHistogram[1]
+        if tempSum != nbPx:
+            display = "Histogram pixels {} != total pixels {}".format(tempSum, nbPx)
+    return maskHistogram[1], display
 
-    # Initialisation of arrays
-    if use_mini_mask:
-        masks = np.zeros((div_side_length, div_side_length, size), dtype=bool)
+
+def unsparse_mask(base_mask):
+    """
+    Return mask with only its biggest part
+    :param base_mask: the mask image as np.bool or np.uint8
+    :return: the main part of the mask as a same shape image and type
+    """
+    # http://www.learningaboutelectronics.com/Articles/How-to-find-the-largest-or-smallest-object-in-an-image-Python-OpenCV.php
+    # https://stackoverflow.com/questions/19222343/filling-contours-with-opencv-python
+    # Convert to np.uint8 if not before processing
+    convert = False
+    if type(base_mask[0, 0]) is np.bool_:
+        convert = True
+        base_mask = base_mask.astype(np.uint8) * 255
+    # Padding the mask so that parts on edges will get correct area
+    base_mask = np.pad(base_mask, 1, mode='constant', constant_values=0)
+    res = np.zeros_like(base_mask, dtype=np.uint8)
+
+    # Detecting contours and keeping only one with biggest area
+    contours, _ = cv2.findContours(base_mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if len(contours) > 0:
+        if len(contours) > 1:  # If only one region, reconstructing mask is useless
+            biggest_part = sorted(contours, key=cv2.contourArea, reverse=True)[0]
+
+            # Drawing the biggest part on the result mask
+            cv2.fillPoly(res, pts=[biggest_part], color=255)
+        else:
+            res = base_mask
+        # Removing padding of the mask
+        res = res[1:-1, 1:-1]
+        return res.astype(np.bool) if convert else res
     else:
-        masks = np.zeros((height, width, size), dtype=bool)
-    scores = np.zeros(size)
-    rois = np.zeros((size, 4), dtype=int)
-    class_ids = np.zeros(size, dtype=int)
-
-    # Iterating through divisions results
-    lastIndex = 0
-    for res in results:
-        # Getting the division ID based on iterator or given ids and getting its coordinates
-        divId = res["div_id"]
-        xStart, xEnd, yStart, yEnd = div.getDivisionByID(xStarts, yStarts, divId, division_size)
-
-        # Formatting and adding all the division's predictions to global ones
-        for prediction_index in range(len(res['scores'])):
-            scores[lastIndex] = res['scores'][prediction_index]
-            class_ids[lastIndex] = res['class_ids'][prediction_index]
-
-            if use_mini_mask:
-                masks[:, :, lastIndex] = res['masks'][:, :, prediction_index]
-            elif division_size != "noDiv":
-                mask = res['masks'][:, :, prediction_index]
-                if mask.shape[0] != division_size or mask.shape[1] != division_size:
-                    tempWidthRatio = division_size / mask.shape[1]
-                    tempHeightRatio = division_size / mask.shape[0]
-                    roi = res['rois'][prediction_index]
-                    roi[0] *= tempHeightRatio
-                    roi[1] *= tempWidthRatio
-                    roi[2] *= tempHeightRatio
-                    roi[3] *= tempWidthRatio
-                    mask = cv2.resize(np.uint8(mask), (division_size, division_size))
-                masks[yStart:yEnd, xStart:xEnd, lastIndex] = mask
-            else:
-                mask = np.uint8(res['masks'][:, :, prediction_index])
-                masks[:, :, lastIndex] = cv2.resize(mask, (width, height), interpolation=cv2.INTER_CUBIC)
-
-            roi = res['rois'][prediction_index].copy()
-            # y1, x1, y2, x2
-            if division_size != "noDiv":
-                roi[0] += yStart
-                roi[1] += xStart
-                roi[2] += yStart
-                roi[3] += xStart
-            else:
-                roi[0] *= heightRatio
-                roi[1] *= widthRatio
-                roi[2] *= heightRatio
-                roi[3] *= widthRatio
-            rois[lastIndex] = roi
-
-            lastIndex += 1
-
-    # Formatting returned result
-    fused_results = {
-        "rois": rois,
-        "class_ids": class_ids,
-        "scores": scores,
-        "masks": masks
-    }
-    return fused_results
+        return None
 
 
-def comparePriority(main_class_id, other_class_id, priority_table=None):
+############################################################
+#  Bounding Boxes
+############################################################
+def in_roi(roi_to_test, roi):
     """
-    Compare priority of given class ids
-    :param main_class_id: the main/current class id
-    :param other_class_id: the other class id you want to compare to
-    :param priority_table: the priority table to get the priority in
-    :return: 1 if main has priority, -1 if other has priority, 0 if no one has priority or in case of parameter error
+    Tests if the RoI to test is included in the given RoI
+    :param roi_to_test: the RoI/bbox to test
+    :param roi: the RoI that should include the one to test
+    :return: True if roi_to_test is included in roi
     """
-    # Return 0 if no priority table given, if it has bad dimensions or a class_id is not in the correct range
-    if priority_table is None:
-        return 0
-    elif not (len(priority_table) == len(priority_table[0])
-              and 0 <= main_class_id < len(priority_table)
-              and 0 <= other_class_id < len(priority_table)):
-        return 0
-    if priority_table[main_class_id][other_class_id]:
-        return 1
-    elif priority_table[other_class_id][main_class_id]:
-        return -1
-    else:
-        return 0
+    res = True
+    i = 0
+    while i < 4 and res:
+        res = res and (roi[i % 2] <= roi_to_test[i] <= roi[i % 2 + 2])
+        i += 1
+    return res
 
 
 def get_bbox_area(roi):
@@ -201,23 +176,6 @@ def shift_bbox(roi, customShift=None):
                          max(yMax - customShift[0], 0), max(xMax - customShift[1], 0)])
 
 
-def get_mask_area(mask, verbose=0):
-    """
-    Computes mask area
-    :param mask: the array representing the mask
-    :param verbose: 0 : nothing, 1+ : errors/problems
-    :return: the area of the mask and verbose output (None when nothing to print)
-    """
-    maskHistogram = div.getBWCount(mask)
-    display = None
-    if verbose > 0:
-        nbPx = mask.shape[0] * mask.shape[1]
-        tempSum = maskHistogram[0] + maskHistogram[1]
-        if tempSum != nbPx:
-            display = "Histogram pixels {} != total pixels {}".format(tempSum, nbPx)
-    return maskHistogram[1], display
-
-
 def expand_masks(mini_mask1, roi1, mini_mask2, roi2):
     """
     Expands two masks while keeping their relative position
@@ -235,488 +193,6 @@ def expand_masks(mini_mask1, roi1, mini_mask2, roi2):
     mask2 = expand_mask(shifted_roi2, mini_mask2, shifted_roi1And2[2:])
     return mask1, mask2
 
-
-def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None, displayProgress: str = None,
-               verbose=0):
-    """
-    Fuses overlapping masks of the same class
-    :param fused_results: the fused predictions results
-    :param bb_threshold: least part of bounding boxes overlapping to continue checking
-    :param mask_threshold: idem but with mask
-    :param config: the config to get mini_mask informations
-    :param displayProgress: if string given, prints a progress bar using this as prefix
-    :param verbose: 0 : nothing, 1+ : errors/problems, 2 : general information
-    :return: fused_results with only fused masks
-    """
-    rois = fused_results['rois']
-    masks = fused_results['masks']
-    scores = fused_results['scores']
-    class_ids = fused_results['class_ids']
-
-    bbAreas = np.ones(len(class_ids), dtype=int) * -1
-    maskAreas = np.ones(len(class_ids), dtype=int) * -1
-    fusedWith = np.ones(len(class_ids), dtype=int) * -1
-    maskCount = np.ones(len(class_ids), dtype=int)
-    toDelete = []
-    if displayProgress is not None:
-        total = combination(len(class_ids), 2)
-        current = 1
-        start_time = time()
-        duration = ""
-        progressBar(0, total, prefix=displayProgress)
-    for idxI, roi1 in enumerate(rois):
-        # Computation of the bounding box area if not done yet
-        if bbAreas[idxI] == -1:
-            bbAreas[idxI] = get_bbox_area(roi1)
-
-        for idxJ in range(idxI + 1, len(rois)):
-            if displayProgress is not None:
-                if current == total:
-                    duration = f" Duration = {formatTime(time() - start_time)}"
-                if current % 20 == 0 or current == total:
-                    progressBar(current, total, prefix=displayProgress, suffix=duration)
-                current += 1
-            '''###################################
-            ###     CHECKING BBOX OVERLAP      ###
-            ###################################'''
-            # If masks are not from the same class or have been fused with same mask, we skip them
-            if idxI == idxJ or class_ids[idxI] != class_ids[idxJ] \
-                    or (fusedWith[idxI] == fusedWith[idxJ] and fusedWith[idxI] != -1):
-                continue
-
-            hadPrinted = False
-            roi2 = rois[idxJ]
-
-            # Computation of the bounding box area if not done yet
-            if bbAreas[idxJ] == -1:
-                bbAreas[idxJ] = get_bbox_area(roi2)
-
-            # Computation of the bb intersection
-            bbIntersection = get_bboxes_intersection(roi1, roi2)
-
-            # We skip next part if bb intersection not representative enough
-            partOfRoI1 = bbIntersection / bbAreas[idxI]
-            partOfRoI2 = bbIntersection / bbAreas[idxJ]
-
-            '''###################################
-            ###     CHECKING MASK OVERLAP      ###
-            ###################################'''
-            if partOfRoI1 > bb_threshold or partOfRoI2 > bb_threshold:
-                if verbose > 1:
-                    hadPrinted = True
-                    print("[{:03d}/{:03d}] Enough RoI overlap".format(idxI, idxJ))
-
-                mask1 = masks[:, :, idxI]
-                mask2 = masks[:, :, idxJ]
-
-                if config is not None and config.USE_MINI_MASK:
-                    mask1, mask2 = expand_masks(mask1, roi1, mask2, roi2)
-
-                if maskAreas[idxI] == -1:
-                    maskAreas[idxI], verbose_output = get_mask_area(mask1, verbose=verbose)
-                    if verbose_output is not None:
-                        hadPrinted = True
-                        print("[{:03d}] {}".format(idxI, verbose_output))
-
-                if maskAreas[idxJ] == -1:
-                    maskAreas[idxJ], verbose_output = get_mask_area(mask2, verbose=verbose)
-                    if verbose_output is not None:
-                        hadPrinted = True
-                        print("[{:03d}] {}".format(idxJ, verbose_output))
-
-                # Computing intersection of mask 1 and 2 and computing its area
-                mask1AND2 = np.logical_and(mask1, mask2)
-                mask1AND2Area, _ = get_mask_area(mask1AND2, verbose=verbose)
-                partOfMask1 = mask1AND2Area / maskAreas[idxI]
-                partOfMask2 = mask1AND2Area / maskAreas[idxJ]
-
-                if verbose > 0:
-                    verbose_output = "[{:03d}] Intersection representing more than 100% of the mask : {:3.2f}%"
-                    if not (0 <= partOfMask1 <= 1):
-                        hadPrinted = True
-                        print(verbose_output.format(idxI, partOfMask1 * 100))
-
-                    if not (0 <= partOfMask2 <= 1):
-                        hadPrinted = True
-                        print(verbose_output.format(idxJ, partOfMask2 * 100))
-
-                    if verbose > 1:
-                        print("[OR] {:5.2f}% of mask [{:03d}]".format(partOfMask1 * 100, idxI))
-                        print("[OR] {:5.2f}% of mask [{:03d}]".format(partOfMask2 * 100, idxJ))
-
-                '''####################
-                ###     FUSION      ###
-                ####################'''
-                if partOfMask1 > mask_threshold or partOfMask2 > mask_threshold:
-                    # If the first mask has already been fused with another mask, we will fuse with the "parent" one
-                    if fusedWith[idxI] == fusedWith[idxJ] == -1:  # No mask fused
-                        receiver = idxI
-                        giver = idxJ
-                    elif fusedWith[idxI] != -1:  # I fused
-                        if fusedWith[idxJ] == -1:  # I fused, not J
-                            receiver = fusedWith[idxI]
-                            giver = idxJ
-                        else:  # I and J fused but not with each other (previous test)
-                            receiver = min(fusedWith[idxI], fusedWith[idxJ])
-                            giver = max(fusedWith[idxI], fusedWith[idxJ])
-                            for idx in range(len(fusedWith)):  # As giver will be deleted, we have to update the list
-                                if fusedWith[idx] == giver:
-                                    fusedWith[idx] = receiver
-                    else:  # J fused, not I (previous test)
-                        receiver = fusedWith[idxJ]
-                        giver = idxI
-
-                    fusedWith[giver] = receiver
-                    toDelete.append(giver)
-
-                    if verbose > 1:
-                        print("[{:03d}] Fusion with [{:03d}]".format(giver, receiver))
-
-                    receiverMask = masks[:, :, receiver]
-                    giverMask = masks[:, :, giver]
-                    if config is not None and config.USE_MINI_MASK:
-                        receiverRoI = rois[receiver]
-                        giverRoI = rois[giver]
-                        receiverMask, giverMask = expand_masks(receiverMask, receiverRoI, giverMask, giverRoI)
-                    fusedMask = np.logical_or(receiverMask, giverMask)
-
-                    if verbose > 1:
-                        verbose_output = "[{idReceiver:03d}] Receiver Mask {when} fusion:\n"
-                        verbose_output += "\tROI = {roi}\n"
-                        verbose_output += "\tROI area = {roiArea}\n"
-                        verbose_output += "\tMask area = {maskArea}\n"
-                        verbose_output += "\tScore = {score}\n"
-                        verbose_output += "\tMask count = {count}\n"
-                        print(verbose_output.format(when="before", idReceiver=receiver, roi=rois[receiver],
-                                                    roiArea=bbAreas[receiver], maskArea=maskAreas[receiver],
-                                                    score=scores[receiver], count=maskCount[receiver]))
-
-                    # Updating the receiver mask's infos
-                    rois[receiver] = global_bbox(rois[receiver], rois[giver])
-                    if config is not None and config.USE_MINI_MASK:
-                        shifted_fusedRoI = shift_bbox(rois[receiver])
-                        masks[:, :, receiver] = minimize_mask(shifted_fusedRoI, fusedMask, config.MINI_MASK_SHAPE)
-                    else:
-                        masks[:, :, receiver] = fusedMask
-                    bbAreas[receiver] = get_bbox_area(rois[receiver])
-                    maskAreas[receiver], _ = get_mask_area(fusedMask)
-                    scores[receiver] = (scores[receiver] * maskCount[receiver] + scores[idxJ])
-                    maskCount[receiver] += 1
-                    scores[receiver] /= maskCount[receiver]
-
-                    if verbose > 1:
-                        print(verbose_output.format(when="after", idReceiver=receiver, roi=rois[receiver],
-                                                    roiArea=bbAreas[receiver], maskArea=maskAreas[receiver],
-                                                    score=scores[receiver], count=maskCount[receiver]))
-
-                if verbose > 0 and hadPrinted:
-                    print(flush=True)
-    if displayProgress is not None and current <= total:
-        duration = f" Duration = {formatTime(time() - start_time)}"
-        progressBar(total, total, prefix=displayProgress, suffix=duration, forceNewLine=True)
-    # Deletion of unwanted results
-    scores = np.delete(scores, toDelete)
-    class_ids = np.delete(class_ids, toDelete)
-    bbAreas = np.delete(bbAreas, toDelete)
-    maskAreas = np.delete(maskAreas, toDelete)
-    masks = np.delete(masks, toDelete, axis=2)
-    rois = np.delete(rois, toDelete, axis=0)
-    return {"rois": rois, "bbox_areas": bbAreas, "class_ids": class_ids,
-            "scores": scores, "masks": masks, "mask_areas": maskAreas}
-
-
-def filter_fused_masks(fused_results, bb_threshold=0.5, mask_threshold=0.9, priority_table=None,
-                       config=None, displayProgress: str = None, verbose=0):
-    """
-    Post-prediction filtering to remove non-sense predictions
-    :param fused_results: the results after fusion
-    :param bb_threshold: the least part of overlapping bounding boxes to continue checking
-    :param mask_threshold: the least part of a mask contained in another for it to be deleted
-    :param priority_table: the priority table used to compare classes
-    :param config: the config to get mini_mask informations
-    :param displayProgress: if string given, prints a progress bar using this as prefix
-    :param verbose: 0 : nothing, 1+ : errors/problems, 2 : general information
-    :return:
-    """
-    rois = fused_results['rois']
-    masks = fused_results['masks']
-    scores = fused_results['scores']
-    class_ids = fused_results['class_ids']
-    bbAreas = fused_results['bbox_areas']
-    maskAreas = fused_results['mask_areas']
-    toDelete = []
-    if displayProgress is not None:
-        total = combination(len(class_ids), 2)
-        current = 1
-        start_time = time()
-        duration = ""
-        progressBar(0, total, prefix=displayProgress)
-    for i, roi1 in enumerate(rois):
-        # If this RoI has already been selected for deletion, we skip it
-        if i in toDelete:
-            continue
-
-        # If the area of this RoI has not been computed
-        if bbAreas[i] == -1:
-            bbAreas[i] = get_bbox_area(roi1)
-
-        # Then we check for each RoI that has not already been checked
-        for j in range(i + 1, len(rois)):
-            if displayProgress is not None:
-                if current == total:
-                    duration = f" Duration = {formatTime(time() - start_time)}"
-                if current % 20 == 0 or current == total:
-                    progressBar(current, total, prefix=displayProgress, suffix=duration)
-                current += 1
-            if j in toDelete:
-                continue
-            roi2 = rois[j]
-
-            # We want only one prediction class to be vessel
-            priority = comparePriority(class_ids[i] - 1, class_ids[j] - 1, priority_table)
-            if priority == 0:
-                continue
-
-            # If the area of the 2nd RoI has not been computed
-            if bbAreas[j] == -1:
-                bbAreas[j] = get_bbox_area(roi2)
-
-            # Computation of the bb intersection
-            intersection = get_bboxes_intersection(roi1, roi2)
-
-            # We skip next part if bb intersection not representative enough
-            partOfR1 = intersection / bbAreas[i]
-            partOfR2 = intersection / bbAreas[j]
-            if partOfR1 > bb_threshold or partOfR2 > bb_threshold:
-                # Getting first mask and computing its area if not done yet
-                mask1 = masks[:, :, i]
-                mask2 = masks[:, :, j]
-
-                if config is not None and config.USE_MINI_MASK:
-                    mask1, mask2 = expand_masks(mask1, roi1, mask2, roi2)
-
-                if maskAreas[i] == -1:
-                    maskAreas[i], _ = get_mask_area(mask1, verbose=verbose)
-                    if maskAreas[i] == 0:
-                        print(i, maskAreas[i])
-
-                # Getting second mask and computing its area if not done yet
-                if maskAreas[j] == -1:
-                    maskAreas[j], _ = get_mask_area(mask2, verbose=verbose)
-                    if maskAreas[j] == 0:
-                        print(j, maskAreas[j])
-
-                # Computing intersection of mask 1 and 2 and computing its area
-                mask1AND2 = np.logical_and(mask1, mask2)
-                mask1AND2Area, _ = get_mask_area(mask1AND2, verbose=verbose)
-                partOfMask1 = mask1AND2Area / maskAreas[i]
-                partOfMask2 = mask1AND2Area / maskAreas[j]
-
-                # We check if the common area represents more than the vessel_threshold of the non-vessel mask
-                if priority == -1 and partOfMask1 > mask_threshold:
-                    if verbose > 0:
-                        print("[{:03d}/{:03d}] Kept class = {}\tRemoved Class = {}".format(i, j, class_ids[i],
-                                                                                           class_ids[j]))
-                    toDelete.append(i)
-                elif priority == 1 and partOfMask2 > mask_threshold:
-                    if verbose > 0:
-                        print("[{:03d}/{:03d}] Kept class = {}\tRemoved Class = {}".format(i, j, class_ids[i],
-                                                                                           class_ids[j]))
-                    toDelete.append(j)
-    if displayProgress is not None and current <= total:
-        duration = f" Duration = {formatTime(time() - start_time)}"
-        progressBar(total, total, prefix=displayProgress, suffix=duration, forceNewLine=True)
-    # Deletion of unwanted results
-    scores = np.delete(scores, toDelete)
-    class_ids = np.delete(class_ids, toDelete)
-    bbAreas = np.delete(bbAreas, toDelete)
-    maskAreas = np.delete(maskAreas, toDelete)
-    masks = np.delete(masks, toDelete, axis=2)
-    rois = np.delete(rois, toDelete, axis=0)
-    return {"rois": rois, "bbox_areas": bbAreas, "class_ids": class_ids,
-            "scores": scores, "masks": masks, "mask_areas": maskAreas}
-
-
-def getCountAndArea(results: dict, classesInfo: dict, selectedClasses: [str], config=None):
-    """
-    Computing count and area of classes from results
-    :param results: the results
-    :param classesInfo: the dict with information about name, inference id, id... parameters of each class
-    :param selectedClasses: list of classes' names that you want to get statistics on
-    :return: Dict of "className": {"count": int, "area": int} elements for each classes
-    """
-    res = {}
-
-    rois = results['rois']
-    masks = results['masks']
-    class_ids = results['class_ids']
-
-    # Getting the inferenceIDs of the wanted classes
-    selectedClassesID = {}
-    for classInfo in classesInfo:
-        if classInfo["name"] in selectedClasses:
-            selectedClassesID[classInfo["inferenceID"]] = classInfo["name"]
-            res[classInfo["name"]] = {"count": 0, "area": 0}
-
-    # For each predictions, if class ID matching with one we want
-    for index, classID in enumerate(class_ids):
-        if classID in selectedClassesID.keys():
-            # Getting current values of count and area
-            className = selectedClassesID[classID]
-            res[className]["count"] += 1
-            # Getting the area of current mask
-            if config is not None and config.USE_MINI_MASK:
-                shifted_roi = shift_bbox(rois[index])
-                mask = expand_mask(shifted_roi, masks[:, :, index], shifted_roi[2:])
-            else:
-                yStart, xStart, yEnd, xEnd = rois[index]
-                mask = masks[yStart:yEnd, xStart:xEnd, index]
-            mask = mask.astype(np.uint8)
-            if "mask_areas" in results and results['mask_areas'][index] != -1:
-                area = int(results['mask_areas'][index])
-            else:
-                area, _ = get_mask_area(mask)
-            res[className]["area"] += area  # Cast to int to avoid "json 'int64' not serializable"
-
-    return res
-
-
-def getPoints(mask, xOffset=0, yOffset=0, epsilon=1,
-              show=False, waitSeconds=10, info=False):
-    """
-    Return a list of points describing the given mask as a polygon
-    :param mask: the mask you want the points
-    :param xOffset: if using a RoI the x-axis offset used
-    :param yOffset: if using a RoI the y-axis offset used
-    :param epsilon: epsilon parameter of cv2.approxPolyDP() method
-    :param show: whether you want or not to display the approximated mask so you can see it
-    :param waitSeconds: time in seconds to wait before closing automatically the displayed masks, or press ESC to close
-    :param info: whether you want to display some information (mask size, number of predicted points, number of
-    approximated points...) or not
-    :return: 2D-array of points coordinates : [[x, y]]
-    """
-    pts = None
-    contours, _ = cv2.findContours(mask, method=cv2.RETR_TREE, mode=cv2.CHAIN_APPROX_SIMPLE)
-
-    if len(contours) > 0:
-        # https://stackoverflow.com/questions/41879315/opencv-visualize-polygonal-curves-extracted-with-cv2-approxpolydp
-        # Finding biggest area
-        cnt = contours[0]
-        max_area = cv2.contourArea(cnt)
-
-        for cont in contours:
-            if cv2.contourArea(cont) > max_area:
-                cnt = cont
-                max_area = cv2.contourArea(cont)
-
-        res = cv2.approxPolyDP(cnt, epsilon, True)
-        pts = []
-        for point in res:
-            # Casting coordinates to int, not doing this makes crash json dump
-            pts.append([int(point[0][0] + xOffset), int(point[0][1] + yOffset)])
-
-        if info:
-            maskHeight, maskWidth = mask.shape
-            nbPtPred = contours[0].shape[0]
-            nbPtApprox = len(pts)
-            print("Mask size : {}x{}".format(maskWidth, maskHeight))
-            print("Nb points prediction : {}".format(nbPtPred))
-            print("Nb points approx : {}".format(nbPtApprox))
-            print("Compression rate : {:5.2f}%".format(nbPtPred / nbPtApprox * 100))
-            temp = np.array(pts)
-            xMin = np.amin(temp[:, 0])
-            xMax = np.amax(temp[:, 0])
-            yMin = np.amin(temp[:, 1])
-            yMax = np.amax(temp[:, 1])
-            print("{} <= X <= {}".format(xMin, xMax))
-            print("{} <= Y <= {}".format(yMin, yMax))
-            print()
-
-        if show:
-            img = np.zeros(mask.shape, np.int8)
-            img = cv2.drawContours(img, [res], -1, 255, 2)
-            cv2.imshow('before {}'.format(img.shape), mask * 255)
-            cv2.imshow("approxPoly", img * 255)
-            cv2.waitKey(max(waitSeconds, 1) * 1000)
-
-    return pts
-
-
-def export_annotations(image_info: dict, results: dict, classes_info: [{int, str, str}],
-                       adapter: AnnotationAdapter.__class__, save_path="predicted", config=None, verbose=0):
-    """
-    Exports predicted results to an XML annotation file using given XMLExporter
-    :param image_info: Dict with at least {"NAME": str, "HEIGHT": int, "WIDTH": int} about the inferred image
-    :param results: inference results of the image
-    :param classes_info: list of class names, including background
-    :param adapter: class inheriting XMLExporter
-    :param save_path: path to the dir you want to save the annotation file
-    :param config: the config to get mini_mask informations
-    :param verbose: verbose level of the method (0 = nothing, 1 = information)
-    :return: None
-    """
-    isASAPAdapter = adapter is ASAPAdapter
-    isLabelMeAdapter = adapter is LabelMeAdapter
-    assert not (isASAPAdapter and isLabelMeAdapter)
-
-    if verbose > 0:
-        if isASAPAdapter:
-            print("Exporting to ASAP annotation file format.")
-        if isLabelMeAdapter:
-            print("Exporting to LabelMe annotation file format.")
-
-    rois = results['rois']
-    masks = results['masks']
-    class_ids = results['class_ids']
-    height = masks.shape[0]
-    width = masks.shape[1]
-    xmlData = adapter({"name": image_info['NAME'], "height": image_info['HEIGHT'],
-                       'width': image_info['WIDTH'], 'format': image_info['IMAGE_FORMAT']},
-                      verbose=verbose)
-    # For each prediction
-    for i in range(masks.shape[2]):
-        if config is not None and config.USE_MINI_MASK:
-            shifted_roi = shift_bbox(rois[i])
-            shifted_roi += [5, 5, 5, 5]
-            image_size = shifted_roi[2:] + [5, 5]
-            mask = expand_mask(shifted_roi, masks[:, :, i], image_size)
-            yStart, xStart = rois[i][:2] - [5, 5]
-        else:
-            # Getting the RoI coordinates and the corresponding area
-            # y1, x1, y2, x2
-            yStart, xStart, yEnd, xEnd = rois[i]
-            yStart = max(yStart - 10, 0)
-            xStart = max(xStart - 10, 0)
-            yEnd = min(yEnd + 10, height)
-            xEnd = min(xEnd + 10, width)
-            mask = masks[yStart:yEnd, xStart:xEnd, i]
-
-        # Getting list of points coordinates and adding the prediction to XML
-        points = getPoints(np.uint8(mask), xOffset=xStart, yOffset=yStart, show=False, waitSeconds=0, info=False)
-        if points is None:
-            continue
-        classInfo = None
-        iterator = 0
-        # Find the first class not to be ignored with the same id
-        while classInfo is None:
-            temp = classes_info[iterator]
-            if not temp["ignore"] and temp["inferenceID"] == class_ids[i]:
-                classInfo = temp
-            iterator += 1
-        xmlData.addAnnotation(classInfo, points)
-
-    for classInfo in classes_info:
-        if classInfo["id"] == 0:
-            continue
-        xmlData.addAnnotationClass(classInfo)
-
-    os.makedirs(save_path, exist_ok=True)
-    xmlData.saveToFile(save_path, image_info['NAME'])
-
-
-############################################################
-#  Bounding Boxes
-############################################################
 
 def extract_bboxes(mask):
     """Compute bounding boxes from masks.
@@ -791,7 +267,7 @@ def compute_overlaps(boxes1, boxes2):
     return overlaps
 
 
-def compute_overlaps_masks(masks1, boxes1, masks2, boxes2, config=None):
+def compute_overlaps_masks(masks1, boxes1, masks2, boxes2):
     """Computes IoU overlaps between two sets of masks.
     masks1, masks2: [Height, Width, instances]
     """
@@ -808,22 +284,11 @@ def compute_overlaps_masks(masks1, boxes1, masks2, boxes2, config=None):
         mask1, mask2 = expand_masks(masks1[:, :, idMask1], boxes1[idMask1], masks2[:, :, idMask2], boxes2[idMask2])
         mask1Area, _ = get_mask_area(mask1)
         mask2Area, _ = get_mask_area(mask2)
-        mask1AND2 = np.logical_and(mask1, mask2)
-        intersection, _ = get_mask_area(mask1AND2)
-        union = mask1Area + mask2Area - intersection
-        res[idMask1, idMask2] = intersection / union
-    '''
-    # flatten masks and compute their areas
-    masks1 = np.reshape(masks1 > .5, (-1, masks1.shape[-1])).astype(np.float32)
-    masks2 = np.reshape(masks2 > .5, (-1, masks2.shape[-1])).astype(np.float32)
-    area1 = np.sum(masks1, axis=0)
-    area2 = np.sum(masks2, axis=0)
-
-    # intersections and union
-    intersections = np.dot(masks1.T, masks2)
-    union = area1[:, None] + area2[None, :] - intersections
-    overlaps = intersections / union
-    '''
+        if mask1Area != 0 and mask2Area != 0:
+            mask1AND2 = np.logical_and(mask1, mask2)
+            intersection, _ = get_mask_area(mask1AND2)
+            union = mask1Area + mask2Area - intersection
+            res[idMask1, idMask2] = intersection / union
     return res
 
 
@@ -907,8 +372,8 @@ def box_refinement_graph(box, gt_box):
 
     dy = (gt_center_y - center_y) / height
     dx = (gt_center_x - center_x) / width
-    dh = tf.log(gt_height / height)
-    dw = tf.log(gt_width / width)
+    dh = compat.log(gt_height / height)
+    dw = compat.log(gt_width / width)
 
     result = tf.stack([dy, dx, dh, dw], axis=1)
     return result
@@ -1379,10 +844,70 @@ def trim_zeros(x):
     return x[~np.all(x == 0, axis=1)]
 
 
+# def compute_matches(gt_boxes, gt_class_ids, gt_masks,
+#                     pred_boxes, pred_class_ids, pred_scores, pred_masks,
+#                     iou_threshold=0.5, score_threshold=0.0):
+#     """Finds matches between prediction and ground truth instances.
+#     Returns:
+#         gt_match: 1-D array. For each GT box it has the index of the matched
+#                   predicted box.
+#         pred_match: 1-D array. For each predicted box, it has the index of
+#                     the matched ground truth box.
+#         overlaps: [pred_boxes, gt_boxes] IoU overlaps.
+#     """
+#     # Trim zero padding
+#     # TODO: cleaner to do zero unpadding upstream
+#     gt_boxes = trim_zeros(gt_boxes)
+#     gt_masks = gt_masks[..., :gt_boxes.shape[0]]
+#     pred_boxes = trim_zeros(pred_boxes)
+#     pred_scores = pred_scores[:pred_boxes.shape[0]]
+#     # Sort predictions by score from high to low
+#     indices = np.argsort(pred_scores)[::-1]
+#     pred_boxes = pred_boxes[indices]
+#     pred_class_ids = pred_class_ids[indices]
+#     pred_scores = pred_scores[indices]
+#     pred_masks = pred_masks[..., indices]
+#
+#     # Compute IoU overlaps [pred_masks, gt_masks]
+#     overlaps = compute_overlaps_masks(pred_masks, gt_masks)
+#
+#     # Loop through predictions and find matching ground truth boxes
+#     match_count = 0
+#     pred_match = -1 * np.ones([pred_boxes.shape[0]])
+#     gt_match = -1 * np.ones([gt_boxes.shape[0]])
+#     for i in range(len(pred_boxes)):
+#         # Find best matching ground truth box
+#         # 1. Sort matches by score
+#         sorted_ixs = np.argsort(overlaps[i])[::-1]
+#         # 2. Remove low scores
+#         low_score_idx = np.where(overlaps[i, sorted_ixs] < score_threshold)[0]
+#         if low_score_idx.size > 0:
+#             sorted_ixs = sorted_ixs[:low_score_idx[0]]
+#         # 3. Find the match
+#         for j in sorted_ixs:
+#             # If ground truth box is already matched, go to next one
+#             if gt_match[j] > -1:
+#                 continue
+#             # If we reach IoU smaller than the threshold, end the loop (list is sorted so all the followings will be
+#             # smaller too)
+#             iou = overlaps[i, j]
+#             if iou < iou_threshold:
+#                 break
+#             # Do we have a match?
+#             if pred_class_ids[i] == gt_class_ids[j]:
+#                 match_count += 1
+#                 gt_match[j] = i
+#                 pred_match[i] = j
+#                 break
+#
+#     return gt_match, pred_match, overlaps
+
+
 def compute_matches(gt_boxes, gt_class_ids, gt_masks, pred_boxes,
                     pred_class_ids, pred_scores, pred_masks,
-                    iou_threshold=0.5, score_threshold=0.0, config=None,
-                    nb_class=-1, confusion_iou_threshold=0.1):
+                    ap_iou_threshold=0.5, min_iou_to_count=0.0,
+                    nb_class=-1, confusion_iou_threshold=0.1,
+                    classes_hierarchy=None, confusion_background_class=True, confusion_only_best_match=True):
     """Finds matches between prediction and ground truth instances.
 
     Returns:
@@ -1392,17 +917,20 @@ def compute_matches(gt_boxes, gt_class_ids, gt_masks, pred_boxes,
                     the matched ground truth box.
         overlaps: [pred_boxes, gt_boxes] IoU overlaps.
     """
-    # Trim zero padding
-    # TODO: cleaner to do zero unpadding upstream
-
     if nb_class > 0:
-        confusion_matrix = np.zeros((nb_class + 1, nb_class + 1), dtype=np.int32)
+        bg = 1 if confusion_background_class else 0
+        confusion_matrix = np.zeros((nb_class + bg, nb_class + bg), dtype=np.int32)
     else:
         confusion_matrix = None
+        confusion_iou_threshold = 1.
+
+    # Trim zero padding
+    # TODO: cleaner to do zero unpadding upstream
     gt_boxes = trim_zeros(gt_boxes)
     gt_masks = gt_masks[..., :gt_boxes.shape[0]]
     pred_boxes = trim_zeros(pred_boxes)
     pred_scores = pred_scores[:pred_boxes.shape[0]]
+
     # Sort predictions by score from high to low
     indices = np.argsort(pred_scores)[::-1]
     pred_boxes = pred_boxes[indices]
@@ -1411,61 +939,74 @@ def compute_matches(gt_boxes, gt_class_ids, gt_masks, pred_boxes,
     pred_masks = pred_masks[..., indices]
 
     # Compute IoU overlaps [pred_masks, gt_masks]
-    overlaps = compute_overlaps_masks(pred_masks, pred_boxes, gt_masks, gt_boxes, config=config)
+    overlaps = compute_overlaps_masks(pred_masks, pred_boxes, gt_masks, gt_boxes)
 
     # Loop through predictions and find matching ground truth boxes
-    match_count = 0
     pred_match = -1 * np.ones([pred_boxes.shape[0]])
     gt_match = -1 * np.ones([gt_boxes.shape[0]])
-    for i in range(len(pred_boxes)):
+    for pred_idx in range(len(pred_boxes)):
         # Find best matching ground truth box
         # 1. Sort matches by score
-        sorted_ixs = np.argsort(overlaps[i])[::-1]
+        sorted_ixs = np.argsort(overlaps[pred_idx])[::-1]
         # 2. Remove low scores
-        low_score_idx = np.where(overlaps[i, sorted_ixs] < score_threshold)[0]
+        low_score_idx = np.where(overlaps[pred_idx, sorted_ixs] < min_iou_to_count)[0]
         if low_score_idx.size > 0:
             sorted_ixs = sorted_ixs[:low_score_idx[0]]
         # 3. Find the match
-        nothing = True
-        done = False
-        for j in sorted_ixs:
-            # If we reach IoU smaller than the threshold, end the loop
-            iou = overlaps[i, j]
-            if confusion_matrix is not None and iou >= confusion_iou_threshold:
-                nothing = False
-                confusion_matrix[gt_class_ids[j]][pred_class_ids[i]] += 1
+        match = False
+        pred_class = pred_class_ids[pred_idx]
+        for gt_idx in sorted_ixs:
+            gt_class = gt_class_ids[gt_idx]
+            # If classes_hierarchy is provided and (gt_class, pred_class) are parent/child classes we skip
+            if classes_hierarchy is not None and \
+                    ((gt_class in classes_hierarchy and pred_class in classes_hierarchy[gt_class]) or
+                     (pred_class in classes_hierarchy and gt_class in classes_hierarchy[pred_class])):
+                continue
+            # If we reach IoU smaller than the threshold, end the loop (list is sorted so all the followings will be
+            # smaller too)
+            iou = overlaps[pred_idx, gt_idx]
+            breakAP = iou < ap_iou_threshold
+            breakConfusion = iou < confusion_iou_threshold
+            if breakAP and breakConfusion:
+                break
+
+            if not breakConfusion and confusion_matrix is not None and (not confusion_only_best_match or not match):
+                match = True
+                if confusion_background_class:
+                    confusion_matrix[gt_class][pred_class] += 1
+                else:
+                    confusion_matrix[gt_class - 1][pred_class - 1] += 1
 
             # If ground truth box is already matched, go to next one
             # TODO : Rework that part, specially for confusion matrix, we are counting positive predictions for each
             #        match with a gt_mask not only the first time
-            if not done and gt_match[j] > -1:
+            if gt_match[gt_idx] > -1:
                 continue
 
-            if iou >= iou_threshold:
+            if not breakAP:
                 # Do we have a match?
-                if pred_class_ids[i] == gt_class_ids[j]:
-                    match_count += 1
-                    gt_match[j] = i
-                    pred_match[i] = j
-                    done = True
+                if pred_class == gt_class:
+                    gt_match[gt_idx] = pred_idx
+                    pred_match[pred_idx] = gt_idx
         # Something has been predicted but no ground truth annotation
-        if confusion_matrix is not None and nothing:
-            confusion_matrix[0][pred_class_ids[i]] += 1
+        if confusion_matrix is not None and confusion_background_class and not match:
+            confusion_matrix[0][pred_class] += 1
     # Looking for a ground truth box without overlapping prediction
-    if confusion_matrix is not None:
-        for j in range(len(gt_match)):
-            if gt_match[j] == -1:
-                if gt_class_ids[j] > nb_class:
-                    print("Error : got class id = {} while max class id = {}".format(gt_class_ids[j], nb_class))
+    if confusion_matrix is not None and confusion_background_class:
+        for gt_idx in range(len(gt_match)):
+            if gt_match[gt_idx] == -1:
+                if gt_class_ids[gt_idx] > nb_class:
+                    print(f"Error : got class id = {gt_class_ids[gt_idx]} while max class id = {nb_class}")
                 else:
-                    confusion_matrix[gt_class_ids[j]][0] += 1
+                    confusion_matrix[gt_class_ids[gt_idx]][0] += 1
     return gt_match, pred_match, overlaps, confusion_matrix
 
 
 def compute_ap(gt_boxes, gt_class_ids, gt_masks,
                pred_boxes, pred_class_ids, pred_scores, pred_masks,
-               iou_threshold=0.5, config=None,
-               nb_class=-1, confusion_iou_threshold=0.1):
+               iou_threshold=0.5, score_threshold=0.3,
+               nb_class=-1, confusion_iou_threshold=0.3, classes_hierarchy=None,
+               confusion_background_class=True, confusion_only_best_match=True):
     """Compute Average Precision at a set IoU threshold (default 0.5).
 
     Returns:
@@ -1476,10 +1017,13 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
     """
     # Get matches and overlaps
     gt_match, pred_match, overlaps, confusion_matrix = compute_matches(
-        gt_boxes, gt_class_ids, gt_masks,
-        pred_boxes, pred_class_ids, pred_scores, pred_masks,
-        iou_threshold, config=config,
-        nb_class=nb_class, confusion_iou_threshold=confusion_iou_threshold)
+        gt_boxes=gt_boxes, gt_class_ids=gt_class_ids, gt_masks=gt_masks, min_iou_to_count=score_threshold,
+        pred_boxes=pred_boxes, pred_class_ids=pred_class_ids, pred_masks=pred_masks, pred_scores=pred_scores,
+        nb_class=nb_class, ap_iou_threshold=iou_threshold, confusion_iou_threshold=confusion_iou_threshold,
+        classes_hierarchy=classes_hierarchy, 
+        confusion_background_class=confusion_background_class, 
+        confusion_only_best_match=confusion_only_best_match
+    )
 
     # Compute precision and recall at each prediction box step
     precisions = np.cumsum(pred_match > -1) / (np.arange(len(pred_match)) + 1)
@@ -1518,12 +1062,11 @@ def compute_ap_range(gt_box, gt_class_id, gt_mask,
                        pred_box, pred_class_id, pred_score, pred_mask,
                        iou_threshold=iou_threshold)
         if verbose:
-            print("AP @{:.2f}:\t {:.3f}".format(iou_threshold, ap))
+            print(f"AP @{iou_threshold:.2f}:\t {ap:.3f}")
         AP.append(ap)
     AP = np.array(AP).mean()
     if verbose:
-        print("AP @{:.2f}-{:.2f}:\t {:.3f}".format(
-            iou_thresholds[0], iou_thresholds[-1], AP))
+        print(f"AP @{iou_thresholds[0]:.2f}-{iou_thresholds[-1]:.2f}:\t {AP:.3f}")
     return AP
 
 
