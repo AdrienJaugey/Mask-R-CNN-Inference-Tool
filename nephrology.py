@@ -41,7 +41,8 @@ def find_latest_weight(weight_path):
     """
     if "%LAST%" not in weight_path:
         return weight_path
-    folder = os.path.dirname(weight_path)
+    folder = os.path.dirname(os.path.abspath(weight_path))
+    folder = '.' if folder == "" else folder
     name = os.path.basename(weight_path)
     name_part1, name_part2 = name.split("%LAST%")
     regex = f"^{name_part1}([0-9]+){name_part2}$"
