@@ -337,6 +337,7 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
         start_time = time()
         duration = ""
 
+    toDelete = []
     # For each set of class, selecting the indices that corresponds
     for progressOffset, current_classes in enumerate(classes_compatibility):
         if type(current_classes) is int:
@@ -344,11 +345,11 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
         else:
             _current_classes = current_classes
         current_indices = indices[np.isin(class_ids, _current_classes)]
-        toDelete = []
-        stepTotal = combination(len(current_indices), 2)
-        displayStep = max(round(total / 200), 1)
-        current = 1
-        progressBar(progressOffset, total, prefix=displayProgress)
+        if displayProgress is not None:
+            stepTotal = combination(len(current_indices), 2)
+            displayStep = max(round(total / 200), 1)
+            current = 1
+            progressBar(progressOffset, total, prefix=displayProgress)
         for current_idx, idxI in enumerate(current_indices):
             roi1 = rois[idxI]
             # Computation of the bounding box area if not done yet
@@ -508,12 +509,12 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
             duration = f" Duration = {formatTime(round(time() - start_time))}"
             progressBar(1, 1, prefix=displayProgress, suffix=duration, forceNewLine=True)
         # Deletion of unwanted results
-        scores = np.delete(scores, toDelete)
-        class_ids = np.delete(class_ids, toDelete)
-        bbAreas = np.delete(bbAreas, toDelete)
-        maskAreas = np.delete(maskAreas, toDelete)
-        masks = np.delete(masks, toDelete, axis=2)
-        rois = np.delete(rois, toDelete, axis=0)
+    scores = np.delete(scores, toDelete)
+    class_ids = np.delete(class_ids, toDelete)
+    bbAreas = np.delete(bbAreas, toDelete)
+    maskAreas = np.delete(maskAreas, toDelete)
+    masks = np.delete(masks, toDelete, axis=2)
+    rois = np.delete(rois, toDelete, axis=0)
     return {"rois": rois, "bbox_areas": bbAreas, "class_ids": class_ids,
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
@@ -816,8 +817,8 @@ def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_h
                     except ValueError:
                         if verbose > 1:
                             print(f"\nTried to remove a parent mask ({parentId}) from the deletion list that not in it.")
-
-        current += 1
+        if displayProgress is not None:
+            current += 1
         if verbose > 1:
             classes = []
             for id_ in toDeleteClass:
