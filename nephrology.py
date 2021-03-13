@@ -2,17 +2,16 @@ import json
 import os
 import re
 import traceback
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import shutil
 import sys
 import warnings
 
-from common_utils import progressBar, formatTime, formatDate, progressText
-from datasetTools.datasetDivider import CV2_IMWRITE_PARAM
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+    from common_utils import progressBar, formatTime, formatDate, progressText
+    from datasetTools.datasetDivider import CV2_IMWRITE_PARAM
     import time
     import numpy as np
     import cv2
@@ -295,7 +294,7 @@ class NephrologyInferenceModel:
                   filter_bb_threshold=0.5, filter_mask_threshold=0.9,
                   priority_table=None, nbMaxDivPerAxis=3, fusionDivThreshold=0.1,
                   displayOnlyAP=False, savePreFusionImage=False, savePreFilterImage=False,
-                  allowSparse=True, minMaskArea=300):
+                  allowSparse=True, minMaskArea=300, on_border_threshold=0.25):
 
         if len(images) == 0:
             print("Images list is empty, no inference to perform.")
@@ -312,6 +311,7 @@ class NephrologyInferenceModel:
         self.__APs.clear()
         cmap = plt.cm.get_cmap('hot')
         total_start_time = time()
+        failedImages = []
         for i, IMAGE_PATH in enumerate(images):
             try:
                 # Last step of full image inference
@@ -536,6 +536,18 @@ class NephrologyInferenceModel:
                         if not self.__CORTEX_MODE and len(self.__CUSTOM_CLASS_NAMES) == 10:
                             if savePreFilterImage:
                                 debugIterator += 1
+                                self.save_debug_image("pre border filter", debugIterator, fullImage, imageInfo, res,
+                                                      image_results_path,
+                                                      silent=displayOnlyAP)
+                            step = "removing border masks"
+                            progressBarPrefix = " - Removing border masks " if not displayOnlyAP else None
+                            classes_to_check = [7, 8, 9, 10]
+                            res = pp.filter_on_border_masks(res, image, onBorderThreshold=on_border_threshold,
+                                                            classes=classes_to_check, config=self.__CONFIG,
+                                                            displayProgress=progressBarPrefix, verbose=0)
+
+                            if savePreFilterImage:
+                                debugIterator += 1
                                 self.save_debug_image("pre orphan filter", debugIterator, fullImage, imageInfo, res,
                                                       image_results_path,
                                                       silent=displayOnlyAP)
@@ -677,7 +689,6 @@ class NephrologyInferenceModel:
                             if not displayOnlyAP:
                                 print(" - Cleaning full resolution image")
                             allCortices = None
-                            allMedulla = None
                             # Gathering every cortex masks into one
                             for idxMask, classMask in enumerate(res['class_ids']):
                                 if classMask == 1:
@@ -685,19 +696,9 @@ class NephrologyInferenceModel:
                                         allCortices = res['masks'][:, :, idxMask].copy() * 255
                                     else:  # Additional masks found
                                         allCortices = cv2.bitwise_or(allCortices, res['masks'][:, :, idxMask] * 255)
-                                elif classMask == 2:
-                                    if allMedulla is None:
-                                        allMedulla = res['masks'][:, :, idxMask].copy() * 255
-                                    else:
-                                        allMedulla = cv2.bitwise_or(allMedulla, res['masks'][:, :, idxMask] * 255)
 
                             # To avoid cleaning an image without cortex
                             if allCortices is not None:
-                                # If Medulla mask found, we clean the cortex with those
-                                if allMedulla is not None:
-                                    allMedulla = cv2.bitwise_not(allMedulla.astype(np.uint8))
-                                    allCortices = cv2.bitwise_and(allCortices.astype(np.uint8), allMedulla)
-
                                 # Extracting the new Bbox
                                 allCorticesROI = utils.extract_bboxes(allCortices)
 
@@ -829,7 +830,8 @@ class NephrologyInferenceModel:
                             results_log.write(f"{imageInfo['NAME']}; {final_time}; {apText}%;\n")
                     plt.close('all')
             except Exception as e:
-                traceback.print_tb(e.__traceback__)
+                traceback.print_exception(type(e), e, e.__traceback__)
+                failedImages.append(imageInfo['NAME'])
                 print(f"/!\\ Failed {IMAGE_PATH} at \"{step}\"\n")
                 if save_results and step not in ["image preparation", "finalizing"]:
                     apText = ""
@@ -838,6 +840,16 @@ class NephrologyInferenceModel:
                     final_time = round(time() - start_time)
                     with open(logsPath, 'a') as results_log:
                         results_log.write(f"{imageInfo['NAME']}; {final_time}; {apText};FAILED ({step});\n")
+        # Saving failed images list if not empty
+        if len(failedImages) > 0:
+            try:
+                with open(os.path.join(results_path, "failed.json"), 'w') as failedJsonFile:
+                    json.dump(failedImages, failedJsonFile, indent="\t")
+            except Exception as e:
+                traceback.print_exception(type(e), e, e.__traceback__)
+                print("Failed to save failed image(s) list. Following is the list itself :")
+                print(failedImages)
+
         if len(self.__APs) > 1:
             mAP = np.mean(self.__APs)
             print(f"Mean Average Precision is about {mAP:06.2%}")

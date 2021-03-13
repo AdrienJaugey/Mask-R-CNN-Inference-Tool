@@ -914,6 +914,103 @@ def filter_small_masks(fused_results, min_size=300, classes=None, config=None, d
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
+def compute_on_border_part(image, mask):
+    """
+    Return part of mask not being on image as a float
+    :param image: the RGB image on which the mask is applied
+    :param mask: the mask to test with the same shape as image
+    :return: part of the mask not being on the image as float
+    """
+    maskArea = dD.getBWCount(mask)[1]
+    if maskArea == 0:   # If no mask
+        return 1.
+    # Converting the image to grayscale as it is needed by cv2.countNonZero() and avoiding computing on 3 channels
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    masked_image = cv2.bitwise_and(image, mask.astype(np.uint8) * 255)
+    # Computing part of the mask that is not black pixels
+    on_image_area = cv2.countNonZero(masked_image)
+    return round(1. - on_image_area / maskArea, 2)
+
+
+def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes=None, config=None,
+                           displayProgress: str = None, verbose=0):
+    """
+    Post-prediction filtering to remove masks that are too small
+    :param fused_results: the results after fusion
+    :param image: the image to check if the mask is on the border or not
+    :param onBorderThreshold: the least part of a mask to be on the border/void (#000000 color) part of the image for it
+                              to be deleted
+    :param classes: list of classes ids to check, if None, all classes will be checked
+    :param config: the config to get mini_mask informations
+    :param displayProgress: if string given, prints a progress bar using this as prefix
+    :param verbose: 0 : nothing, 1+ : errors/problems, 2 : general information
+    :return:
+    """
+    rois = fused_results['rois']
+    masks = fused_results['masks']
+    scores = fused_results['scores']
+    class_ids = fused_results['class_ids']
+    indices = np.arange(len(class_ids))
+
+    if 'bbox_areas' in fused_results:
+        bbAreas = fused_results['bbox_areas']
+    else:
+        bbAreas = np.ones(len(class_ids), dtype=int) * -1
+    if 'mask_areas' in fused_results:
+        maskAreas = fused_results['mask_areas']
+    else:
+        maskAreas = np.ones(len(class_ids), dtype=int) * -1
+
+    if classes is not None:
+        if type(classes) is int:
+            _classes = [classes]
+        else:
+            _classes = classes
+        indices = indices[np.isin(class_ids, _classes)]
+
+    toDelete = []
+    if displayProgress is not None:
+        total = len(indices)
+        displayStep = max(round(total / 200), 1)
+        start_time = time()
+        duration = ""
+        progressBar(0, total, prefix=displayProgress)
+
+    for idx in indices:
+        roi = rois[idx]
+
+        if config is not None and config.USE_MINI_MASK:
+            shifted_roi = shift_bbox(roi)
+            mask = expand_mask(shifted_roi, masks[:, :, idx], shifted_roi[2:])
+        else:
+            mask = masks[roi[0]:roi[2], roi[1]:roi[3], idx]
+
+        imagePart = image[roi[0]:roi[2], roi[1]:roi[3], :]
+
+        if maskAreas[idx] == -1:
+            maskAreas[idx], _ = get_mask_area(mask, verbose=verbose)
+
+        if compute_on_border_part(imagePart, mask) > onBorderThreshold:
+            toDelete.append(idx)
+
+        if displayProgress is not None:
+            _idx = idx + 1
+            if _idx == total:
+                duration = f" Duration = {formatTime(round(time() - start_time))}"
+            if idx % displayStep == 0 or _idx == total:
+                progressBar(_idx, total, prefix=displayProgress, suffix=duration)
+
+    # Deletion of unwanted results
+    scores = np.delete(scores, toDelete)
+    class_ids = np.delete(class_ids, toDelete)
+    bbAreas = np.delete(bbAreas, toDelete)
+    maskAreas = np.delete(maskAreas, toDelete)
+    masks = np.delete(masks, toDelete, axis=2)
+    rois = np.delete(rois, toDelete, axis=0)
+    return {"rois": rois, "bbox_areas": bbAreas, "class_ids": class_ids,
+            "scores": scores, "masks": masks, "mask_areas": maskAreas}
+
+
 def getCountAndArea(results: dict, classesInfo: dict, selectedClasses: [str], config=None):
     """
     Computing count and area of classes from results
