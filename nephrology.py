@@ -6,7 +6,6 @@ import shutil
 import sys
 import warnings
 
-
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -168,80 +167,89 @@ class NephrologyInferenceModel:
         imageInfo = None
         image_results_path = None
         if os.path.exists(imagePath):
-            image_file_name = os.path.basename(imagePath)
-            dirPath = os.path.dirname(imagePath)
-            image_name = image_file_name.split('.')[0]
-            image_extension = image_file_name.split('.')[-1]
+            imageInfo = {
+                'PATH': imagePath,
+                'DIR_PATH': os.path.dirname(imagePath),
+                'FILE_NAME': os.path.basename(imagePath)
+            }
+            imageInfo['NAME'] = imageInfo['FILE_NAME'].split('.')[0]
+            imageInfo['IMAGE_FORMAT'] = imageInfo['FILE_NAME'].split('.')[-1]
 
             # Reading input image in RGB color order
-            fullImage = cv2.imread(imagePath)
-            fullImage = cv2.cvtColor(fullImage, cv2.COLOR_BGR2RGB)
-            height, width, _ = fullImage.shape
-            height = int(height)
-            width = int(width)
-            cortexArea = height * width
-
             if self.__CORTEX_MODE:  # If in cortex mode, resize image to lower resolution
-                fullResImage = fullImage
-                fullImage = cv2.resize(fullResImage, self.__CORTEX_SIZE)
+                imageInfo['FULL_RES_IMAGE'] = cv2.cvtColor(cv2.imread(imagePath), cv2.COLOR_BGR2RGB)
+                height, width, _ = imageInfo['FULL_RES_IMAGE'].shape
+                fullImage = cv2.resize(imageInfo['FULL_RES_IMAGE'], self.__CORTEX_SIZE)
+            else:
+                fullImage = cv2.cvtColor(cv2.imread(imagePath), cv2.COLOR_BGR2RGB)
+                height, width, _ = fullImage.shape
             image = fullImage.copy()
+            imageInfo['HEIGHT'] = int(height)
+            imageInfo['WIDTH'] = int(width)
+            imageInfo['CORTEX_AREA'] = height * width
 
             # Conversion of the image if format is not png or jpg
-            if image_extension not in ["png", "jpg"]:
-                image_extension = "jpg"
-                tempPath = os.path.join(dirPath, f"{image_name}.{image_extension}")
+            if imageInfo['IMAGE_FORMAT'] not in ['png', 'jpg']:
+                imageInfo['IMAGE_FORMAT'] = 'jpg'
+                tempPath = os.path.join(imageInfo['PATH'], f"{imageInfo['NAME']}.{imageInfo['IMAGE_FORMAT']}")
                 imsave(tempPath, fullImage)
-                imagePath = tempPath
+                imageInfo['PATH'] = tempPath
 
             # Creating the result dir if given and copying the base image in it
             if results_path is not None:
-                results_path = os.path.normpath(results_path)
-                image_results_path = os.path.join(results_path, image_name)
+                image_results_path = os.path.join(os.path.normpath(results_path), imageInfo['NAME'])
                 os.makedirs(image_results_path, exist_ok=True)
-                fullImagePath = os.path.join(image_results_path, f"{image_name}.{image_extension}")
+                fullImagePath = os.path.join(image_results_path, f"{imageInfo['NAME']}.{imageInfo['IMAGE_FORMAT']}")
                 imsave(fullImagePath, fullImage)
             else:
                 image_results_path = None
 
             # Computing divisions coordinates if needed and total number of div
             if self.__DIVISION_SIZE == "noDiv":
-                xStarts = yStarts = [0]
+                imageInfo['X_STARTS'] = imageInfo['Y_STARTS'] = [0]
             else:
-                xStarts = dD.computeStartsOfInterval(maxVal=self.__CORTEX_SIZE[0] if self.__CORTEX_MODE else width,
-                                                     intervalLength=self.__DIVISION_SIZE,
-                                                     min_overlap_part=self.__MIN_OVERLAP_PART)
-                yStarts = dD.computeStartsOfInterval(maxVal=self.__CORTEX_SIZE[1] if self.__CORTEX_MODE else height,
-                                                     intervalLength=self.__DIVISION_SIZE,
-                                                     min_overlap_part=self.__MIN_OVERLAP_PART)
-            nbDiv = dD.getDivisionsCount(xStarts, yStarts)
+                imageInfo['X_STARTS'] = dD.computeStartsOfInterval(
+                    maxVal=self.__CORTEX_SIZE[0] if self.__CORTEX_MODE else width,
+                    intervalLength=self.__DIVISION_SIZE,
+                    min_overlap_part=self.__MIN_OVERLAP_PART
+                )
+                imageInfo['Y_STARTS'] = dD.computeStartsOfInterval(
+                    maxVal=self.__CORTEX_SIZE[1] if self.__CORTEX_MODE else height,
+                    intervalLength=self.__DIVISION_SIZE,
+                    min_overlap_part=self.__MIN_OVERLAP_PART
+                )
+            imageInfo['NB_DIV'] = dD.getDivisionsCount(imageInfo['X_STARTS'], imageInfo['Y_STARTS'])
 
             # If annotations found, create masks and clean image if possible
             annotationExists = False
-            has_annotation = False
+            imageInfo['HAS_ANNOTATION'] = False
             for ext in AnnotationAdapter.ANNOTATION_FORMAT:
-                annotationExists = annotationExists or os.path.exists(os.path.join(dirPath, image_name + '.' + ext))
+                annotationExists = annotationExists or os.path.exists(os.path.join(imageInfo['DIR_PATH'],
+                                                                                   imageInfo['NAME'] + '.' + ext))
             if annotationExists:
                 if not silent:
                     print(" - Annotation file found: creating dataset files and cleaning image if possible")
-                dW.createMasksOfImage(dirPath, image_name, 'data', classesInfo=self.__CLASSES_INFO,
-                                      imageFormat=image_extension, resize=self.__CORTEX_SIZE, config=self.__CONFIG)
+                dW.createMasksOfImage(imageInfo['DIR_PATH'], imageInfo['NAME'], 'data', classesInfo=self.__CLASSES_INFO,
+                                      imageFormat=imageInfo['IMAGE_FORMAT'], resize=self.__CORTEX_SIZE,
+                                      config=self.__CONFIG)
                 if not self.__CORTEX_MODE:
-                    dW.fuseCortices('data', image_name, imageFormat=image_extension, deleteBaseMasks=True, silent=True)
-                    dW.cleanImage('data', image_name, onlyMasks=False)
-                maskDirs = os.listdir(os.path.join('data', image_name))
+                    dW.fuseCortices('data', imageInfo['NAME'], imageFormat=imageInfo['IMAGE_FORMAT'],
+                                    deleteBaseMasks=True, silent=True)
+                    dW.cleanImage('data', imageInfo['NAME'], onlyMasks=False)
+                maskDirs = os.listdir(os.path.join('data', imageInfo['NAME']))
                 if not self.__CORTEX_MODE:
                     if "cortex" in maskDirs:
-                        cortexDirPath = os.path.join('data', image_name, 'cortex')
+                        cortexDirPath = os.path.join('data', imageInfo['NAME'], 'cortex')
                         cortexImageFilePath = os.listdir(cortexDirPath)[0]
                         cortex = dW.loadSameResImage(os.path.join(cortexDirPath, cortexImageFilePath), fullImage.shape)
-                        cortexArea = dD.getBWCount(cortex)[1]
+                        imageInfo['CORTEX_AREA'] = dD.getBWCount(cortex)[1]
+                        del cortex
                     # If full_images directory exists it means than image has been cleaned so we have to get it another
                     # time
                     if 'full_images' in maskDirs:
-                        imagesDirPath = os.path.join('data', image_name, 'images')
+                        imagesDirPath = os.path.join('data', imageInfo['NAME'], 'images')
                         imageFilePath = os.listdir(imagesDirPath)[0]
-                        image = cv2.imread(os.path.join(imagesDirPath, imageFilePath))
-                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                        image = cv2.cvtColor(cv2.imread(os.path.join(imagesDirPath, imageFilePath)), cv2.COLOR_BGR2RGB)
 
                 # We want to know if image has annotation, if we don't want to detect cortex and this mask exist
                 # as we need it to clean the image, we remove it from the mask list before checking if a class
@@ -250,27 +258,11 @@ class NephrologyInferenceModel:
                     maskDirs.remove("cortex")
                 for classToPredict in self.__CUSTOM_CLASS_NAMES:
                     if classToPredict in maskDirs:
-                        has_annotation = True
+                        imageInfo['HAS_ANNOTATION'] = True
                         break
-                if has_annotation and not silent:
+                if imageInfo['HAS_ANNOTATION'] and not silent:
                     print("    - AP and confusion matrix will be computed")
 
-            imageInfo = {
-                "PATH": imagePath,
-                "DIR_PATH": dirPath,
-                "FILE_NAME": image_file_name,
-                "IMAGE_FORMAT": image_extension,
-                "NAME": image_name,
-                "HEIGHT": height,
-                "WIDTH": width,
-                "NB_DIV": nbDiv,
-                "X_STARTS": xStarts,
-                "Y_STARTS": yStarts,
-                "HAS_ANNOTATION": has_annotation,
-                "CORTEX_AREA": cortexArea
-            }
-            if self.__CORTEX_MODE:
-                imageInfo['FULL_RES_IMAGE'] = fullResImage
         return image, fullImage, imageInfo, image_results_path
 
     def init_results_dir(self, results_path):
@@ -365,6 +357,7 @@ class NephrologyInferenceModel:
                               'w') as globalStatsFile:
                         globalStats["cortex"] = {"count": 1, "area": fusionInfo["cortex_area"]}
                         json.dump(globalStats, globalStatsFile, indent="\t")
+                    del cleanedImage
                     print("Done\n")
                 else:
                     start_time = time()
@@ -497,22 +490,22 @@ class NephrologyInferenceModel:
                         if colorPx / total_px > 0.1:
                             step = f"{divId} div inference"
                             results = self.__MODEL.detect([division])
-                            results = results[0]
-                            results["div_id"] = divId
+                            results[0]["div_id"] = divId
                             if self.__CONFIG.USE_MINI_MASK:
-                                res.append(utils.reduce_memory(results, config=self.__CONFIG, allow_sparse=allowSparse))
+                                res.append(utils.reduce_memory(results[0], config=self.__CONFIG, allow_sparse=allowSparse))
                             else:
-                                res.append(results)
+                                res.append(results[0])
+                            del results
                         elif not displayOnlyAP:
                             skipped += 1
                             skippedText = f" ({skipped} empty division{'s' if skipped > 1 else ''} skipped)"
+                        del division, grayDivision
                         if not displayOnlyAP:
                             if divId + 1 == imageInfo["NB_DIV"]:
                                 inference_duration = round(time() - inference_start_time)
                                 skippedText += f" Duration = {formatTime(inference_duration)}"
                             progressBar(divId + 1, imageInfo["NB_DIV"], prefix=' - Inference ', suffix=skippedText)
-                    if len(res) > 0:
-                        del results
+
                     # Post-processing of the predictions
                     if not displayOnlyAP:
                         print(" - Fusing results of all divisions")
@@ -523,7 +516,8 @@ class NephrologyInferenceModel:
 
                     if savePreFusionImage:
                         debugIterator += 1
-                        self.save_debug_image("pre fusion", debugIterator, fullImage, imageInfo, res, image_results_path,
+                        self.save_debug_image("pre fusion", debugIterator, fullImage, imageInfo, res,
+                                              image_results_path,
                                               silent=displayOnlyAP)
 
                     with warnings.catch_warnings():
@@ -566,7 +560,8 @@ class NephrologyInferenceModel:
                                                          verbose=0)
                         if savePreFilterImage:
                             debugIterator += 1
-                            self.save_debug_image("pre filter", debugIterator, fullImage, imageInfo, res, image_results_path,
+                            self.save_debug_image("pre filter", debugIterator, fullImage, imageInfo, res,
+                                                  image_results_path,
                                                   silent=displayOnlyAP)
 
                         step = "filtering masks"
@@ -579,7 +574,8 @@ class NephrologyInferenceModel:
                         if not self.__CORTEX_MODE and len(self.__CUSTOM_CLASS_NAMES) == 10:
                             if savePreFilterImage:
                                 debugIterator += 1
-                                self.save_debug_image("pre orphan filter (Pass 2)", debugIterator, fullImage, imageInfo, res,
+                                self.save_debug_image("pre orphan filter (Pass 2)", debugIterator, fullImage, imageInfo,
+                                                      res,
                                                       image_results_path,
                                                       silent=displayOnlyAP)
                                 # TODO : Build automatically classes_hierarchy
@@ -611,7 +607,8 @@ class NephrologyInferenceModel:
                                                 displayProgress=progressBarPrefix, verbose=0)
                             if savePreFilterImage:
                                 debugIterator += 1
-                                self.save_debug_image("pre small masks removal", debugIterator, fullImage, imageInfo, res,
+                                self.save_debug_image("pre small masks removal", debugIterator, fullImage, imageInfo,
+                                                      res,
                                                       image_results_path,
                                                       silent=displayOnlyAP)
                             step = "removing small masks"
@@ -661,6 +658,7 @@ class NephrologyInferenceModel:
                                                                    title=name2,
                                                                    cmap=cmap, show=False, normalize=True,
                                                                    fileName=confusionMatrixFileName2)
+                                del dataset_val, gt_mask, gt_bbox, gt_class_id
 
                     if not self.__CORTEX_MODE:
                         step = "computing statistics"
@@ -828,10 +826,11 @@ class NephrologyInferenceModel:
                         with open(logsPath, 'a') as results_log:
                             apText = f"{AP:4.3f}".replace(".", ",")
                             results_log.write(f"{imageInfo['NAME']}; {final_time}; {apText}%;\n")
+                    del res, imageInfo, image, fullImage
                     plt.close('all')
             except Exception as e:
                 traceback.print_exception(type(e), e, e.__traceback__)
-                failedImages.append(imageInfo['NAME'])
+                failedImages.append(os.path.basename(IMAGE_PATH))
                 print(f"/!\\ Failed {IMAGE_PATH} at \"{step}\"\n")
                 if save_results and step not in ["image preparation", "finalizing"]:
                     apText = ""
@@ -865,6 +864,7 @@ class NephrologyInferenceModel:
                                                                       .replace(')', '')
                                                                       .replace(' ', '_'))
                                                          if save_results else None))
+            plt.close('all')
         else:
             mAP = -1
         total_time = round(time() - total_start_time)

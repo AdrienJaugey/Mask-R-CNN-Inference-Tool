@@ -976,7 +976,7 @@ def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes
         duration = ""
         progressBar(0, total, prefix=displayProgress)
 
-    for idx in indices:
+    for iterator, idx in enumerate(indices):
         roi = rois[idx]
 
         if config is not None and config.USE_MINI_MASK:
@@ -994,11 +994,11 @@ def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes
             toDelete.append(idx)
 
         if displayProgress is not None:
-            _idx = idx + 1
-            if _idx == total:
+            iterator = iterator + 1
+            if iterator == total:
                 duration = f" Duration = {formatTime(round(time() - start_time))}"
-            if idx % displayStep == 0 or _idx == total:
-                progressBar(_idx, total, prefix=displayProgress, suffix=duration)
+            if idx % displayStep == 0 or iterator == total:
+                progressBar(iterator, total, prefix=displayProgress, suffix=duration)
 
     # Deletion of unwanted results
     scores = np.delete(scores, toDelete)
@@ -1194,6 +1194,7 @@ class PostProcessingMethod(Enum):
     MASK_FILTER = "filter"
     ORPHAN_FILTER = "orphan_filter"
     SMALL_FILTER = "small_filter"
+    BORDER_FILTER = "border_filter"
     GET_STATS = "statistics"
     EXPORT_ANNOTATIONS = "export_as_annotations"
 
@@ -1203,6 +1204,7 @@ class PostProcessingMethod(Enum):
             PostProcessingMethod.MASK_FILTER.name: filter_masks,
             PostProcessingMethod.ORPHAN_FILTER.name: filter_orphan_masks,
             PostProcessingMethod.SMALL_FILTER.name: filter_small_masks,
+            PostProcessingMethod.BORDER_FILTER.name: filter_on_border_masks,
             PostProcessingMethod.GET_STATS.name: getCountAndArea,
             PostProcessingMethod.EXPORT_ANNOTATIONS.name: export_annotations
         }

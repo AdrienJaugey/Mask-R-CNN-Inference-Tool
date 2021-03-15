@@ -182,6 +182,8 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
         fig.savefig(fileName + ".png")
     if show:
         plt.show()
+    fig.clf()
+    del ax, fig
 
 
 def display_instances(image, boxes, masks, class_ids, class_names,
@@ -211,7 +213,9 @@ def display_instances(image, boxes, masks, class_ids, class_names,
 
     # If no axis is passed, create one and automatically call show()
     auto_show = False
-    if not ax:
+    ownFig = False
+    if ax is None or fig is None:
+        ownFig = True
         fig, ax = plt.subplots(1, figsize=figsize)
         auto_show = not silent
 
@@ -289,6 +293,9 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             cv2.imwrite(f"{fileName}_clean.{image_format}", BGR_img, CV2_IMWRITE_PARAM)
     if auto_show:
         plt.show()
+    fig.clf()
+    if ownFig:
+        del ax, fig
     return masked_image
 
 
