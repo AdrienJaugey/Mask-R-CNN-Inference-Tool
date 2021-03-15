@@ -86,7 +86,8 @@ def apply_mask(image, mask, color, alpha=0.5, bbox=None):
         _mask = mask
     for c in range(3):
         image[y1:y2, x1:x2, c] = np.where(_mask > 0,
-                                          image[y1:y2, x1:x2, c] * (1 - alpha) + alpha * color[c] * 255,
+                                          (image[y1:y2, x1:x2, c].astype(np.uint32) *
+                                           (1 - alpha) + alpha * color[c] * 255).astype(np.uint8),
                                           image[y1:y2, x1:x2, c])
     return image
 
@@ -230,7 +231,8 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     ax.axis('off')
     ax.set_title(title)
 
-    masked_image = image.astype(np.uint32).copy()
+    masked_image = image.copy()
+    # masked_image = image.astype(np.uint32).copy()
     for i in range(N):
         if colorPerClass:
             color = colors[class_ids[i] - 1]
@@ -283,7 +285,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             verts = np.fliplr(verts) - 1
             p = Polygon(verts, facecolor="none", edgecolor=color)
             ax.add_patch(p)
-    masked_image = masked_image.astype(np.uint8)
+    # masked_image = masked_image.astype(np.uint8)
     ax.imshow(masked_image)
     fig.tight_layout()
     if fileName is not None:

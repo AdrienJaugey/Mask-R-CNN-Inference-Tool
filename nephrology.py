@@ -176,10 +176,12 @@ class NephrologyInferenceModel:
             imageInfo['IMAGE_FORMAT'] = imageInfo['FILE_NAME'].split('.')[-1]
 
             # Reading input image in RGB color order
+            imageChanged = False
             if self.__CORTEX_MODE:  # If in cortex mode, resize image to lower resolution
                 imageInfo['FULL_RES_IMAGE'] = cv2.cvtColor(cv2.imread(imagePath), cv2.COLOR_BGR2RGB)
                 height, width, _ = imageInfo['FULL_RES_IMAGE'].shape
                 fullImage = cv2.resize(imageInfo['FULL_RES_IMAGE'], self.__CORTEX_SIZE)
+                imageChanged = True
             else:
                 fullImage = cv2.cvtColor(cv2.imread(imagePath), cv2.COLOR_BGR2RGB)
                 height, width, _ = fullImage.shape
@@ -191,6 +193,7 @@ class NephrologyInferenceModel:
             # Conversion of the image if format is not png or jpg
             if imageInfo['IMAGE_FORMAT'] not in ['png', 'jpg']:
                 imageInfo['IMAGE_FORMAT'] = 'jpg'
+                imageChanged = True
                 tempPath = os.path.join(imageInfo['PATH'], f"{imageInfo['NAME']}.{imageInfo['IMAGE_FORMAT']}")
                 imsave(tempPath, fullImage)
                 imageInfo['PATH'] = tempPath
@@ -200,7 +203,10 @@ class NephrologyInferenceModel:
                 image_results_path = os.path.join(os.path.normpath(results_path), imageInfo['NAME'])
                 os.makedirs(image_results_path, exist_ok=True)
                 fullImagePath = os.path.join(image_results_path, f"{imageInfo['NAME']}.{imageInfo['IMAGE_FORMAT']}")
-                imsave(fullImagePath, fullImage)
+                if not imageChanged:
+                    shutil.copy2(imagePath, fullImagePath)
+                else:
+                    imsave(fullImagePath, fullImage)
             else:
                 image_results_path = None
 
@@ -492,9 +498,9 @@ class NephrologyInferenceModel:
                             results = self.__MODEL.detect([division])
                             results[0]["div_id"] = divId
                             if self.__CONFIG.USE_MINI_MASK:
-                                res.append(utils.reduce_memory(results[0], config=self.__CONFIG, allow_sparse=allowSparse))
+                                res.append(utils.reduce_memory(results[0].copy(), config=self.__CONFIG, allow_sparse=allowSparse))
                             else:
-                                res.append(results[0])
+                                res.append(results[0].copy())
                             del results
                         elif not displayOnlyAP:
                             skipped += 1
