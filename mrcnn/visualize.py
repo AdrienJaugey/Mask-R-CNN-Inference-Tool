@@ -231,7 +231,9 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     ax.axis('off')
     ax.set_title(title)
 
-    masked_image = image.copy()
+    # To be usable on Google Colab we do not make a copy of the image leading to too much ram usage if it is a biopsy
+    # or nephrectomy image
+    masked_image = image
     # masked_image = image.astype(np.uint32).copy()
     for i in range(N):
         if colorPerClass:

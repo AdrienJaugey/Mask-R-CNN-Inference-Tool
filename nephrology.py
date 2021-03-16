@@ -5,6 +5,7 @@ import traceback
 import shutil
 import sys
 import warnings
+import gc
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
@@ -99,7 +100,8 @@ def listAvailableImage(dirPath: str):
 class NephrologyInferenceModel:
 
     def __init__(self, classesInfo, modelPath, min_confidence=0.5, divisionSize=1024, min_overlap_part_main=0.33,
-                 min_overlap_part_cortex=0.5, cortex_size=None, mini_mask_size=96, forceFullSizeMasks=False):
+                 min_overlap_part_cortex=0.5, cortex_size=None, mini_mask_size=96, forceFullSizeMasks=False,
+                 low_memory=False):
         print("Initialisation")
         self.__CLASSES_INFO = classesInfo
         self.__CORTEX_MODE = not classesInfo[0]["ignore"]
@@ -110,6 +112,7 @@ class NephrologyInferenceModel:
         self.__MIN_OVERLAP_PART_CORTEX = min_overlap_part_cortex
         self.__MIN_OVERLAP_PART = min_overlap_part_cortex if self.__CORTEX_MODE else min_overlap_part_main
         self.__CORTEX_SIZE = None if not self.__CORTEX_MODE else (1024, 1024) if cortex_size is None else cortex_size
+        self.__LOW_MEMORY = low_memory
         self.__CUSTOM_CLASS_NAMES = []
         for classInfo in classesInfo:
             if not classInfo["ignore"]:
@@ -185,7 +188,6 @@ class NephrologyInferenceModel:
             else:
                 fullImage = cv2.cvtColor(cv2.imread(imagePath), cv2.COLOR_BGR2RGB)
                 height, width, _ = fullImage.shape
-            image = fullImage.copy()
             imageInfo['HEIGHT'] = int(height)
             imageInfo['WIDTH'] = int(width)
             imageInfo['CORTEX_AREA'] = height * width
@@ -202,11 +204,11 @@ class NephrologyInferenceModel:
             if results_path is not None:
                 image_results_path = os.path.join(os.path.normpath(results_path), imageInfo['NAME'])
                 os.makedirs(image_results_path, exist_ok=True)
-                fullImagePath = os.path.join(image_results_path, f"{imageInfo['NAME']}.{imageInfo['IMAGE_FORMAT']}")
+                imageInfo['PATH'] = os.path.join(image_results_path, f"{imageInfo['NAME']}.{imageInfo['IMAGE_FORMAT']}")
                 if not imageChanged:
-                    shutil.copy2(imagePath, fullImagePath)
+                    shutil.copy2(imagePath, imageInfo['PATH'])
                 else:
-                    imsave(fullImagePath, fullImage)
+                    imsave(imageInfo['PATH'], fullImage)
             else:
                 image_results_path = None
 
@@ -255,7 +257,8 @@ class NephrologyInferenceModel:
                     if 'full_images' in maskDirs:
                         imagesDirPath = os.path.join('data', imageInfo['NAME'], 'images')
                         imageFilePath = os.listdir(imagesDirPath)[0]
-                        image = cv2.cvtColor(cv2.imread(os.path.join(imagesDirPath, imageFilePath)), cv2.COLOR_BGR2RGB)
+                        imageInfo['cleaned_image_path'] = os.path.join(imagesDirPath, imageFilePath)
+                        image = cv2.cvtColor(cv2.imread(imageInfo['cleaned_image_path']), cv2.COLOR_BGR2RGB)
 
                 # We want to know if image has annotation, if we don't want to detect cortex and this mask exist
                 # as we need it to clean the image, we remove it from the mask list before checking if a class
@@ -352,9 +355,9 @@ class NephrologyInferenceModel:
                                             continue
                                         globalStats[className]["count"] += tempStats[className]["count"]
                                         globalStats[className]["area"] += tempStats[className]["area"]
-                                image = cv2.imread(imagePath)
+                                divImage = cv2.imread(imagePath)
                                 coo = fusionInfo["divisions"][divID]["coordinates"]
-                                cleanedImage[coo["y1"]:coo["y2"], coo["x1"]:coo["x2"], :] = image
+                                cleanedImage[coo["y1"]:coo["y2"], coo["x1"]:coo["x2"], :] = divImage
                                 shutil.move(os.path.join(results_path, imageFolder),
                                             os.path.join(image_results_path, "divisions", imageFolder))
                     cv2.imwrite(os.path.join(image_results_path, fusionInfo['image'] + "_full_prediction.jpg"),
@@ -368,6 +371,9 @@ class NephrologyInferenceModel:
                 else:
                     start_time = time()
                     print(f"Using {IMAGE_PATH} image file {progressText(i + 1, len(images))}")
+                    visualizeNames = self.__CUSTOM_CLASS_NAMES.copy()
+                    visualizeNames.insert(0, 'background')
+
                     step = "image preparation"
                     image, fullImage, imageInfo, image_results_path = self.prepare_image(IMAGE_PATH, results_path,
                                                                                          silent=displayOnlyAP)
@@ -396,18 +402,18 @@ class NephrologyInferenceModel:
                                                         f"{image_name}.{self.__IMAGE_FORMAT}")
                                 self.add_image("skinet", image_id=imageInfo["NAME"], path=img_path)
 
-                            def image_reference(self, image_id):
+                            def image_reference(self, image_id_):
                                 """Return the skinet data of the image."""
-                                info = self.image_info[image_id]
+                                info = self.image_info[image_id_]
                                 if info["source"] == "skinet":
                                     return info["skinet"]
                                 else:
-                                    super(self.__class__).image_reference(self, image_id)
+                                    super(self.__class__).image_reference(self, image_id_)
 
-                            def load_mask(self, image_id):
+                            def load_mask(self, image_id_):
                                 """Generate instance masks for cells of the given image ID.
                                 """
-                                info = self.image_info[image_id]
+                                info = self.image_info[image_id_]
                                 info = info.get("id")
 
                                 path = os.path.join('data', info)
@@ -447,8 +453,8 @@ class NephrologyInferenceModel:
                                             bboxes[iterator] = utils.extract_bboxes(mask)
                                         class_ids[iterator] = temp_class_id
                                         iterator += 1
-                                # Handle occlusions /!\ In our case there is no possible occlusion (part of object that is
-                                # hidden), all objects are complete (some are parts of other)
+                                # Handle occlusions /!\ In our case there is no possible occlusion (part of object that
+                                # is hidden), all objects are complete (some are parts of other)
                                 # occlusion = np.logical_not(masks[:, :, -1]).astype(np.uint8)
                                 # for i in range(number_of_masks - 2, -1, -1):
                                 #     masks[:, :, i] = masks[:, :, i] * occlusion
@@ -467,16 +473,18 @@ class NephrologyInferenceModel:
                             if not displayOnlyAP:
                                 print(" - Applying annotations on file to get expected results")
                             fileName = os.path.join(image_results_path, f"{imageInfo['NAME']}_Expected")
-                            visualize.display_instances(fullImage, gt_bbox, gt_mask, gt_class_id,
-                                                        dataset_val.class_names,
-                                                        colorPerClass=True,
-                                                        figsize=(
-                                                            (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                                                            (1024 if self.__CORTEX_MODE else imageInfo[
-                                                                "HEIGHT"]) / 100),
-                                                        image_format=imageInfo['IMAGE_FORMAT'],
-                                                        title=f"{imageInfo['NAME']} Expected",
-                                                        fileName=fileName, silent=True, config=self.__CONFIG)
+                            _ = visualize.display_instances(fullImage if self.__LOW_MEMORY else fullImage.copy(),
+                                                            gt_bbox, gt_mask, gt_class_id, visualizeNames,
+                                                            colorPerClass=True, figsize=(
+                                                             (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
+                                                             (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
+                                                            ), image_format=imageInfo['IMAGE_FORMAT'],
+                                                            title=f"{imageInfo['NAME']} Expected",
+                                                            fileName=fileName, silent=True, config=self.__CONFIG)
+                            if self.__LOW_MEMORY:
+                                del fullImage
+                                gc.collect()
+                                fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
 
                     # Getting predictions for each division
 
@@ -490,22 +498,26 @@ class NephrologyInferenceModel:
                         progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference ')
                     for divId in range(imageInfo["NB_DIV"]):
                         step = f"{divId} div processing"
-                        division = dD.getImageDivision(image, imageInfo["X_STARTS"], imageInfo["Y_STARTS"], divId)
+                        division = dD.getImageDivision(fullImage if image is None else image, imageInfo["X_STARTS"],
+                                                       imageInfo["Y_STARTS"], divId)
                         grayDivision = cv2.cvtColor(division, cv2.COLOR_RGB2GRAY)
                         colorPx = cv2.countNonZero(grayDivision)
+                        del grayDivision
                         if colorPx / total_px > 0.1:
                             step = f"{divId} div inference"
                             results = self.__MODEL.detect([division])
                             results[0]["div_id"] = divId
                             if self.__CONFIG.USE_MINI_MASK:
-                                res.append(utils.reduce_memory(results[0].copy(), config=self.__CONFIG, allow_sparse=allowSparse))
+                                res.append(utils.reduce_memory(results[0].copy(), config=self.__CONFIG,
+                                                               allow_sparse=allowSparse))
                             else:
                                 res.append(results[0].copy())
                             del results
                         elif not displayOnlyAP:
                             skipped += 1
                             skippedText = f" ({skipped} empty division{'s' if skipped > 1 else ''} skipped)"
-                        del division, grayDivision
+                        del division
+                        gc.collect()
                         if not displayOnlyAP:
                             if divId + 1 == imageInfo["NB_DIV"]:
                                 inference_duration = round(time() - inference_start_time)
@@ -517,14 +529,13 @@ class NephrologyInferenceModel:
                         print(" - Fusing results of all divisions")
 
                     step = "fusing results"
-                    res = pp.fuse_results(res, image.shape, division_size=self.__DIVISION_SIZE,
+                    res = pp.fuse_results(res, fullImage.shape, division_size=self.__DIVISION_SIZE,
                                           min_overlap_part=self.__MIN_OVERLAP_PART)
 
                     if savePreFusionImage:
                         debugIterator += 1
                         self.save_debug_image("pre fusion", debugIterator, fullImage, imageInfo, res,
-                                              image_results_path,
-                                              silent=displayOnlyAP)
+                                              image_results_path, visualizeNames, silent=displayOnlyAP)
 
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
@@ -537,20 +548,19 @@ class NephrologyInferenceModel:
                             if savePreFilterImage:
                                 debugIterator += 1
                                 self.save_debug_image("pre border filter", debugIterator, fullImage, imageInfo, res,
-                                                      image_results_path,
-                                                      silent=displayOnlyAP)
+                                                      image_results_path, visualizeNames, silent=displayOnlyAP)
                             step = "removing border masks"
                             progressBarPrefix = " - Removing border masks " if not displayOnlyAP else None
                             classes_to_check = [7, 8, 9, 10]
-                            res = pp.filter_on_border_masks(res, image, onBorderThreshold=on_border_threshold,
+                            res = pp.filter_on_border_masks(res, fullImage if image is None else image,
+                                                            onBorderThreshold=on_border_threshold,
                                                             classes=classes_to_check, config=self.__CONFIG,
                                                             displayProgress=progressBarPrefix, verbose=0)
 
                             if savePreFilterImage:
                                 debugIterator += 1
                                 self.save_debug_image("pre orphan filter", debugIterator, fullImage, imageInfo, res,
-                                                      image_results_path,
-                                                      silent=displayOnlyAP)
+                                                      image_results_path, visualizeNames, silent=displayOnlyAP)
                                 # TODO : Build automatically classes_hierarchy
 
                             classes_hierarchy = {
@@ -564,11 +574,11 @@ class NephrologyInferenceModel:
                                                          classes_hierarchy=classes_hierarchy,
                                                          displayProgress=progressBarPrefix, config=self.__CONFIG,
                                                          verbose=0)
+                        del image
                         if savePreFilterImage:
                             debugIterator += 1
                             self.save_debug_image("pre filter", debugIterator, fullImage, imageInfo, res,
-                                                  image_results_path,
-                                                  silent=displayOnlyAP)
+                                                  image_results_path, visualizeNames, silent=displayOnlyAP)
 
                         step = "filtering masks"
                         progressBarPrefix = " - Removing non-sense masks " if not displayOnlyAP else None
@@ -581,9 +591,7 @@ class NephrologyInferenceModel:
                             if savePreFilterImage:
                                 debugIterator += 1
                                 self.save_debug_image("pre orphan filter (Pass 2)", debugIterator, fullImage, imageInfo,
-                                                      res,
-                                                      image_results_path,
-                                                      silent=displayOnlyAP)
+                                                      res, image_results_path, visualizeNames, silent=displayOnlyAP)
                                 # TODO : Build automatically classes_hierarchy
 
                             classes_hierarchy = {
@@ -602,8 +610,7 @@ class NephrologyInferenceModel:
                             if savePreFusionImage:
                                 debugIterator += 1
                                 self.save_debug_image("pre class fusion", debugIterator, fullImage, imageInfo, res,
-                                                      image_results_path,
-                                                      silent=displayOnlyAP)
+                                                      image_results_path, visualizeNames, silent=displayOnlyAP)
                             step = "fusing classes"
                             progressBarPrefix = " - Fusing overlapping equivalent masks " if not displayOnlyAP else None
                             classes_compatibility = [[4, 5]]  # Nsg partiel + nsg complet
@@ -614,9 +621,7 @@ class NephrologyInferenceModel:
                             if savePreFilterImage:
                                 debugIterator += 1
                                 self.save_debug_image("pre small masks removal", debugIterator, fullImage, imageInfo,
-                                                      res,
-                                                      image_results_path,
-                                                      silent=displayOnlyAP)
+                                                      res, image_results_path, visualizeNames, silent=displayOnlyAP)
                             step = "removing small masks"
                             progressBarPrefix = " - Removing small masks " if not displayOnlyAP else None
                             res = pp.filter_small_masks(res, min_size=minMaskArea, config=self.__CONFIG,
@@ -684,14 +689,11 @@ class NephrologyInferenceModel:
                                 except TypeError:
                                     print("    Failed to save statistics", flush=True)
 
-                    if not displayOnlyAP:
-                        print(" - Applying masks on image")
-
                     if save_results:
                         if self.__CORTEX_MODE:
                             step = "cleaning full resolution image"
                             if not displayOnlyAP:
-                                print(" - Cleaning full resolution image")
+                                print(" - Cleaning full resolution image and saving statistics")
                             allCortices = None
                             # Gathering every cortex masks into one
                             for idxMask, classMask in enumerate(res['class_ids']):
@@ -771,6 +773,14 @@ class NephrologyInferenceModel:
                                 fusionInfo["cortex_area"] = dD.getBWCount(allCortices)[1]
                                 fusionInfo["divisions"] = {}
 
+                                with open(os.path.join(image_results_path, f"{imageInfo['NAME']}_stats.json"),
+                                          "w") as saveFile:
+                                    stats = {"cortex": {"count": 1, "area": fusionInfo["cortex_area"]}}
+                                    try:
+                                        json.dump(stats, saveFile, indent='\t')
+                                    except TypeError:
+                                        print("    Failed to save statistics", flush=True)
+
                                 step = "saving divisions of cleaned image"
                                 # Extracting and saving all divisions
                                 for divID in range(dD.getDivisionsCount(xStarts, yStarts)):
@@ -799,19 +809,17 @@ class NephrologyInferenceModel:
                                     except TypeError:
                                         print("    Failed to save fusion info file", file=sys.stderr, flush=True)
 
+                        if not displayOnlyAP:
+                            print(" - Applying masks on image")
                         step = "saving predicted image"
                         fileName = os.path.join(image_results_path, f"{imageInfo['NAME']}_Predicted")
-                        names = self.__CUSTOM_CLASS_NAMES.copy()
-                        names.insert(0, 'background')
-                        visualize.display_instances(fullImage, res['rois'], res['masks'], res['class_ids'], names,
-                                                    res['scores'],
-                                                    colorPerClass=True, fileName=fileName, onlyImage=True, silent=True,
-                                                    figsize=((1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                                                             (1024 if self.__CORTEX_MODE else imageInfo[
-                                                                 "HEIGHT"]) / 100),
-                                                    image_format=imageInfo['IMAGE_FORMAT'],
-                                                    config=self.__CONFIG)
-
+                        # No need of reloading or passing copy of image as it is the final drawing
+                        _ = visualize.display_instances(fullImage, res['rois'], res['masks'], res['class_ids'],
+                                                        visualizeNames, res['scores'], colorPerClass=True,
+                                                        fileName=fileName, onlyImage=True, silent=True, figsize=(
+                                                         (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
+                                                         (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
+                                                        ), image_format=imageInfo['IMAGE_FORMAT'], config=self.__CONFIG)
                         # Annotations Extraction
                         step = "saving annotations"
                         if not displayOnlyAP:
@@ -832,8 +840,10 @@ class NephrologyInferenceModel:
                         with open(logsPath, 'a') as results_log:
                             apText = f"{AP:4.3f}".replace(".", ",")
                             results_log.write(f"{imageInfo['NAME']}; {final_time}; {apText}%;\n")
-                    del res, imageInfo, image, fullImage
+                    del res, imageInfo, fullImage
+                    plt.clf()
                     plt.close('all')
+                    gc.collect()
             except Exception as e:
                 traceback.print_exception(type(e), e, e.__traceback__)
                 failedImages.append(os.path.basename(IMAGE_PATH))
@@ -880,17 +890,18 @@ class NephrologyInferenceModel:
                 mapText = f"{mAP:4.3f}".replace(".", ",")
                 results_log.write(f"GLOBAL; {total_time}; {mapText}%;\n")
 
-    def save_debug_image(self, step, debugIterator, fullImage, imageInfo, res, image_results_path, silent=True):
+    def save_debug_image(self, step, debugIterator, fullImage, imageInfo, res, image_results_path, names, silent=True):
         if not silent:
             print(f" - Saving {step} image")
         step = step.replace(' ', '_').replace('(', '').replace(')', '')
-        names = self.__CUSTOM_CLASS_NAMES.copy()
-        names.insert(0, 'background')
         fileName = os.path.join(image_results_path, f"{imageInfo['NAME']}_Inference_debug_{debugIterator:02d}_{step}")
-        visualize.display_instances(fullImage, res['rois'], res['masks'], res['class_ids'], names,
-                                    res['scores'],
-                                    colorPerClass=True, fileName=fileName, onlyImage=False, silent=True,
-                                    figsize=((1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                                             (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100),
-                                    image_format=imageInfo['IMAGE_FORMAT'],
-                                    config=self.__CONFIG)
+        visualize.display_instances(fullImage if self.__LOW_MEMORY else fullImage.copy(), res['rois'], res['masks'],
+                                    res['class_ids'], names, res['scores'], colorPerClass=True, fileName=fileName,
+                                    onlyImage=False, silent=True, figsize=(
+                (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
+                (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
+            ), image_format=imageInfo['IMAGE_FORMAT'], config=self.__CONFIG)
+        if self.__LOW_MEMORY:
+            del fullImage
+            gc.collect()
+            fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
