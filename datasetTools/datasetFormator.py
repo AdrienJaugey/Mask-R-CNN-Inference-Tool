@@ -402,11 +402,11 @@ def generateCortexDataset(rawDataset: str, outputDataset="nephrology_cortex_data
     :param rawDataset: path to the base directory
     :param outputDataset: path to the output cortex dataset
     :param cleanBeforeStart: if True, will delete previous directories that could still exist
-    :param resize:
-    :param overlap:
-    :param recreateValList:
-    :param adapter:
-    :return:
+    :param resize: the size of the output images and masks before dividing
+    :param overlap: the least overlap between two divisions
+    :param recreateValList: list of the images to use to recreate cortex dataset
+    :param adapter: the adapter to use if given, else it will be chosen depending on the annotations found
+    :return: None
     """
     recreateInfo = {"mode": "cortex", "output_dataset": outputDataset,
                     "clean_before_start": cleanBeforeStart, "cortex_resize": list(resize),

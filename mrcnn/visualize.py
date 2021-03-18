@@ -76,20 +76,30 @@ def random_colors(N, bright=True, shuffle=True):
 def apply_mask(image, mask, color, alpha=0.5, bbox=None):
     """Apply the given mask to the image.
     """
+    # Define bbox as whole image if not given
     if bbox is None:
         y1, x1, y2, x2 = 0, 0, image.shape[0], image.shape[1]
     else:
         y1, x1, y2, x2 = bbox
+
+    # Take only mask part if not already
     if (y2 - y1) != mask.shape[0] or (x2 - x1) != mask.shape[1]:
         _mask = mask[y1:y2, x1:x2]
     else:
         _mask = mask
+
+    # Color conversion if given in percentage instead of raw value
+    if type(color[0]) is float:
+        _color = [round(c * 255) for c in color]
+    else:
+        _color = color
+
+    # Apply mask on each channel
     for c in range(3):
         image[y1:y2, x1:x2, c] = np.where(_mask > 0,
                                           (image[y1:y2, x1:x2, c].astype(np.uint32) *
-                                           (1 - alpha) + alpha * color[c] * 255).astype(np.uint8),
+                                           (1 - alpha) + alpha * _color[c]).astype(np.uint8),
                                           image[y1:y2, x1:x2, c])
-    return image
 
 
 def get_text_color_by_colormap(val, maxVal, colormap, light_threshold=0.5):

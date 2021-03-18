@@ -21,23 +21,41 @@ if __name__ == '__main__':
             outputPath = f"statistics_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
     else:
         outputPath = os.path.normpath(args.dst)
-    first = True
+
+    # Getting all the classes that are present
+    classes = []
+    for fileName in os.listdir(sourceDirPath):
+        filePath = os.path.join(sourceDirPath, fileName)
+        if os.path.isfile(filePath) and "_stats.json" in fileName:
+            imageName = fileName.replace('_stats.json', '')
+            with open(filePath, 'r') as statsFile:
+                stats = json.load(statsFile)
+            for class_ in stats:
+                if class_ not in classes:
+                    classes.append(class_)
+    classes.sort()
+    if len(classes) == 0:
+        print("No statistics found")
+        exit(-1)
     with open(outputPath, 'w') as outputFile:
+        line = "image; "
+        for class_ in classes:
+            line += f"{class_} count; {class_} area; "
+        outputFile.write(line + "\n")
         for fileName in os.listdir(sourceDirPath):
             filePath = os.path.join(sourceDirPath, fileName)
             if os.path.isfile(filePath) and "_stats.json" in fileName:
                 imageName = fileName.replace('_stats.json', '')
                 with open(filePath, 'r') as statsFile:
                     stats = json.load(statsFile)
-                if first:
-                    first = False
-                    line = "image; "
-                    for element in stats:
-                        line += f"{element} count; {element} area; "
-                    outputFile.write(line + "\n")
                 line = imageName + "; "
-                for element in stats:
-                    line += f"{stats[element]['count']}; {stats[element]['area']}; "
+                for class_ in classes:
+                    count = 0
+                    area = 0
+                    if class_ in stats:
+                        count = stats[class_]['count']
+                        area = stats[class_]['area']
+                    line += f"{count}; {area}; "
                 outputFile.write(line + "\n")
     print(f'Statistics gathered in {outputPath} file!\n')
     exit(0)
