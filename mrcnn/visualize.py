@@ -90,16 +90,18 @@ def apply_mask(image, mask, color, alpha=0.5, bbox=None):
 
     # Color conversion if given in percentage instead of raw value
     if type(color[0]) is float:
-        _color = [round(c * 255) for c in color]
+        _color = [round(channelColor * 255) for channelColor in color]
     else:
         _color = color
 
     # Apply mask on each channel
-    for c in range(3):
-        image[y1:y2, x1:x2, c] = np.where(_mask > 0,
-                                          (image[y1:y2, x1:x2, c].astype(np.uint32) *
-                                           (1 - alpha) + alpha * _color[c]).astype(np.uint8),
-                                          image[y1:y2, x1:x2, c])
+    for channel in range(3):
+        image[y1:y2, x1:x2, channel] = np.where(
+            _mask > 0,
+            (image[y1:y2, x1:x2, channel].astype(np.uint32) * (1 - alpha) + alpha * _color[channel]).astype(np.uint8),
+            image[y1:y2, x1:x2, channel]
+        )
+    return image
 
 
 def get_text_color_by_colormap(val, maxVal, colormap, light_threshold=0.5):
