@@ -1,1 +1,1 @@
-These scripts need to be executed in a directory containing objection_detection folder of the [TF OD API (research)](github.com/tensorflow/models/research/) repository and all its required libraries installed.
+These scripts need to be executed in a directory containing objection_detection folder of the [TF OD API (research)](https://github.com/tensorflow/models/tree/master/research) repository and all its required libraries installed.
