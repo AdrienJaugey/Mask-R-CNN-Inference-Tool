@@ -8,18 +8,20 @@ pre_built_path = {
     'expected': os.path.join("{imageDir}", "{imageDir}_Expected.{imgFormat}"),
     'predicted': os.path.join("{imageDir}", "{imageDir}_Predicted.{imgFormat}"),
     'predicted_clean': os.path.join("{imageDir}", "{imageDir}_Predicted_clean.{imgFormat}"),
-    'stats': os.path.join("{imageDir}", "{imageDir}_stats.json")
+    'stats': os.path.join("{imageDir}", "{imageDir}_stats.json"),
+    'annotation': os.path.join("{imageDir}", "{imageDir}.{annotationFormat}")
 }
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("src", help="path to the directory containing results of the inferences", type=str)
-    parser.add_argument("image", help="Which type of file", choices=['cleaned_cortex', 'cortex_mask', 'expected',
-                                                                     'predicted', 'predicted_clean', 'stats'])
+    parser.add_argument("image", help="Which type of file", choices=list(pre_built_path.keys()))
     parser.add_argument("--dst", "-d", dest="dst", help="path to the directory containing results of the inferences",
                         type=str)
     parser.add_argument("--extension", '-e', dest="ext", help="Format of the images", default='jpg',
                         choices=['jpg', 'png', 'jp2'])
+    parser.add_argument("--annotation_format", '-a', dest="annotation_format", help="Format of the annotation",
+                        default='xml', choices=['xml', 'json'])
     parser.add_argument("--mode", '-m', dest="mode", help="Whether the images should be copied or moved",
                         default='copy', choices=['copy', 'move'])
     args = parser.parse_args()
@@ -47,7 +49,8 @@ if __name__ == '__main__':
     fileList = []
     for imageDir in os.listdir(sourceDirPath):
         if os.path.isdir(os.path.join(sourceDirPath, imageDir)):
-            filePath = os.path.join(sourceDirPath, path.format(imageDir=imageDir, imgFormat=imageFormat))
+            filePath = os.path.join(sourceDirPath, path.format(imageDir=imageDir, imgFormat=imageFormat,
+                                                               annotationFormat=args.annotation_format))
             if os.path.exists(filePath):
                 fileList.append(filePath)
 
