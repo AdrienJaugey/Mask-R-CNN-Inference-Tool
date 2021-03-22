@@ -1,26 +1,38 @@
 import os
-import shutil
 import argparse
 from datetime import datetime
 import json
 
+
+def correct_path(value):
+    try:
+        path = os.path.normpath(value)
+        return path
+    except TypeError:
+        raise argparse.ArgumentTypeError(f"{value} is not a correct path")
+
+
+def existing_path(value):
+    path = correct_path(value)
+    if os.path.exists(path):
+        return path
+    else:
+        raise argparse.ArgumentTypeError(f"{value} path does not exists")
+
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("src", help="path to the directory containing statistics files", type=str)
-    parser.add_argument("dst", help="path to the output csv file", nargs='?', type=str)
+    parser = argparse.ArgumentParser("Gather statistics from all statistics files of a source folder "
+                                     "into a csv file.")
+    parser.add_argument("src", help="path to the directory containing statistics files", type=existing_path)
+    parser.add_argument("dst", help="path to the output csv file", nargs='?', type=correct_path)
     args = parser.parse_args()
 
-    sourceDirPath = os.path.normpath(args.src)
-    if not os.path.exists(sourceDirPath):
-        print("Source folder not found, please provide correct path")
-        exit(-1)
+    sourceDirPath = args.src
     if args.dst is None:
-        if sourceDirPath in ['', '.', './', '.\\']:
-            outputPath = "statistics.csv"
-        else:
-            outputPath = f"statistics_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+        outputPath = "statistics.csv" if sourceDirPath == '.' \
+            else f"statistics_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
     else:
-        outputPath = os.path.normpath(args.dst)
+        outputPath = args.dst
 
     # Getting all the classes that are present
     classes = []

@@ -3,26 +3,41 @@ import shutil
 import argparse
 import json
 
+
+def correct_path(value):
+    try:
+        path = os.path.normpath(value)
+        return path
+    except TypeError:
+        raise argparse.ArgumentTypeError(f"{value} is not a correct path")
+
+
+def existing_path(value):
+    path = correct_path(value)
+    if os.path.exists(path):
+        return path
+    else:
+        raise argparse.ArgumentTypeError(f"{value} path does not exists")
+
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument("failed_list", help="path to the json containing path of images that have failed", type=str)
-    parser.add_argument("src", help="path to the directory containing original images and annotations", type=str, nargs='?')
-    parser.add_argument("dst", help="path to the directory in which moving the images and annotations", type=str, nargs='?')
+    parser = argparse.ArgumentParser(description="Remove non-failed images from the input folder of the inference tool")
+    parser.add_argument("failed_list", help="path to the json file containing path of images that have failed",
+                        type=existing_path)
+    parser.add_argument("src", help="path to the directory containing original images and annotations",
+                        type=existing_path, nargs='?')
+    parser.add_argument("dst", help="path to the directory in which moving the images and annotations",
+                        type=correct_path, nargs='?')
     args = parser.parse_args()
 
-    sourceDirPath = os.path.normpath(args.src) if args.src is not None else "."
-    destinationDirPath = os.path.normpath(args.dst) if args.dst is not None else "successful"
-
-    if not os.path.exists(args.failed_list):
-        print("File containing list of failed images not found, please provide correct path")
-        exit(-1)
-    else:
-        failedListPath = os.path.normpath(args.failed_list)
+    failedListPath = args.failed_list
+    sourceDirPath = args.src if args.src is not None else os.curdir
+    destinationDirPath = args.dst if args.dst is not None else "successful"
 
     with open(failedListPath, 'r') as failedListFile:
         failedList = json.load(failedListFile)
 
-    failedList = ["".join(os.path.basename(p).split('.')[:-1]) for p in failedList]
+    failedList = [os.path.splitext(os.path.basename(p))[0] for p in failedList]
 
     if not os.path.exists(destinationDirPath):
         os.makedirs(destinationDirPath, exist_ok=True)
@@ -31,11 +46,11 @@ if __name__ == '__main__':
     fileFormat = ['jpg', 'png', 'jp2', 'xml', 'json']
     for aFile in os.listdir(sourceDirPath):
         if os.path.isfile(os.path.join(sourceDirPath, aFile)):
-            part = aFile.split('.')
-            if part[-1] in fileFormat:
-                fileName = "".join(part[:-1])
-                if fileName not in failedList:
-                    filePath = os.path.join(sourceDirPath, aFile)
-                    dstPath = os.path.join(destinationDirPath, aFile)
-                    shutil.move(filePath, dstPath)
+            fileName, extension = os.path.splitext(aFile)
+            extension = extension.replace('.', '')
+            if extension in fileFormat and fileName not in failedList:
+                filePath = os.path.join(sourceDirPath, aFile)
+                dstPath = os.path.join(destinationDirPath, aFile)
+                shutil.move(filePath, dstPath)
+    print("Done !")
     exit(0)

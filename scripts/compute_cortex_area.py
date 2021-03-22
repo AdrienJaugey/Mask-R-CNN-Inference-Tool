@@ -3,23 +3,37 @@ import argparse
 from datetime import datetime
 import cv2
 
+
+def correct_path(value):
+    try:
+        path = os.path.normpath(value)
+        return path
+    except TypeError:
+        raise argparse.ArgumentTypeError(f"{value} is not a correct path")
+
+
+def existing_path(value):
+    path = correct_path(value)
+    if os.path.exists(path):
+        return path
+    else:
+        raise argparse.ArgumentTypeError(f"{value} path does not exists")
+
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("src", help="path to the directory containing cleaned images and cortices masks files", type=str)
-    parser.add_argument("dst", help="path to the output csv file", nargs='?', type=str)
+    parser = argparse.ArgumentParser("Computes cortices areas for all cleaned images having their cortex mask of a "
+                                     "folder and saving them into a csv file.")
+    parser.add_argument("src", help="path to the directory containing cleaned images and cortices masks files",
+                        type=existing_path)
+    parser.add_argument("dst", help="path to the output csv file", nargs='?', type=correct_path)
     args = parser.parse_args()
 
-    sourceDirPath = os.path.normpath(args.src)
-    if not os.path.exists(sourceDirPath):
-        print("Source folder not found, please provide correct path")
-        exit(-1)
+    sourceDirPath = args.src
     if args.dst is None:
-        if sourceDirPath in ['', '.', './', '.\\']:
-            outputPath = "cortices_areas.csv"
-        else:
-            outputPath = f"cortices_areas_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+        outputPath = "cortices_areas.csv" if sourceDirPath == '.' \
+            else f"cortices_areas_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
     else:
-        outputPath = os.path.normpath(args.dst)
+        outputPath = args.dst
 
     files = os.listdir(sourceDirPath)
     with open(outputPath, 'w') as outputFile:

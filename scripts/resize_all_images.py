@@ -2,16 +2,33 @@ import os
 import argparse
 import cv2
 
+
+def correct_path(value):
+    try:
+        path = os.path.normpath(value)
+        return path
+    except TypeError:
+        raise argparse.ArgumentTypeError(f"{value} is not a correct path")
+
+
+def existing_path(value):
+    path = correct_path(value)
+    if os.path.exists(path):
+        return path
+    else:
+        raise argparse.ArgumentTypeError(f"{value} path does not exists")
+
+
 IMAGE_FORMAT = ['jpg', 'png']
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Resize and/or convert all the images of a folder to given size or " +
+    parser = argparse.ArgumentParser(description="Resize and/or convert all the images of a folder to given size or "
                                                  "using given ratio. Can replace images")
-    parser.add_argument("src", help="Path to the directory containing the input images.", type=str)
+    parser.add_argument("src", help="Path to the directory containing the input images.", type=existing_path)
     parser.add_argument("--input_format", '-i', dest="inputFormat", help="Format of the images.", default='jpg',
                         choices=IMAGE_FORMAT)
     parser.add_argument("--dst", "-d", dest="dst", help="Path to the directory containing the output images.",
-                        type=str)
+                        type=correct_path)
     parser.add_argument("output_size", type=float, nargs=2,
                         help="Size of the final image. If you want to pass a ratio instead, add also the --ratio flag.")
     parser.add_argument("--ratio", "-r", dest="ratio", help="If given, output_size will be seen as a ratio.",
@@ -27,10 +44,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Checking if source directory exists else exiting the program
-    sourceDirPath = os.path.normpath(args.src)
-    if not os.path.exists(sourceDirPath):
-        print("Source folder not found, please provide correct path")
-        exit(-1)
+    sourceDirPath = args.src
 
     # Choosing the destination directory based on flags
     replace = args.replace
@@ -39,11 +53,7 @@ if __name__ == '__main__':
         if replace:
             destinationDirPath = sourceDirPath
         else:
-            if sourceDirPath in ['', '.', './', '.\\']:
-                destinationDirPath = "resized"
-            else:
-                destinationDirPath = os.path.join(os.path.dirname(sourceDirPath),
-                                                  os.path.basename(sourceDirPath) + "_resized")
+            destinationDirPath = "resized" if sourceDirPath == '.' else (sourceDirPath + "_resized")
     else:
         destinationDirPath = os.path.normpath(destinationDirPath)
 

@@ -2,6 +2,23 @@ import os
 import shutil
 import argparse
 
+
+def correct_path(value):
+    try:
+        path = os.path.normpath(value)
+        return path
+    except TypeError:
+        raise argparse.ArgumentTypeError(f"{value} is not a correct path")
+
+
+def existing_path(value):
+    path = correct_path(value)
+    if os.path.exists(path):
+        return path
+    else:
+        raise argparse.ArgumentTypeError(f"{value} path does not exists")
+
+
 pre_built_path = {
     'cleaned_cortex': os.path.join("{imageDir}", "{imageDir}_fusion", "{imageDir}_cleaned.jpg"),
     'cortex_mask': os.path.join("{imageDir}", "{imageDir}_fusion", "{imageDir}_cortex.jpg"),
@@ -13,11 +30,12 @@ pre_built_path = {
 }
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("src", help="path to the directory containing results of the inferences", type=str)
-    parser.add_argument("image", help="Which type of file", choices=list(pre_built_path.keys()))
+    parser = argparse.ArgumentParser("Copy or move all files of a given type from results folder to destination "
+                                     "folder.")
+    parser.add_argument("src", help="path to the directory containing results of the inferences", type=existing_path)
+    parser.add_argument("file_type", help="Which type of file", choices=list(pre_built_path.keys()))
     parser.add_argument("--dst", "-d", dest="dst", help="path to the directory containing results of the inferences",
-                        type=str)
+                        type=correct_path)
     parser.add_argument("--extension", '-e', dest="ext", help="Format of the images", default='jpg',
                         choices=['jpg', 'png', 'jp2'])
     parser.add_argument("--annotation_format", '-a', dest="annotation_format", help="Format of the annotation",
@@ -26,31 +44,23 @@ if __name__ == '__main__':
                         default='copy', choices=['copy', 'move'])
     args = parser.parse_args()
 
-    sourceDirPath = os.path.normpath(args.src)
-    if not os.path.exists(sourceDirPath):
-        print("Source folder not found, please provide correct path")
-        exit(-1)
+    sourceDirPath = args.src
     if args.dst is None:
-        if sourceDirPath in ['', '.', './', '.\\']:
-            destinationDirPath = "extracted"
-        else:
-            destinationDirPath = os.path.join(os.path.dirname(sourceDirPath),
-                                              os.path.basename(sourceDirPath) + "_extraced")
+        destinationDirPath = "extracted" if sourceDirPath == '.' else (sourceDirPath + "_extracted")
     else:
-        destinationDirPath = os.path.normpath(args.dst)
+        destinationDirPath = args.dst
 
     if not os.path.exists(destinationDirPath):
         os.makedirs(destinationDirPath, exist_ok=True)
 
     imageFormat = args.ext
     mode = args.mode
-    image_type = args.image
-    path = pre_built_path[image_type]
+    preBuildPath = pre_built_path[args.file_type]
     fileList = []
     for imageDir in os.listdir(sourceDirPath):
         if os.path.isdir(os.path.join(sourceDirPath, imageDir)):
-            filePath = os.path.join(sourceDirPath, path.format(imageDir=imageDir, imgFormat=imageFormat,
-                                                               annotationFormat=args.annotation_format))
+            filePath = os.path.join(sourceDirPath, preBuildPath.format(imageDir=imageDir, imgFormat=imageFormat,
+                                                                       annotationFormat=args.annotation_format))
             if os.path.exists(filePath):
                 fileList.append(filePath)
 
