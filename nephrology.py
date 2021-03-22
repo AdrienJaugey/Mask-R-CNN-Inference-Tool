@@ -661,11 +661,11 @@ class NephrologyInferenceModel:
                                 confusionMatrixFileName2 = os.path.join(image_results_path, name2.replace('(', '')
                                                                         .replace(')', '')
                                                                         .replace(' ', '_'))
-                                visualize.display_confusion_matrix(confusion_matrix, dataset_val.get_class_names(),
+                                visualize.display_confusion_matrix(confusion_matrix, self.__CUSTOM_CLASS_NAMES.copy(),
                                                                    title=name,
                                                                    cmap=cmap, show=False,
                                                                    fileName=confusionMatrixFileName)
-                                visualize.display_confusion_matrix(confusion_matrix, dataset_val.get_class_names(),
+                                visualize.display_confusion_matrix(confusion_matrix, self.__CUSTOM_CLASS_NAMES.copy(),
                                                                    title=name2,
                                                                    cmap=cmap, show=False, normalize=True,
                                                                    fileName=confusionMatrixFileName2)
@@ -870,11 +870,11 @@ class NephrologyInferenceModel:
             print(f"Mean Average Precision is about {mAP:06.2%}")
             name = "Final Confusion Matrix"
             name2 = "Final Confusion Matrix (Normalized)"
-            visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, dataset_val.get_class_names(), title=name,
+            visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, self.__CUSTOM_CLASS_NAMES.copy(), title=name,
                                                cmap=cmap, show=False,
                                                fileName=(os.path.join(results_path, name.replace(' ', '_'))
                                                          if save_results else None))
-            visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, dataset_val.get_class_names(), title=name2,
+            visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, self.__CUSTOM_CLASS_NAMES.copy(), title=name2,
                                                cmap=cmap, show=False, normalize=True,
                                                fileName=(os.path.join(results_path, name2.replace('(', '')
                                                                       .replace(')', '')
