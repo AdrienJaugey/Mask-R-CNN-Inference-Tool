@@ -10,6 +10,7 @@ from common_utils import progressBar, formatTime
 VERBOSE = False
 CV2_IMWRITE_PARAM = [int(cv2.IMWRITE_JPEG_QUALITY), 100, cv2.IMWRITE_PNG_COMPRESSION, 9]
 
+
 def computeStartsOfInterval(maxVal: int, intervalLength=1024, min_overlap_part=0.33):
     """
     Divide the [0; maxVal] interval into a uniform distribution with at least min_overlap_part of overlapping
@@ -18,6 +19,8 @@ def computeStartsOfInterval(maxVal: int, intervalLength=1024, min_overlap_part=0
     :param min_overlap_part: min overlapping part of intervals, if less, adds intervals with length / 2 offset
     :return: list of starting coordinates for the new intervals
     """
+    if maxVal <= intervalLength:
+        return [0]
     nbDiv = math.ceil(maxVal / intervalLength)
     # Computing gap to get something that tends to a uniform distribution
     gap = (nbDiv * intervalLength - maxVal) / (nbDiv - 1)
@@ -235,7 +238,8 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
                             divisionOutputDirPath = f"{imageOutputDirPath}_{divId:02d}"
                             maskOutputDirPath = os.path.join(divisionOutputDirPath, masksDir)
                             os.makedirs(maskOutputDirPath, exist_ok=True)
-                            outputMaskPath = os.path.join(maskOutputDirPath, f"{mask.split('.')[0]}_{divId:02d}.{imageFormat}")
+                            outputMaskPath = os.path.join(maskOutputDirPath,
+                                                          f"{mask.split('.')[0]}_{divId:02d}.{imageFormat}")
                             cv2.imwrite(outputMaskPath, divMaskImage, CV2_IMWRITE_PARAM)
 
         if tryCleaning:

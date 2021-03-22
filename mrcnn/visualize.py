@@ -76,18 +76,31 @@ def random_colors(N, bright=True, shuffle=True):
 def apply_mask(image, mask, color, alpha=0.5, bbox=None):
     """Apply the given mask to the image.
     """
+    # Define bbox as whole image if not given
     if bbox is None:
         y1, x1, y2, x2 = 0, 0, image.shape[0], image.shape[1]
     else:
         y1, x1, y2, x2 = bbox
+
+    # Take only mask part if not already
     if (y2 - y1) != mask.shape[0] or (x2 - x1) != mask.shape[1]:
         _mask = mask[y1:y2, x1:x2]
     else:
         _mask = mask
-    for c in range(3):
-        image[y1:y2, x1:x2, c] = np.where(_mask > 0,
-                                          image[y1:y2, x1:x2, c] * (1 - alpha) + alpha * color[c] * 255,
-                                          image[y1:y2, x1:x2, c])
+
+    # Color conversion if given in percentage instead of raw value
+    if type(color[0]) is float:
+        _color = [round(channelColor * 255) for channelColor in color]
+    else:
+        _color = color
+
+    # Apply mask on each channel
+    for channel in range(3):
+        image[y1:y2, x1:x2, channel] = np.where(
+            _mask > 0,
+            (image[y1:y2, x1:x2, channel].astype(np.uint32) * (1 - alpha) + alpha * _color[channel]).astype(np.uint8),
+            image[y1:y2, x1:x2, channel]
+        )
     return image
 
 
@@ -182,6 +195,8 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
         fig.savefig(fileName + ".png")
     if show:
         plt.show()
+    fig.clf()
+    del ax, fig
 
 
 def display_instances(image, boxes, masks, class_ids, class_names,
@@ -211,7 +226,9 @@ def display_instances(image, boxes, masks, class_ids, class_names,
 
     # If no axis is passed, create one and automatically call show()
     auto_show = False
-    if not ax:
+    ownFig = False
+    if ax is None or fig is None:
+        ownFig = True
         fig, ax = plt.subplots(1, figsize=figsize)
         auto_show = not silent
 
@@ -226,7 +243,10 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     ax.axis('off')
     ax.set_title(title)
 
-    masked_image = image.astype(np.uint32).copy()
+    # To be usable on Google Colab we do not make a copy of the image leading to too much ram usage if it is a biopsy
+    # or nephrectomy image
+    masked_image = image
+    # masked_image = image.astype(np.uint32).copy()
     for i in range(N):
         if colorPerClass:
             color = colors[class_ids[i] - 1]
@@ -279,7 +299,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             verts = np.fliplr(verts) - 1
             p = Polygon(verts, facecolor="none", edgecolor=color)
             ax.add_patch(p)
-    masked_image = masked_image.astype(np.uint8)
+    # masked_image = masked_image.astype(np.uint8)
     ax.imshow(masked_image)
     fig.tight_layout()
     if fileName is not None:
@@ -289,6 +309,9 @@ def display_instances(image, boxes, masks, class_ids, class_names,
             cv2.imwrite(f"{fileName}_clean.{image_format}", BGR_img, CV2_IMWRITE_PARAM)
     if auto_show:
         plt.show()
+    fig.clf()
+    if ownFig:
+        del ax, fig
     return masked_image
 
 
@@ -303,7 +326,7 @@ def display_differences(image,
     gt_match, pred_match, overlaps, _ = utils.compute_matches(
         gt_box, gt_class_id, gt_mask,
         pred_box, pred_class_id, pred_score, pred_mask,
-        iou_threshold=iou_threshold, score_threshold=score_threshold)
+        ap_iou_threshold=iou_threshold, min_iou_to_count=score_threshold)
     # Ground truth = green. Predictions = red
     colors = [(0, 1, 0, .8)] * len(gt_match) \
              + [(1, 0, 0, 1)] * len(pred_match)

@@ -57,15 +57,11 @@ def infoNephrologyDataset(datasetPath: str, silent=False):
                     localHisto[maskDir] = 0
                 localHisto[maskDir] += 1
         if not cortex:
-            if "_" in imageDir:
-                name = imageDir.split('_')[0] + "_*"
-            else:
-                name = imageDir
-            if name not in printedCortexMissing:
-                printedCortexMissing.append(name)
+            if imageDir not in printedCortexMissing:
+                printedCortexMissing.append(imageDir)
             cortexMissing.append(imageDir)
         if missingData:
-            missingDataImages.append(name)
+            missingDataImages.append(imageDir)
         if cortexDivided:
             multiCortices.append(imageDir)
 
@@ -173,7 +169,7 @@ def sortImages(datasetPath: str, unusedDirPath: str = None, mode: str = "main"):
 
     # Getting list of images directories without data
     info = infoNephrologyDataset(datasetPath, silent=True)
-    noCortex = info[2]
+    noCortex = [] if mode == "cortex" else info[2]
     noData = info[6]
     toBeMoved = []
     toBeMoved.extend(noData)
@@ -340,7 +336,7 @@ def generateDataset(rawDataset='raw_dataset', tempDataset='temp_dataset', unused
     checkNSG(tempDataset)
 
     # Sorting images to keep those that can be used to train cortex
-    sortImages(datasetPath=tempDataset, unusedDirPath=unusedDirPath)
+    sortImages(datasetPath=tempDataset, unusedDirPath=unusedDirPath, mode="main")
 
     recreateInfo = {"mode": "main", "temp_dataset": tempDataset, "unused_dir_path": unusedDirPath,
                     "main_dataset": mainDataset, "main_dataset_unused_path": mainDatasetUnusedDirPath,
@@ -390,26 +386,29 @@ def generateDataset(rawDataset='raw_dataset', tempDataset='temp_dataset', unused
     infoNephrologyDataset(mainDataset + '_val')
     if recreateValList is None or len(recreateValList) == 0:
         with open(f"dataset_{formatDate()}.json", 'w') as recreateFile:
-            json.dump(recreateValList, recreateFile, indent="\t")
+            json.dump(recreateInfo, recreateFile, indent="\t")
     print("\nDataset made, nothing left to do")
 
 
 def generateCortexDataset(rawDataset: str, outputDataset="nephrology_cortex_dataset", cleanBeforeStart=True,
-                          resize=(2048, 2048), overlap=0., recreateValList=None, adapter: AnnotationAdapter = None):
+                          resize=(2048, 2048), overlap=0., separateDivInsteadOfImage=False, recreateValList=None,
+                          adapter: AnnotationAdapter = None):
     """
     Generates datasets folder from a base directory, all paths are customizable, and it can also remove previous
     directories
     :param rawDataset: path to the base directory
     :param outputDataset: path to the output cortex dataset
     :param cleanBeforeStart: if True, will delete previous directories that could still exist
-    :param resize:
-    :param overlap:
-    :param recreateValList:
-    :param adapter:
-    :return:
+    :param resize: the size of the output images and masks before dividing
+    :param overlap: the least overlap between two divisions
+    :param separateDivInsteadOfImage: if True, divisions of same image can be separated into training and val directories
+    :param recreateValList: list of the images to use to recreate cortex dataset
+    :param adapter: the adapter to use if given, else it will be chosen depending on the annotations found
+    :return: None
     """
     recreateInfo = {"mode": "cortex", "output_dataset": outputDataset,
                     "clean_before_start": cleanBeforeStart, "cortex_resize": list(resize),
+                    "separate": "div" if separateDivInsteadOfImage else "images",
                     "min_overlap_part": overlap, "val_dataset": []}
     # Removing former dataset directories
     if cleanBeforeStart:
@@ -420,19 +419,33 @@ def generateCortexDataset(rawDataset: str, outputDataset="nephrology_cortex_data
                 shutil.rmtree(directory, ignore_errors=True)
     # Creating masks for cortices images
     dW.startWrapper(rawDataset, "temp_" + outputDataset, resize=resize, cortexMode=True, adapter=adapter)
+    if not separateDivInsteadOfImage:
+        recreateInfo["val_dataset"] = createValDataset("temp_" + outputDataset,
+                                                       valDatasetPath="temp_" + outputDataset + '_val',
+                                                       rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
+                                                       recreateInfo=recreateValList)
     # If size is greater than 1024x1024, dataset must be divided
     if resize is not None and not resize[0] == resize[1] == 1024:
-        dD.divideDataset("temp_" + outputDataset, outputDataset, squareSideLength=1024, min_overlap_part=overlap,
-                         mode="cortex")
-    # Creating val dataset by
-    recreateInfo["val_dataset"] = createValDataset(outputDataset, valDatasetPath=outputDataset + '_val',
-                                                   rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
-                                                   recreateInfo=recreateValList)
+        if separateDivInsteadOfImage:
+            divide = {"temp_" + outputDataset: outputDataset}
+        else:
+            divide = {"temp_" + outputDataset + '_val': outputDataset + '_val',
+                      "temp_" + outputDataset + '_train': outputDataset + '_train'}
+        for inputPath, outputPath in divide.items():
+            dD.divideDataset(inputPath, outputPath, squareSideLength=1024, min_overlap_part=overlap,
+                             mode="cortex", verbose=1)
+    if separateDivInsteadOfImage:
+        # Creating val dataset by
+        recreateInfo["val_dataset"] = createValDataset(outputDataset, valDatasetPath=outputDataset + '_val',
+                                                       rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
+                                                       recreateInfo=recreateValList)
+    for datasetPath in [outputDataset + '_train', outputDataset + '_val']:
+        sortImages(datasetPath, outputDataset + '_unused', mode="cortex")
     infoNephrologyDataset(outputDataset + '_train')
     infoNephrologyDataset(outputDataset + '_val')
     if recreateValList is None or len(recreateValList) == 0:
         with open(f"dataset_cortex_{formatDate()}.json", 'w') as recreateFile:
-            json.dump(recreateValList, recreateFile, indent="\t")
+            json.dump(recreateInfo, recreateFile, indent="\t")
     print("\nDataset made, nothing left to do")
 
 
@@ -454,6 +467,7 @@ def regenerateDataset(rawDataset, recreateFilePath, adapter: AnnotationAdapter =
         generateCortexDataset(rawDataset=rawDataset, outputDataset=recreateInfo["output_dataset"],
                               cleanBeforeStart=recreateInfo["clean_before_start"],
                               resize=tuple(recreateInfo["cortex_resize"]), overlap=recreateInfo["min_overlap_part"],
+                              separateDivInsteadOfImage=recreateInfo["separate"] == "div",
                               recreateValList=recreateInfo["val_dataset"], adapter=adapter)
     else:
         raise NotImplementedError(f"{recreateInfo['mode']} dataset mode not available")
