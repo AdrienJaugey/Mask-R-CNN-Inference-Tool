@@ -145,7 +145,7 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
         for idxJ in range(idxI + 1, len(rois)):
             if displayProgress is not None:
                 if current == total:
-                    duration = f" Duration = {formatTime(round(time() - start_time))}"
+                    duration = f"Duration = {formatTime(round(time() - start_time))}"
                 if current % displayStep == 0 or current == total:
                     progressBar(current, total, prefix=displayProgress, suffix=duration)
                 current += 1
@@ -285,7 +285,7 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
                 if verbose > 0 and hadPrinted:
                     print(flush=True)
     if displayProgress is not None and current <= total:
-        duration = f" Duration = {formatTime(round(time() - start_time))}"
+        duration = f"Duration = {formatTime(round(time() - start_time))}"
         progressBar(total, total, prefix=displayProgress, suffix=duration, forceNewLine=True)
     # Deletion of unwanted results
     scores = np.delete(scores, toDelete)
@@ -359,7 +359,7 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
             for idxJ in current_indices[current_idx + 1:]:
                 if displayProgress is not None:
                     if current == total:
-                        duration = f" Duration = {formatTime(round(time() - start_time))}"
+                        duration = f"Duration = {formatTime(round(time() - start_time))}"
                     if current % displayStep == 0 or current == stepTotal:
                         progressBar(progressOffset + (current / stepTotal), total, prefix=displayProgress,
                                     suffix=duration)
@@ -506,7 +506,7 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
                     if verbose > 0 and hadPrinted:
                         print(flush=True)
         if displayProgress is not None and duration == "":
-            duration = f" Duration = {formatTime(round(time() - start_time))}"
+            duration = f"Duration = {formatTime(round(time() - start_time))}"
             progressBar(1, 1, prefix=displayProgress, suffix=duration, forceNewLine=True)
         # Deletion of unwanted results
     scores = np.delete(scores, toDelete)
@@ -613,7 +613,7 @@ def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_t
         for j in range(i + 1, len(rois)):
             if displayProgress is not None:
                 if current == total:
-                    duration = f" Duration = {formatTime(round(time() - start_time))}"
+                    duration = f"Duration = {formatTime(round(time() - start_time))}"
                 if current % displayStep == 0 or current == total:
                     progressBar(current, total, prefix=displayProgress, suffix=duration)
                 current += 1
@@ -691,7 +691,7 @@ def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_t
                                 f"[{i:03d}/{j:03d}] Kept class = {class_ids[worst]}\tRemoved Class = {class_ids[best]}")
                         toDelete.append(worst)
     if displayProgress is not None and current <= total:
-        duration = f" Duration = {formatTime(round(time() - start_time))}"
+        duration = f"Duration = {formatTime(round(time() - start_time))}"
         progressBar(total, total, prefix=displayProgress, suffix=duration, forceNewLine=True)
     # Deletion of unwanted results
     scores = np.delete(scores, toDelete)
@@ -834,7 +834,7 @@ def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_h
     masks = np.delete(masks, toDelete, axis=2)
     rois = np.delete(rois, toDelete, axis=0)
     if displayProgress is not None and duration == "":
-        duration = f" Duration = {formatTime(round(time() - start_time))}"
+        duration = f"Duration = {formatTime(round(time() - start_time))}"
         progressBar(2, 2, prefix=displayProgress, suffix=duration, forceNewLine=True)
 
     return {"rois": rois, "bbox_areas": bbAreas, "class_ids": class_ids,
@@ -899,7 +899,7 @@ def filter_small_masks(fused_results, min_size=300, classes=None, config=None, d
         if displayProgress is not None:
             _idx = idx + 1
             if _idx == total:
-                duration = f" Duration = {formatTime(round(time() - start_time))}"
+                duration = f"Duration = {formatTime(round(time() - start_time))}"
             if idx % displayStep == 0 or _idx == total:
                 progressBar(_idx, total, prefix=displayProgress, suffix=duration)
 
@@ -996,7 +996,7 @@ def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes
         if displayProgress is not None:
             iterator = iterator + 1
             if iterator == total:
-                duration = f" Duration = {formatTime(round(time() - start_time))}"
+                duration = f"Duration = {formatTime(round(time() - start_time))}"
             if idx % displayStep == 0 or iterator == total:
                 progressBar(iterator, total, prefix=displayProgress, suffix=duration)
 

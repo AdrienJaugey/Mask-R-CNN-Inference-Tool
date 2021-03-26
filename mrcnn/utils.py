@@ -693,6 +693,7 @@ def minimize_mask(bbox, mask, mini_shape):
 
     See inspect_data.ipynb notebook for more details.
     """
+    # TODO : Store mini masks as smaller float masks as in TF OD API
     soleMask = False
     if len(bbox.shape) != 2 and len(mask.shape) != 3:
         soleMask = True
@@ -721,6 +722,7 @@ def expand_mask(bbox, mini_mask, image_shape):
 
     See inspect_data.ipynb notebook for more details.
     """
+    # TODO : Store mini masks as smaller float masks as in TF OD API
     if type(image_shape) is not tuple:
         image_shape = tuple(image_shape)
     soleMask = False
@@ -756,6 +758,7 @@ def unmold_mask(mask, bbox, image_shape):
 
     Returns a binary mask with the same size as the original image.
     """
+    # TODO : Float mini-mask seems to be the original format => refactor this to use instead of minimize_mask
     threshold = 0.5
     y1, x1, y2, x2 = bbox
     mask = resize(mask, (y2 - y1, x2 - x1))

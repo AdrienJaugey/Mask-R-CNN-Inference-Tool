@@ -243,7 +243,7 @@ class NephrologyInferenceModel:
                 if not self.__CORTEX_MODE:
                     dW.fuseCortices('data', imageInfo['NAME'], imageFormat=imageInfo['IMAGE_FORMAT'],
                                     deleteBaseMasks=True, silent=True)
-                    dW.cleanImage('data', imageInfo['NAME'], onlyMasks=False)
+                    dW.cleanImage('data', imageInfo['NAME'], cleanMasks=False)
                 maskDirs = os.listdir(os.path.join('data', imageInfo['NAME']))
                 if not self.__CORTEX_MODE:
                     if "cortex" in maskDirs:
@@ -495,7 +495,7 @@ class NephrologyInferenceModel:
                     skippedText = ""
                     inference_start_time = time()
                     if not displayOnlyAP:
-                        progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference ')
+                        progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference')
                     for divId in range(imageInfo["NB_DIV"]):
                         step = f"{divId} div processing"
                         division = dD.getImageDivision(fullImage if image is None else image, imageInfo["X_STARTS"],
@@ -515,14 +515,14 @@ class NephrologyInferenceModel:
                             del results
                         elif not displayOnlyAP:
                             skipped += 1
-                            skippedText = f" ({skipped} empty division{'s' if skipped > 1 else ''} skipped)"
+                            skippedText = f"({skipped} empty division{'s' if skipped > 1 else ''} skipped) "
                         del division
                         gc.collect()
                         if not displayOnlyAP:
                             if divId + 1 == imageInfo["NB_DIV"]:
                                 inference_duration = round(time() - inference_start_time)
-                                skippedText += f" Duration = {formatTime(inference_duration)}"
-                            progressBar(divId + 1, imageInfo["NB_DIV"], prefix=' - Inference ', suffix=skippedText)
+                                skippedText += f"Duration = {formatTime(inference_duration)}"
+                            progressBar(divId + 1, imageInfo["NB_DIV"], prefix=' - Inference', suffix=skippedText)
 
                     # Post-processing of the predictions
                     if not displayOnlyAP:
@@ -540,7 +540,7 @@ class NephrologyInferenceModel:
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
                         step = "fusing masks"
-                        progressBarPrefix = " - Fusing overlapping masks " if not displayOnlyAP else None
+                        progressBarPrefix = " - Fusing overlapping masks" if not displayOnlyAP else None
                         res = pp.fuse_masks(res, bb_threshold=fusion_bb_threshold, mask_threshold=fusion_mask_threshold,
                                             config=self.__CONFIG, displayProgress=progressBarPrefix, verbose=0)
 
@@ -550,7 +550,7 @@ class NephrologyInferenceModel:
                                 self.save_debug_image("pre border filter", debugIterator, fullImage, imageInfo, res,
                                                       image_results_path, visualizeNames, silent=displayOnlyAP)
                             step = "removing border masks"
-                            progressBarPrefix = " - Removing border masks " if not displayOnlyAP else None
+                            progressBarPrefix = " - Removing border masks" if not displayOnlyAP else None
                             classes_to_check = [7, 8, 9, 10]
                             res = pp.filter_on_border_masks(res, fullImage if image is None else image,
                                                             onBorderThreshold=on_border_threshold,
@@ -568,7 +568,7 @@ class NephrologyInferenceModel:
                                 8: {"contains": [9, 10], "keep_if_no_child": True}
                             }
                             step = "filtering orphan masks (pass 1)"
-                            progressBarPrefix = " - Removing orphan masks " if not displayOnlyAP else None
+                            progressBarPrefix = " - Removing orphan masks" if not displayOnlyAP else None
                             res = pp.filter_orphan_masks(res, bb_threshold=filter_bb_threshold,
                                                          mask_threshold=filter_mask_threshold,
                                                          classes_hierarchy=classes_hierarchy,
@@ -581,7 +581,7 @@ class NephrologyInferenceModel:
                                                   image_results_path, visualizeNames, silent=displayOnlyAP)
 
                         step = "filtering masks"
-                        progressBarPrefix = " - Removing non-sense masks " if not displayOnlyAP else None
+                        progressBarPrefix = " - Removing non-sense masks" if not displayOnlyAP else None
                         res = pp.filter_masks(res, bb_threshold=filter_bb_threshold, priority_table=priority_table,
                                               mask_threshold=filter_mask_threshold, included_threshold=0.9,
                                               including_threshold=0.6, verbose=0,
@@ -599,7 +599,7 @@ class NephrologyInferenceModel:
                                 8: {"contains": [9, 10], "keep_if_no_child": True}
                             }
                             step = "filtering orphan masks (pass 2)"
-                            progressBarPrefix = " - Removing orphan masks " if not displayOnlyAP else None
+                            progressBarPrefix = " - Removing orphan masks" if not displayOnlyAP else None
                             res = pp.filter_orphan_masks(res, bb_threshold=filter_bb_threshold,
                                                          mask_threshold=filter_mask_threshold,
                                                          classes_hierarchy=classes_hierarchy,
@@ -612,7 +612,7 @@ class NephrologyInferenceModel:
                                 self.save_debug_image("pre class fusion", debugIterator, fullImage, imageInfo, res,
                                                       image_results_path, visualizeNames, silent=displayOnlyAP)
                             step = "fusing classes"
-                            progressBarPrefix = " - Fusing overlapping equivalent masks " if not displayOnlyAP else None
+                            progressBarPrefix = " - Fusing overlapping equivalent masks" if not displayOnlyAP else None
                             classes_compatibility = [[4, 5]]  # Nsg partiel + nsg complet
                             res = pp.fuse_class(res, bb_threshold=fusion_bb_threshold,
                                                 mask_threshold=fusion_mask_threshold,
@@ -623,7 +623,7 @@ class NephrologyInferenceModel:
                                 self.save_debug_image("pre small masks removal", debugIterator, fullImage, imageInfo,
                                                       res, image_results_path, visualizeNames, silent=displayOnlyAP)
                             step = "removing small masks"
-                            progressBarPrefix = " - Removing small masks " if not displayOnlyAP else None
+                            progressBarPrefix = " - Removing small masks" if not displayOnlyAP else None
                             res = pp.filter_small_masks(res, min_size=minMaskArea, config=self.__CONFIG,
                                                         displayProgress=progressBarPrefix, verbose=0)
 
@@ -645,7 +645,7 @@ class NephrologyInferenceModel:
                                                                              nb_class=self.__NB_CLASS,
                                                                              score_threshold=0.3,
                                                                              iou_threshold=0.5,
-                                                                             confusion_iou_threshold=0.3,
+                                                                             confusion_iou_threshold=0.5,
                                                                              classes_hierarchy=classes_hierarchy,
                                                                              confusion_background_class=True,
                                                                              confusion_only_best_match=False)
@@ -711,7 +711,7 @@ class NephrologyInferenceModel:
                                 fusion_dir = os.path.join(image_results_path, f"{imageInfo['NAME']}_fusion")
                                 os.makedirs(fusion_dir, exist_ok=True)
                                 allCorticesSmall = allCortices[allCorticesROI[0]:allCorticesROI[2],
-                                                   allCorticesROI[1]:allCorticesROI[3]]
+                                                               allCorticesROI[1]:allCorticesROI[3]]
                                 cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_cortex.jpg"),
                                             allCorticesSmall, CV2_IMWRITE_PARAM)
                                 # Computing coordinates at full resolution
@@ -731,9 +731,9 @@ class NephrologyInferenceModel:
                                 # Masking the image and saving it
                                 imageInfo['FULL_RES_IMAGE'] = cv2.bitwise_and(
                                     imageInfo['FULL_RES_IMAGE'][allCorticesROI[0]: allCorticesROI[2],
-                                    allCorticesROI[1]:allCorticesROI[3], :],
+                                                                allCorticesROI[1]:allCorticesROI[3], :],
                                     temp[allCorticesROI[0]: allCorticesROI[2],
-                                    allCorticesROI[1]:allCorticesROI[3], :])
+                                         allCorticesROI[1]:allCorticesROI[3], :])
                                 cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_cleaned.jpg"),
                                             cv2.cvtColor(imageInfo['FULL_RES_IMAGE'], cv2.COLOR_RGB2BGR),
                                             CV2_IMWRITE_PARAM)
