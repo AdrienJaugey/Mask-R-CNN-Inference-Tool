@@ -243,7 +243,8 @@ class NephrologyInferenceModel:
                 if not self.__CORTEX_MODE:
                     dW.fuseCortices('data', imageInfo['NAME'], imageFormat=imageInfo['IMAGE_FORMAT'],
                                     deleteBaseMasks=True, silent=True)
-                    dW.cleanImage('data', imageInfo['NAME'], cleaningClass="cortex", cleanMasks=False)
+                    dW.cleanImage('data', imageInfo['NAME'], cleaningClass="cortex", cleanMasks=False,
+                                  imageFormat=imageInfo['IMAGE_FORMAT'])
                 maskDirs = os.listdir(os.path.join('data', imageInfo['NAME']))
                 if not self.__CORTEX_MODE:
                     if "cortex" in maskDirs:
