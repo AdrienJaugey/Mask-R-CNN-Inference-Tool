@@ -6,7 +6,7 @@ Copyright (c) 2017 Matterport, Inc.
 Licensed under the MIT License (see LICENSE for details)
 Written by Waleed Abdulla
 """
-
+import json
 import logging
 import random
 import shutil
@@ -23,9 +23,12 @@ import skimage.transform
 import tensorflow as tf
 
 from mrcnn import compat
+from mrcnn.visualize import create_multiclass_mask
 from datasetTools import datasetDivider as dD
 
 # URL from which to download the latest COCO trained weights
+from mrcnn.config import Config
+
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
 
 
@@ -837,6 +840,113 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
 #  Miscellaneous
 ############################################################
 
+def export_results(output_path: str, class_ids, boxes=None, masks=None, scores=None):
+    """
+    Exports result dictionary to a JSON file for debug
+    :param output_path: path to the output JSON file
+    :param class_ids: value of the 'class_ids' key of results dictionary
+    :param boxes: value of the 'class_ids' key of results dictionary
+    :param masks: value of the 'class_ids' key of results dictionary
+    :param scores: value of the 'class_ids' key of results dictionary
+    :return: None
+    """
+    data = {"class_ids": [int(v) for v in class_ids]}
+    if boxes is not None:
+        data["rois"] = [[int(v) for v in bbox] for bbox in boxes]
+    if masks is not None:
+        data["masks"] = [[[int(bool(v)) * 255 for v in row] for row in mask] for mask in masks]
+    if scores is not None:
+        data["scores"] = [float(v) for v in scores]
+    with open(output_path, 'w') as output:
+        json.dump(data, output)
+
+
+def import_results(input_path: str):
+    """
+    Imports result dictionary from JSON file for debug
+    :param input_path: path to the input JSON file
+    :return: results dictionary
+    """
+    with open(input_path, 'r') as inputFile:
+        data = json.load(inputFile)
+    for key in data.keys():
+        data[key] = np.array(data[key]).astype(np.uint8 if key == "masks" else np.int32)
+    return data
+
+
+def classes_level(classes_hierarchy):
+    """
+    Return each level of the given class hierarchy with its classes
+    :param classes_hierarchy: a structure made of list, int for classes of the same lvl, and dict to describe "key class
+                              contains value class(es)". ex : [1, {2: [3, 4]}, {5: 6}] -> [[1, 2, 5], [3, 4, 6]]
+    :return: list containing each classes of a level as a list : [[ lvl0 ], [ lvl1 ], ...]
+    """
+    if type(classes_hierarchy) is int:
+        return [[classes_hierarchy]]  # Return a hierarchy with only one level containing the value
+    elif type(classes_hierarchy) is list:
+        res = []
+        for element in classes_hierarchy:  # For each element of the list
+            temp = classes_level(element)
+            for lvl, indices in enumerate(temp):  # For each hierarchy level of the current element
+                if len(indices) > 0:
+                    if len(res) < lvl + 1:  # Adding a new level if needed
+                        res.append([])
+                    res[lvl].extend(indices)  # Fusing the current hierarchy level to list hierarchy one
+        return res
+    elif type(classes_hierarchy) is dict:
+        res = [[]]
+        for key in classes_hierarchy:
+            res[0].append(key)  # Append key to lvl 0 classes
+            if classes_hierarchy[key] is not None:
+                temp = classes_level(classes_hierarchy[key])
+                for lvl, indices in enumerate(temp):  # For each lvl of class inside the value of key element
+                    if len(res) < lvl + 2:  # Adding a new level if needed
+                        res.append([])
+                    res[lvl + 1].extend(indices)  # Offsetting each level of the child to be relative to parent class
+        return res
+
+
+def remove_redundant_classes(classes_lvl, keepFirst=True):
+    """
+    Remove classes that appears more than once in the classes' levels
+    :param classes_lvl: list of each level of classes as list : [[ lvl 0 ], [ lvl 1 ], ...]
+    :param keepFirst: if True, class will be kept in the min level in which it is present, else in the max/last level.
+    :return: [[ lvl 0 ], [ lvl 1 ], ...] with classes only appearing once
+    """
+    res = [[] for _ in classes_lvl]
+    seenClass = []
+    for lvlID, lvl in enumerate(classes_lvl[::1 if keepFirst else -1]):  # For each lvl in normal or reverse order
+        for classID in lvl:
+            if classID not in seenClass:  # Checking if the class ID has already been added or not
+                seenClass.append(classID)  # Adding the class ID to the added ones
+                res[lvlID if keepFirst else (-1 - lvlID)].append(classID)  # Adding the class to its level
+    for lvl in res:  # Removing empty levels
+        if len(lvl) == 0:
+            res.remove(lvl)
+    return res
+
+
+def compute_confusion_matrix(image_shape: iter, expectedResults: dict, predictedResults: dict,
+                             classes_hierarchy, num_classes: int, config: Config = None):
+    """
+    Computes confusion matrix at pixel precision
+    :param image_shape: the initial image shape
+    :param expectedResults: the expected results dict
+    :param predictedResults: the predicted results dict
+    :param classes_hierarchy: the classes hierarchy used to determine the order of the classes to apply masks
+    :param num_classes: number of classes (max class ID)
+    :param config: the config object of the AI
+    :return: confusion matrix as a ndarray of shape (num_classes + 1, num_classes + 1), 0 being background class
+    """
+    expectedImg = create_multiclass_mask(image_shape, expectedResults, classes_hierarchy, config)
+    predictedImg = create_multiclass_mask(image_shape, predictedResults, classes_hierarchy, config)
+    confusion_matrix = np.zeros((num_classes + 1, num_classes + 1), dtype=int)
+    for y in range(image_shape[0]):
+        for x in range(image_shape[1]):
+            confusion_matrix[expectedImg[y, x]][predictedImg[y, x]] += 1
+    return confusion_matrix
+
+
 def trim_zeros(x):
     """It's common to have tensors larger than the available data and
     pad with zeros. This function removes rows that are all zeros.
@@ -1023,8 +1133,8 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
         gt_boxes=gt_boxes, gt_class_ids=gt_class_ids, gt_masks=gt_masks, min_iou_to_count=score_threshold,
         pred_boxes=pred_boxes, pred_class_ids=pred_class_ids, pred_masks=pred_masks, pred_scores=pred_scores,
         nb_class=nb_class, ap_iou_threshold=iou_threshold, confusion_iou_threshold=confusion_iou_threshold,
-        classes_hierarchy=classes_hierarchy, 
-        confusion_background_class=confusion_background_class, 
+        classes_hierarchy=classes_hierarchy,
+        confusion_background_class=confusion_background_class,
         confusion_only_best_match=confusion_only_best_match
     )
 

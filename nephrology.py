@@ -295,7 +295,7 @@ class NephrologyInferenceModel:
                   filter_bb_threshold=0.5, filter_mask_threshold=0.9,
                   priority_table=None, nbMaxDivPerAxis=3, fusionDivThreshold=0.1,
                   displayOnlyAP=False, savePreFusionImage=False, savePreFilterImage=False,
-                  allowSparse=True, minMaskArea=300, on_border_threshold=0.25):
+                  allowSparse=True, minMaskArea=300, on_border_threshold=0.25, perPixelConfMatrix=True):
 
         if len(images) == 0:
             print("Images list is empty, no inference to perform.")
@@ -473,14 +473,16 @@ class NephrologyInferenceModel:
                             if not displayOnlyAP:
                                 print(" - Applying annotations on file to get expected results")
                             fileName = os.path.join(image_results_path, f"{imageInfo['NAME']}_Expected")
-                            _ = visualize.display_instances(fullImage if self.__LOW_MEMORY else fullImage.copy(),
-                                                            gt_bbox, gt_mask, gt_class_id, visualizeNames,
-                                                            colorPerClass=True, figsize=(
-                                                             (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                                                             (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
-                                                            ), image_format=imageInfo['IMAGE_FORMAT'],
-                                                            title=f"{imageInfo['NAME']} Expected",
-                                                            fileName=fileName, silent=True, config=self.__CONFIG)
+                            _ = visualize.display_instances(
+                                fullImage if self.__LOW_MEMORY else fullImage.copy(),
+                                gt_bbox, gt_mask, gt_class_id, visualizeNames,
+                                colorPerClass=True, figsize=(
+                                    (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
+                                    (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
+                                ), image_format=imageInfo['IMAGE_FORMAT'],
+                                title=f"{imageInfo['NAME']} Expected", fileName=fileName,
+                                silent=True, config=self.__CONFIG
+                            )
                             if self.__LOW_MEMORY:
                                 del fullImage
                                 gc.collect()
@@ -642,14 +644,20 @@ class NephrologyInferenceModel:
                                                                              pred_class_ids=res["class_ids"],
                                                                              pred_scores=res["scores"],
                                                                              pred_masks=res['masks'],
-                                                                             nb_class=self.__NB_CLASS,
+                                                                             nb_class=-1 if perPixelConfMatrix else self.__NB_CLASS,
                                                                              score_threshold=0.3,
                                                                              iou_threshold=0.5,
                                                                              confusion_iou_threshold=0.5,
                                                                              classes_hierarchy=classes_hierarchy,
                                                                              confusion_background_class=True,
                                                                              confusion_only_best_match=False)
-
+                            if perPixelConfMatrix:
+                                hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{9: 10}, 10]}]
+                                confusion_matrix = utils.compute_confusion_matrix(
+                                    image_shape=(imageInfo['HEIGHT'], imageInfo['WIDTH']), config=self.__CONFIG,
+                                    expectedResults={'rois': gt_bbox, 'masks': gt_mask, 'class_ids': gt_class_id},
+                                    predictedResults=res, classes_hierarchy=hierarchy, num_classes=self.__NB_CLASS
+                                )
                             print(f"{'' if displayOnlyAP else '   '} - Average Precision is about {AP:06.2%}")
                             self.__CONFUSION_MATRIX = np.add(self.__CONFUSION_MATRIX, confusion_matrix)
                             self.__APs.append(AP)
@@ -814,12 +822,13 @@ class NephrologyInferenceModel:
                         step = "saving predicted image"
                         fileName = os.path.join(image_results_path, f"{imageInfo['NAME']}_Predicted")
                         # No need of reloading or passing copy of image as it is the final drawing
-                        _ = visualize.display_instances(fullImage, res['rois'], res['masks'], res['class_ids'],
-                                                        visualizeNames, res['scores'], colorPerClass=True,
-                                                        fileName=fileName, onlyImage=True, silent=True, figsize=(
-                                                         (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                                                         (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
-                                                        ), image_format=imageInfo['IMAGE_FORMAT'], config=self.__CONFIG)
+                        _ = visualize.display_instances(
+                            fullImage, res['rois'], res['masks'], res['class_ids'], visualizeNames, res['scores'],
+                            colorPerClass=True, fileName=fileName, onlyImage=True, silent=True, figsize=(
+                                (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
+                                (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
+                            ), image_format=imageInfo['IMAGE_FORMAT'], config=self.__CONFIG
+                        )
                         # Annotations Extraction
                         step = "saving annotations"
                         if not displayOnlyAP:
