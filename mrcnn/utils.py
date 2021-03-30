@@ -940,7 +940,7 @@ def compute_confusion_matrix(image_shape: iter, expectedResults: dict, predicted
     """
     expectedImg = create_multiclass_mask(image_shape, expectedResults, classes_hierarchy, config)
     predictedImg = create_multiclass_mask(image_shape, predictedResults, classes_hierarchy, config)
-    confusion_matrix = np.zeros((num_classes + 1, num_classes + 1), dtype=int)
+    confusion_matrix = np.zeros((num_classes + 1, num_classes + 1), dtype=np.int64)
     for y in range(image_shape[0]):
         for x in range(image_shape[1]):
             confusion_matrix[expectedImg[y, x]][predictedImg[y, x]] += 1
@@ -1032,7 +1032,7 @@ def compute_matches(gt_boxes, gt_class_ids, gt_masks, pred_boxes,
     """
     if nb_class > 0:
         bg = 1 if confusion_background_class else 0
-        confusion_matrix = np.zeros((nb_class + bg, nb_class + bg), dtype=np.int32)
+        confusion_matrix = np.zeros((nb_class + bg, nb_class + bg), dtype=np.int64)
     else:
         confusion_matrix = None
         confusion_iou_threshold = 1.

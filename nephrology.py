@@ -127,7 +127,7 @@ class NephrologyInferenceModel:
         # Configurations
         nbClass = self.__NB_CLASS
         divSize = 1024 if self.__DIVISION_SIZE == "noDiv" else self.__DIVISION_SIZE
-        self.__CONFUSION_MATRIX = np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int32)
+        self.__CONFUSION_MATRIX = np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64)
         self.__APs = []
 
         class SkinetConfig(Config):
@@ -653,7 +653,10 @@ class NephrologyInferenceModel:
                                                                              confusion_background_class=True,
                                                                              confusion_only_best_match=False)
                             if perPixelConfMatrix:
-                                hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{9: 10}, 10]}]
+                                if self.__CORTEX_MODE:
+                                    hierarchy = [2, {3: 1}]
+                                else:
+                                    hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{9: 10}, 10]}]
                                 confusion_matrix = utils.compute_confusion_matrix(
                                     image_shape=(imageInfo['HEIGHT'], imageInfo['WIDTH']), config=self.__CONFIG,
                                     expectedResults={'rois': gt_bbox, 'masks': gt_mask, 'class_ids': gt_class_id},
