@@ -1,0 +1,14 @@
+__pycache__
+.idea
+.ipynb_checkpoints
+*_dataset_*
+logs
+images
+results
+*.png
+*.jpg
+*.jp2
+*.txt
+*.h5
+Mask_R_CNN_mAP_auto_script.py
+test.py

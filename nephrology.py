@@ -127,7 +127,7 @@ class NephrologyInferenceModel:
         # Configurations
         nbClass = self.__NB_CLASS
         divSize = 1024 if self.__DIVISION_SIZE == "noDiv" else self.__DIVISION_SIZE
-        self.__CONFUSION_MATRIX = np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int32)
+        self.__CONFUSION_MATRIX = np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64)
         self.__APs = []
 
         class SkinetConfig(Config):
@@ -243,7 +243,8 @@ class NephrologyInferenceModel:
                 if not self.__CORTEX_MODE:
                     dW.fuseCortices('data', imageInfo['NAME'], imageFormat=imageInfo['IMAGE_FORMAT'],
                                     deleteBaseMasks=True, silent=True)
-                    dW.cleanImage('data', imageInfo['NAME'], onlyMasks=False)
+                    dW.cleanImage('data', imageInfo['NAME'], cleaningClass="cortex", cleanMasks=False,
+                                  imageFormat=imageInfo['IMAGE_FORMAT'])
                 maskDirs = os.listdir(os.path.join('data', imageInfo['NAME']))
                 if not self.__CORTEX_MODE:
                     if "cortex" in maskDirs:
@@ -295,7 +296,8 @@ class NephrologyInferenceModel:
                   filter_bb_threshold=0.5, filter_mask_threshold=0.9,
                   priority_table=None, nbMaxDivPerAxis=3, fusionDivThreshold=0.1,
                   displayOnlyAP=False, savePreFusionImage=False, savePreFilterImage=False,
-                  allowSparse=True, minMaskArea=300, on_border_threshold=0.25):
+                  allowSparse=True, minMaskArea=300, on_border_threshold=0.25, perPixelConfMatrix=True,
+                  enableCortexFusionDiv=True):
 
         if len(images) == 0:
             print("Images list is empty, no inference to perform.")
@@ -473,14 +475,16 @@ class NephrologyInferenceModel:
                             if not displayOnlyAP:
                                 print(" - Applying annotations on file to get expected results")
                             fileName = os.path.join(image_results_path, f"{imageInfo['NAME']}_Expected")
-                            _ = visualize.display_instances(fullImage if self.__LOW_MEMORY else fullImage.copy(),
-                                                            gt_bbox, gt_mask, gt_class_id, visualizeNames,
-                                                            colorPerClass=True, figsize=(
-                                                             (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                                                             (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
-                                                            ), image_format=imageInfo['IMAGE_FORMAT'],
-                                                            title=f"{imageInfo['NAME']} Expected",
-                                                            fileName=fileName, silent=True, config=self.__CONFIG)
+                            _ = visualize.display_instances(
+                                fullImage if self.__LOW_MEMORY else fullImage.copy(),
+                                gt_bbox, gt_mask, gt_class_id, visualizeNames,
+                                colorPerClass=True, figsize=(
+                                    (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
+                                    (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
+                                ), image_format=imageInfo['IMAGE_FORMAT'],
+                                title=f"{imageInfo['NAME']} Expected", fileName=fileName,
+                                silent=True, config=self.__CONFIG
+                            )
                             if self.__LOW_MEMORY:
                                 del fullImage
                                 gc.collect()
@@ -495,7 +499,7 @@ class NephrologyInferenceModel:
                     skippedText = ""
                     inference_start_time = time()
                     if not displayOnlyAP:
-                        progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference ')
+                        progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference')
                     for divId in range(imageInfo["NB_DIV"]):
                         step = f"{divId} div processing"
                         division = dD.getImageDivision(fullImage if image is None else image, imageInfo["X_STARTS"],
@@ -515,14 +519,14 @@ class NephrologyInferenceModel:
                             del results
                         elif not displayOnlyAP:
                             skipped += 1
-                            skippedText = f" ({skipped} empty division{'s' if skipped > 1 else ''} skipped)"
+                            skippedText = f"({skipped} empty division{'s' if skipped > 1 else ''} skipped) "
                         del division
                         gc.collect()
                         if not displayOnlyAP:
                             if divId + 1 == imageInfo["NB_DIV"]:
                                 inference_duration = round(time() - inference_start_time)
-                                skippedText += f" Duration = {formatTime(inference_duration)}"
-                            progressBar(divId + 1, imageInfo["NB_DIV"], prefix=' - Inference ', suffix=skippedText)
+                                skippedText += f"Duration = {formatTime(inference_duration)}"
+                            progressBar(divId + 1, imageInfo["NB_DIV"], prefix=' - Inference', suffix=skippedText)
 
                     # Post-processing of the predictions
                     if not displayOnlyAP:
@@ -540,7 +544,7 @@ class NephrologyInferenceModel:
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
                         step = "fusing masks"
-                        progressBarPrefix = " - Fusing overlapping masks " if not displayOnlyAP else None
+                        progressBarPrefix = " - Fusing overlapping masks" if not displayOnlyAP else None
                         res = pp.fuse_masks(res, bb_threshold=fusion_bb_threshold, mask_threshold=fusion_mask_threshold,
                                             config=self.__CONFIG, displayProgress=progressBarPrefix, verbose=0)
 
@@ -550,7 +554,7 @@ class NephrologyInferenceModel:
                                 self.save_debug_image("pre border filter", debugIterator, fullImage, imageInfo, res,
                                                       image_results_path, visualizeNames, silent=displayOnlyAP)
                             step = "removing border masks"
-                            progressBarPrefix = " - Removing border masks " if not displayOnlyAP else None
+                            progressBarPrefix = " - Removing border masks" if not displayOnlyAP else None
                             classes_to_check = [7, 8, 9, 10]
                             res = pp.filter_on_border_masks(res, fullImage if image is None else image,
                                                             onBorderThreshold=on_border_threshold,
@@ -568,7 +572,7 @@ class NephrologyInferenceModel:
                                 8: {"contains": [9, 10], "keep_if_no_child": True}
                             }
                             step = "filtering orphan masks (pass 1)"
-                            progressBarPrefix = " - Removing orphan masks " if not displayOnlyAP else None
+                            progressBarPrefix = " - Removing orphan masks" if not displayOnlyAP else None
                             res = pp.filter_orphan_masks(res, bb_threshold=filter_bb_threshold,
                                                          mask_threshold=filter_mask_threshold,
                                                          classes_hierarchy=classes_hierarchy,
@@ -581,7 +585,7 @@ class NephrologyInferenceModel:
                                                   image_results_path, visualizeNames, silent=displayOnlyAP)
 
                         step = "filtering masks"
-                        progressBarPrefix = " - Removing non-sense masks " if not displayOnlyAP else None
+                        progressBarPrefix = " - Removing non-sense masks" if not displayOnlyAP else None
                         res = pp.filter_masks(res, bb_threshold=filter_bb_threshold, priority_table=priority_table,
                                               mask_threshold=filter_mask_threshold, included_threshold=0.9,
                                               including_threshold=0.6, verbose=0,
@@ -599,7 +603,7 @@ class NephrologyInferenceModel:
                                 8: {"contains": [9, 10], "keep_if_no_child": True}
                             }
                             step = "filtering orphan masks (pass 2)"
-                            progressBarPrefix = " - Removing orphan masks " if not displayOnlyAP else None
+                            progressBarPrefix = " - Removing orphan masks" if not displayOnlyAP else None
                             res = pp.filter_orphan_masks(res, bb_threshold=filter_bb_threshold,
                                                          mask_threshold=filter_mask_threshold,
                                                          classes_hierarchy=classes_hierarchy,
@@ -612,7 +616,7 @@ class NephrologyInferenceModel:
                                 self.save_debug_image("pre class fusion", debugIterator, fullImage, imageInfo, res,
                                                       image_results_path, visualizeNames, silent=displayOnlyAP)
                             step = "fusing classes"
-                            progressBarPrefix = " - Fusing overlapping equivalent masks " if not displayOnlyAP else None
+                            progressBarPrefix = " - Fusing overlapping equivalent masks" if not displayOnlyAP else None
                             classes_compatibility = [[4, 5]]  # Nsg partiel + nsg complet
                             res = pp.fuse_class(res, bb_threshold=fusion_bb_threshold,
                                                 mask_threshold=fusion_mask_threshold,
@@ -623,7 +627,7 @@ class NephrologyInferenceModel:
                                 self.save_debug_image("pre small masks removal", debugIterator, fullImage, imageInfo,
                                                       res, image_results_path, visualizeNames, silent=displayOnlyAP)
                             step = "removing small masks"
-                            progressBarPrefix = " - Removing small masks " if not displayOnlyAP else None
+                            progressBarPrefix = " - Removing small masks" if not displayOnlyAP else None
                             res = pp.filter_small_masks(res, min_size=minMaskArea, config=self.__CONFIG,
                                                         displayProgress=progressBarPrefix, verbose=0)
 
@@ -642,14 +646,25 @@ class NephrologyInferenceModel:
                                                                              pred_class_ids=res["class_ids"],
                                                                              pred_scores=res["scores"],
                                                                              pred_masks=res['masks'],
-                                                                             nb_class=self.__NB_CLASS,
+                                                                             nb_class=-1 if perPixelConfMatrix else self.__NB_CLASS,
                                                                              score_threshold=0.3,
                                                                              iou_threshold=0.5,
-                                                                             confusion_iou_threshold=0.3,
+                                                                             confusion_iou_threshold=0.5,
                                                                              classes_hierarchy=classes_hierarchy,
                                                                              confusion_background_class=True,
                                                                              confusion_only_best_match=False)
-
+                            if perPixelConfMatrix:
+                                if self.__CORTEX_MODE:
+                                    hierarchy = [2, {3: 1}]
+                                    image_shape = self.__CORTEX_SIZE
+                                else:
+                                    hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{9: 10}, 10]}]
+                                    image_shape = (imageInfo['HEIGHT'], imageInfo['WIDTH'])
+                                confusion_matrix = utils.compute_confusion_matrix(
+                                    image_shape=image_shape, config=self.__CONFIG,
+                                    expectedResults={'rois': gt_bbox, 'masks': gt_mask, 'class_ids': gt_class_id},
+                                    predictedResults=res, classes_hierarchy=hierarchy, num_classes=self.__NB_CLASS
+                                )
                             print(f"{'' if displayOnlyAP else '   '} - Average Precision is about {AP:06.2%}")
                             self.__CONFUSION_MATRIX = np.add(self.__CONFUSION_MATRIX, confusion_matrix)
                             self.__APs.append(AP)
@@ -711,7 +726,7 @@ class NephrologyInferenceModel:
                                 fusion_dir = os.path.join(image_results_path, f"{imageInfo['NAME']}_fusion")
                                 os.makedirs(fusion_dir, exist_ok=True)
                                 allCorticesSmall = allCortices[allCorticesROI[0]:allCorticesROI[2],
-                                                   allCorticesROI[1]:allCorticesROI[3]]
+                                                               allCorticesROI[1]:allCorticesROI[3]]
                                 cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_cortex.jpg"),
                                             allCorticesSmall, CV2_IMWRITE_PARAM)
                                 # Computing coordinates at full resolution
@@ -726,100 +741,103 @@ class NephrologyInferenceModel:
                                 allCortices = cv2.resize(np.uint8(allCortices),
                                                          (imageInfo['WIDTH'], imageInfo['HEIGHT']),
                                                          interpolation=cv2.INTER_CUBIC)
-                                temp = np.repeat(allCortices[:, :, np.newaxis], 3, axis=2)
-
-                                # Masking the image and saving it
-                                imageInfo['FULL_RES_IMAGE'] = cv2.bitwise_and(
-                                    imageInfo['FULL_RES_IMAGE'][allCorticesROI[0]: allCorticesROI[2],
-                                    allCorticesROI[1]:allCorticesROI[3], :],
-                                    temp[allCorticesROI[0]: allCorticesROI[2],
-                                    allCorticesROI[1]:allCorticesROI[3], :])
-                                cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_cleaned.jpg"),
-                                            cv2.cvtColor(imageInfo['FULL_RES_IMAGE'], cv2.COLOR_RGB2BGR),
-                                            CV2_IMWRITE_PARAM)
-
-                                #########################################################
-                                # Preparing to export all "fusion" divisions with stats #
-                                #########################################################
-                                fusion_info_file_path = os.path.join(image_results_path,
-                                                                     f"{imageInfo['NAME']}_fusion_info.skinet")
-                                fusionInfo = {"image": imageInfo["NAME"]}
-
-                                # Computing ratio between full resolution image and the low one
-                                height, width, _ = imageInfo['FULL_RES_IMAGE'].shape
-                                smallHeight, smallWidth = allCorticesSmall.shape
-                                xRatio = width / smallWidth
-                                yRatio = height / smallHeight
-
-                                # Computing divisions coordinates for full and low resolution images
-                                divisionSize = dD.getMaxSizeForDivAmount(nbMaxDivPerAxis, self.__DIVISION_SIZE,
-                                                                         self.__MIN_OVERLAP_PART_MAIN)
-                                xStarts = dD.computeStartsOfInterval(width, intervalLength=divisionSize,
-                                                                     min_overlap_part=0)
-                                yStarts = dD.computeStartsOfInterval(height, intervalLength=divisionSize,
-                                                                     min_overlap_part=0)
-
-                                xStartsEquivalent = [round(x / xRatio) for x in xStarts]
-                                yStartsEquivalent = [round(y / yRatio) for y in yStarts]
-                                xDivSide = round(divisionSize / xRatio)
-                                yDivSide = round(divisionSize / yRatio)
-
-                                # Preparing informations to write into the .skinet file
-                                fusionInfo["division_size"] = divisionSize
-                                fusionInfo["min_overlap_part"] = 0
-                                fusionInfo["xStarts"] = xStarts
-                                fusionInfo["yStarts"] = yStarts
-                                fusionInfo["max_div_per_axis"] = nbMaxDivPerAxis
-                                fusionInfo["cortex_area"] = dD.getBWCount(allCortices)[1]
-                                fusionInfo["divisions"] = {}
-
+                                allCorticesArea = dD.getBWCount(allCortices)[1]
                                 with open(os.path.join(image_results_path, f"{imageInfo['NAME']}_stats.json"),
                                           "w") as saveFile:
-                                    stats = {"cortex": {"count": 1, "area": fusionInfo["cortex_area"]}}
+                                    stats = {"cortex": {"count": 1, "area": allCorticesArea}}
                                     try:
                                         json.dump(stats, saveFile, indent='\t')
                                     except TypeError:
                                         print("    Failed to save statistics", flush=True)
 
-                                step = "saving divisions of cleaned image"
-                                # Extracting and saving all divisions
-                                for divID in range(dD.getDivisionsCount(xStarts, yStarts)):
-                                    cortexDiv = dD.getImageDivision(allCorticesSmall, xStartsEquivalent,
-                                                                    yStartsEquivalent,
-                                                                    divID, divisionSize=(xDivSide, yDivSide))
-                                    black, white = dD.getBWCount(cortexDiv.astype(np.uint8))
-                                    partOfDiv = white / (white + black)
-                                    fusionInfo["divisions"][divID] = {"cortex_area": white,
-                                                                      "cortex_representative_part": partOfDiv,
-                                                                      "used": partOfDiv > fusionDivThreshold}
-                                    if partOfDiv > fusionDivThreshold:
-                                        x, xEnd, y, yEnd = dD.getDivisionByID(xStarts, yStarts, divID, divisionSize)
-                                        fusionInfo["divisions"][divID]["coordinates"] = {"x1": x, "x2": xEnd, "y1": y,
-                                                                                         "y2": yEnd}
-                                        imageDivision = dD.getImageDivision(imageInfo['FULL_RES_IMAGE'], xStarts,
-                                                                            yStarts,
-                                                                            divID, divisionSize)
-                                        cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_{divID}.jpg"),
-                                                    cv2.cvtColor(imageDivision, cv2.COLOR_RGB2BGR), CV2_IMWRITE_PARAM)
+                                temp = np.repeat(allCortices[:, :, np.newaxis], 3, axis=2)
 
-                                # Writing informations into the .skinet file
-                                with open(fusion_info_file_path, 'w') as fusionInfoFile:
-                                    try:
-                                        json.dump(fusionInfo, fusionInfoFile, indent="\t")
-                                    except TypeError:
-                                        print("    Failed to save fusion info file", file=sys.stderr, flush=True)
+                                # Masking the image and saving it
+                                imageInfo['FULL_RES_IMAGE'] = cv2.bitwise_and(
+                                    imageInfo['FULL_RES_IMAGE'][allCorticesROI[0]: allCorticesROI[2],
+                                                                allCorticesROI[1]:allCorticesROI[3], :],
+                                    temp[allCorticesROI[0]: allCorticesROI[2],
+                                         allCorticesROI[1]:allCorticesROI[3], :])
+                                cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_cleaned.jpg"),
+                                            cv2.cvtColor(imageInfo['FULL_RES_IMAGE'], cv2.COLOR_RGB2BGR),
+                                            CV2_IMWRITE_PARAM)
+
+                                if enableCortexFusionDiv:
+                                    #########################################################
+                                    # Preparing to export all "fusion" divisions with stats #
+                                    #########################################################
+                                    fusion_info_file_path = os.path.join(image_results_path,
+                                                                         f"{imageInfo['NAME']}_fusion_info.skinet")
+                                    fusionInfo = {"image": imageInfo["NAME"]}
+
+                                    # Computing ratio between full resolution image and the low one
+                                    height, width, _ = imageInfo['FULL_RES_IMAGE'].shape
+                                    smallHeight, smallWidth = allCorticesSmall.shape
+                                    xRatio = width / smallWidth
+                                    yRatio = height / smallHeight
+
+                                    # Computing divisions coordinates for full and low resolution images
+                                    divisionSize = dD.getMaxSizeForDivAmount(nbMaxDivPerAxis, self.__DIVISION_SIZE,
+                                                                             self.__MIN_OVERLAP_PART_MAIN)
+                                    xStarts = dD.computeStartsOfInterval(width, intervalLength=divisionSize,
+                                                                         min_overlap_part=0)
+                                    yStarts = dD.computeStartsOfInterval(height, intervalLength=divisionSize,
+                                                                         min_overlap_part=0)
+
+                                    xStartsEquivalent = [round(x / xRatio) for x in xStarts]
+                                    yStartsEquivalent = [round(y / yRatio) for y in yStarts]
+                                    xDivSide = round(divisionSize / xRatio)
+                                    yDivSide = round(divisionSize / yRatio)
+
+                                    # Preparing informations to write into the .skinet file
+                                    fusionInfo["division_size"] = divisionSize
+                                    fusionInfo["min_overlap_part"] = 0
+                                    fusionInfo["xStarts"] = xStarts
+                                    fusionInfo["yStarts"] = yStarts
+                                    fusionInfo["max_div_per_axis"] = nbMaxDivPerAxis
+                                    fusionInfo["cortex_area"] = allCorticesArea
+                                    fusionInfo["divisions"] = {}
+
+                                    step = "saving divisions of cleaned image"
+                                    # Extracting and saving all divisions
+                                    for divID in range(dD.getDivisionsCount(xStarts, yStarts)):
+                                        cortexDiv = dD.getImageDivision(allCorticesSmall, xStartsEquivalent,
+                                                                        yStartsEquivalent,
+                                                                        divID, divisionSize=(xDivSide, yDivSide))
+                                        black, white = dD.getBWCount(cortexDiv.astype(np.uint8))
+                                        partOfDiv = white / (white + black)
+                                        fusionInfo["divisions"][divID] = {"cortex_area": white,
+                                                                          "cortex_representative_part": partOfDiv,
+                                                                          "used": partOfDiv > fusionDivThreshold}
+                                        if partOfDiv > fusionDivThreshold:
+                                            x, xEnd, y, yEnd = dD.getDivisionByID(xStarts, yStarts, divID, divisionSize)
+                                            fusionInfo["divisions"][divID]["coordinates"] = {"x1": x, "x2": xEnd, "y1": y,
+                                                                                             "y2": yEnd}
+                                            imageDivision = dD.getImageDivision(imageInfo['FULL_RES_IMAGE'], xStarts,
+                                                                                yStarts,
+                                                                                divID, divisionSize)
+                                            cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_{divID}.jpg"),
+                                                        cv2.cvtColor(imageDivision, cv2.COLOR_RGB2BGR), CV2_IMWRITE_PARAM)
+
+                                    # Writing informations into the .skinet file
+                                    with open(fusion_info_file_path, 'w') as fusionInfoFile:
+                                        try:
+                                            json.dump(fusionInfo, fusionInfoFile, indent="\t")
+                                        except TypeError:
+                                            print("    Failed to save fusion info file", file=sys.stderr, flush=True)
 
                         if not displayOnlyAP:
                             print(" - Applying masks on image")
                         step = "saving predicted image"
                         fileName = os.path.join(image_results_path, f"{imageInfo['NAME']}_Predicted")
                         # No need of reloading or passing copy of image as it is the final drawing
-                        _ = visualize.display_instances(fullImage, res['rois'], res['masks'], res['class_ids'],
-                                                        visualizeNames, res['scores'], colorPerClass=True,
-                                                        fileName=fileName, onlyImage=True, silent=True, figsize=(
-                                                         (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                                                         (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
-                                                        ), image_format=imageInfo['IMAGE_FORMAT'], config=self.__CONFIG)
+                        _ = visualize.display_instances(
+                            fullImage, res['rois'], res['masks'], res['class_ids'], visualizeNames, res['scores'],
+                            colorPerClass=True, fileName=fileName, onlyImage=True, silent=True, figsize=(
+                                (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
+                                (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
+                            ), image_format=imageInfo['IMAGE_FORMAT'], config=self.__CONFIG
+                        )
                         # Annotations Extraction
                         step = "saving annotations"
                         if not displayOnlyAP:

@@ -1,4 +1,5 @@
 from datetime import datetime
+import numpy as np
 
 
 def progressBar(value, maxValue, prefix="", suffix="", forceNewLine=False, size=20, full='█', cursor='▒',
@@ -21,7 +22,7 @@ def progressBar(value, maxValue, prefix="", suffix="", forceNewLine=False, size=
     nbFullChar = int(percent * size)
     bar = full * nbFullChar + (cursor if percent > 0 and nbFullChar < size else "")
     emptyBar = empty * (size - len(bar))
-    print(f'\r{prefix}{bar}{emptyBar} {percent: 6.2%}{suffix}',
+    print(f'\r{prefix} {bar}{emptyBar} {percent: 6.2%} {suffix}',
           end='\n' if value == maxValue or forceNewLine else "", flush=True)
 
 
@@ -80,6 +81,36 @@ def formatDate(date: datetime = None, dateOnly=False, timeOnly=False):
     else:
         outputFormat = f"{dateFormat}_{timeFormat}"
     return date.strftime(outputFormat)
+
+
+def format_number(num, maxLength=None):
+    """
+    Formats a number using a metric prefix such as K (Kilo), M (Mega)... up to Y (Yotta)
+    :param num: the number to format
+    :param maxLength: maximum length of the formatted number, will reduce number of decimals from 2 to 0 depending on
+                      the length but will at least return abs(num / 1000^N) followed by the metric prefix for 1000^N.
+    :return: the formatted number with up to 2 decimal digits
+    """
+    # https://stackoverflow.com/questions/579310/formatting-long-numbers-as-strings-in-python
+    suffixes = ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']
+    magnitude = 0
+    isInt = np.issubdtype(type(num), np.integer)
+    while abs(num) >= 1000 and magnitude < len(suffixes) - 1:
+        magnitude += 1
+        num /= 1000.0
+
+    if magnitude == 0 and isInt:
+        return str(int(num))
+
+    if maxLength is not None:
+        possibleText = [f"{num:.2f}{suffixes[magnitude]}",
+                        f"{num:.1f}{suffixes[magnitude]}",
+                        f"{num:.0f}{suffixes[magnitude]}"]
+        for text in possibleText:
+            if len(text) <= maxLength:
+                return text
+        return possibleText[-1]
+    return f"{num:.1f}{suffixes[magnitude]}"
 
 
 def combination(setSize, combinationSize):

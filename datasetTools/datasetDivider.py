@@ -161,7 +161,7 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
     start_time = time()
     for idx, imageDir in enumerate(imageList):
         if verbose > 0:
-            progressBar(idx, len(imageList), prefix="Dividing dataset ",
+            progressBar(idx, len(imageList), prefix="Dividing dataset",
                         suffix=f" {formatTime(time() - start_time)} Current : {imageDir}")
         imageDirPath = os.path.join(inputDatasetPath, imageDir)
 
@@ -251,4 +251,4 @@ def divideDataset(inputDatasetPath: str, outputDatasetPath: str = None, squareSi
                     os.remove(imageDivPath)  # Removing the .png image in /images
                     os.removedirs(imagesDirPath)  # Removing the /images folder
     if verbose > 0:
-        progressBar(1, 1, prefix="Dividing dataset ", suffix=f" {formatTime(time() - start_time)}" + " " * 20)
+        progressBar(1, 1, prefix="Dividing dataset", suffix=f"{formatTime(time() - start_time)}" + " " * 20)

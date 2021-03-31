@@ -22,6 +22,7 @@ from matplotlib.patches import Polygon
 import IPython.display
 
 # Root directory of the project
+from common_utils import format_number
 from datasetTools.datasetDivider import CV2_IMWRITE_PARAM
 
 ROOT_DIR = os.path.abspath("../../")
@@ -88,18 +89,29 @@ def apply_mask(image, mask, color, alpha=0.5, bbox=None):
     else:
         _mask = mask
 
-    # Color conversion if given in percentage instead of raw value
-    if type(color[0]) is float:
-        _color = [round(channelColor * 255) for channelColor in color]
-    else:
-        _color = color
+    if type(color) in [tuple, list] and len(image.shape) > 2:
+        # Color conversion if given in percentage instead of raw value
+        if type(color[0]) is float:
+            _color = [round(channelColor * 255) for channelColor in color]
+        else:
+            _color = color
 
-    # Apply mask on each channel
-    for channel in range(3):
-        image[y1:y2, x1:x2, channel] = np.where(
+        # Apply mask on each channel
+        for channel in range(3):
+            image[y1:y2, x1:x2, channel] = np.where(
+                _mask > 0,
+                (image[y1:y2, x1:x2, channel].astype(np.uint32) * (1 - alpha) + alpha * _color[channel]).astype(
+                    np.uint8),
+                image[y1:y2, x1:x2, channel]
+            )
+    elif type(color) in [int, float] and len(image.shape) == 2:
+        # Color conversion if given in percentage instead of raw value
+        _color = (color * 255) if type(color) is float else color
+
+        image[y1:y2, x1:x2] = np.where(
             _mask > 0,
-            (image[y1:y2, x1:x2, channel].astype(np.uint32) * (1 - alpha) + alpha * _color[channel]).astype(np.uint8),
-            image[y1:y2, x1:x2, channel]
+            (image[y1:y2, x1:x2].astype(np.uint32) * (1 - alpha) + alpha * _color).astype(np.uint8),
+            image[y1:y2, x1:x2]
         )
     return image
 
@@ -147,13 +159,17 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     :return: None
     """
     matrix = np.copy(confusion_matrix)
-    NB_CLASS = len(class_names)
     # Adding background as first class
     labels = class_names.copy()
-    labels.insert(0, "background")
+    if labels[0].lower() not in ['bg', 'background']:
+        labels.insert(0, "Background")
+    for i in range(len(labels)):
+        labels[i] = labels[i].replace('_', ' ').capitalize()
+
+    NB_CLASS = len(labels)
 
     # plt.plot()
-    fig, ax = plt.subplots(figsize=(8, 6), frameon=False)
+    fig, ax = plt.subplots(figsize=(9, 6.75), frameon=False)
     ax.set_title(title)
 
     if normalize:
@@ -173,21 +189,24 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
 
     # Using class names as labels of both axis
     plt.xlabel("Predicted")
-    ax.set_xticks(np.arange(NB_CLASS + 1))
+    ax.set_xticks(np.arange(NB_CLASS))
     ax.set_xticklabels(labels)
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
     plt.ylabel("Ground Truth")
-    ax.set_yticks(np.arange(NB_CLASS + 1))
+    ax.set_yticks(np.arange(NB_CLASS))
     ax.set_yticklabels(labels)
 
     # Adding the text values above the image
-    for i in range(NB_CLASS + 1):
-        for j in range(NB_CLASS + 1):
-            if matrix[i][j] != 0:
+    for i in range(NB_CLASS):
+        for j in range(NB_CLASS):
+            if matrix[i][j] >= 0.005:
                 color = get_text_color_by_colormap(matrix[i][j], maxVal, cmap)
-                ax.text(j, i, round(matrix[i][j], 2), ha="center", va="center", color=color)
-
+                if normalize:
+                    text = f"{round(matrix[i][j], 2):0.2f}"
+                else:
+                    text = format_number(matrix[i][j], maxLength=4)
+                ax.text(j, i, text, ha="center", va="center", color=color)
     # Auto resize of dimension
     fig.tight_layout()
     # Saving the figure if fileName given
@@ -197,6 +216,36 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
         plt.show()
     fig.clf()
     del ax, fig
+
+
+def create_multiclass_mask(image_shape, results: dict, classes_hierarchy, config=None):
+    """
+    Creates an image containing all the masks where pixel color is the mask's class ID
+    :param image_shape: the shape of the initial image
+    :param results: the results dictionary containing all the masks
+    :param classes_hierarchy: the classes hierarchy used to determine the order of the classes to apply masks
+    :param config: the config object used to expand mini_masks if enabled
+    :return: the multi-mask image
+    """
+    res = np.zeros((image_shape[0], image_shape[1]), np.uint8)
+
+    masks = results['masks']
+    class_ids = results['class_ids']
+    rois = results['rois']
+    indices = np.arange(len(class_ids))
+
+    levels = utils.remove_redundant_classes(utils.classes_level(classes_hierarchy), keepFirst=False)
+    for lvl in levels:
+        current_indices = indices[np.isin(class_ids, lvl)]
+        for idx in current_indices:
+            mask = masks[:, :, idx].astype(bool).astype(np.uint8) * 255
+            roi = rois[idx]
+            classID = int(class_ids[idx])
+            if config is not None and config.USE_MINI_MASK:
+                shifted_bbox = utils.shift_bbox(roi)
+                mask = utils.expand_mask(shifted_bbox, mask, shifted_bbox[2:])
+            res = apply_mask(res, mask, classID, 1, roi)
+    return res
 
 
 def display_instances(image, boxes, masks, class_ids, class_names,
