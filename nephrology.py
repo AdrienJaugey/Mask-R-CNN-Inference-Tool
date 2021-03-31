@@ -296,7 +296,8 @@ class NephrologyInferenceModel:
                   filter_bb_threshold=0.5, filter_mask_threshold=0.9,
                   priority_table=None, nbMaxDivPerAxis=3, fusionDivThreshold=0.1,
                   displayOnlyAP=False, savePreFusionImage=False, savePreFilterImage=False,
-                  allowSparse=True, minMaskArea=300, on_border_threshold=0.25, perPixelConfMatrix=True):
+                  allowSparse=True, minMaskArea=300, on_border_threshold=0.25, perPixelConfMatrix=True,
+                  enableCortexFusionDiv=True):
 
         if len(images) == 0:
             print("Images list is empty, no inference to perform.")
@@ -655,10 +656,12 @@ class NephrologyInferenceModel:
                             if perPixelConfMatrix:
                                 if self.__CORTEX_MODE:
                                     hierarchy = [2, {3: 1}]
+                                    image_shape = self.__CORTEX_SIZE
                                 else:
                                     hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{9: 10}, 10]}]
+                                    image_shape = (imageInfo['HEIGHT'], imageInfo['WIDTH'])
                                 confusion_matrix = utils.compute_confusion_matrix(
-                                    image_shape=(imageInfo['HEIGHT'], imageInfo['WIDTH']), config=self.__CONFIG,
+                                    image_shape=image_shape, config=self.__CONFIG,
                                     expectedResults={'rois': gt_bbox, 'masks': gt_mask, 'class_ids': gt_class_id},
                                     predictedResults=res, classes_hierarchy=hierarchy, num_classes=self.__NB_CLASS
                                 )
@@ -738,6 +741,15 @@ class NephrologyInferenceModel:
                                 allCortices = cv2.resize(np.uint8(allCortices),
                                                          (imageInfo['WIDTH'], imageInfo['HEIGHT']),
                                                          interpolation=cv2.INTER_CUBIC)
+                                allCorticesArea = dD.getBWCount(allCortices)[1]
+                                with open(os.path.join(image_results_path, f"{imageInfo['NAME']}_stats.json"),
+                                          "w") as saveFile:
+                                    stats = {"cortex": {"count": 1, "area": allCorticesArea}}
+                                    try:
+                                        json.dump(stats, saveFile, indent='\t')
+                                    except TypeError:
+                                        print("    Failed to save statistics", flush=True)
+
                                 temp = np.repeat(allCortices[:, :, np.newaxis], 3, axis=2)
 
                                 # Masking the image and saving it
@@ -750,76 +762,69 @@ class NephrologyInferenceModel:
                                             cv2.cvtColor(imageInfo['FULL_RES_IMAGE'], cv2.COLOR_RGB2BGR),
                                             CV2_IMWRITE_PARAM)
 
-                                #########################################################
-                                # Preparing to export all "fusion" divisions with stats #
-                                #########################################################
-                                fusion_info_file_path = os.path.join(image_results_path,
-                                                                     f"{imageInfo['NAME']}_fusion_info.skinet")
-                                fusionInfo = {"image": imageInfo["NAME"]}
+                                if enableCortexFusionDiv:
+                                    #########################################################
+                                    # Preparing to export all "fusion" divisions with stats #
+                                    #########################################################
+                                    fusion_info_file_path = os.path.join(image_results_path,
+                                                                         f"{imageInfo['NAME']}_fusion_info.skinet")
+                                    fusionInfo = {"image": imageInfo["NAME"]}
 
-                                # Computing ratio between full resolution image and the low one
-                                height, width, _ = imageInfo['FULL_RES_IMAGE'].shape
-                                smallHeight, smallWidth = allCorticesSmall.shape
-                                xRatio = width / smallWidth
-                                yRatio = height / smallHeight
+                                    # Computing ratio between full resolution image and the low one
+                                    height, width, _ = imageInfo['FULL_RES_IMAGE'].shape
+                                    smallHeight, smallWidth = allCorticesSmall.shape
+                                    xRatio = width / smallWidth
+                                    yRatio = height / smallHeight
 
-                                # Computing divisions coordinates for full and low resolution images
-                                divisionSize = dD.getMaxSizeForDivAmount(nbMaxDivPerAxis, self.__DIVISION_SIZE,
-                                                                         self.__MIN_OVERLAP_PART_MAIN)
-                                xStarts = dD.computeStartsOfInterval(width, intervalLength=divisionSize,
-                                                                     min_overlap_part=0)
-                                yStarts = dD.computeStartsOfInterval(height, intervalLength=divisionSize,
-                                                                     min_overlap_part=0)
+                                    # Computing divisions coordinates for full and low resolution images
+                                    divisionSize = dD.getMaxSizeForDivAmount(nbMaxDivPerAxis, self.__DIVISION_SIZE,
+                                                                             self.__MIN_OVERLAP_PART_MAIN)
+                                    xStarts = dD.computeStartsOfInterval(width, intervalLength=divisionSize,
+                                                                         min_overlap_part=0)
+                                    yStarts = dD.computeStartsOfInterval(height, intervalLength=divisionSize,
+                                                                         min_overlap_part=0)
 
-                                xStartsEquivalent = [round(x / xRatio) for x in xStarts]
-                                yStartsEquivalent = [round(y / yRatio) for y in yStarts]
-                                xDivSide = round(divisionSize / xRatio)
-                                yDivSide = round(divisionSize / yRatio)
+                                    xStartsEquivalent = [round(x / xRatio) for x in xStarts]
+                                    yStartsEquivalent = [round(y / yRatio) for y in yStarts]
+                                    xDivSide = round(divisionSize / xRatio)
+                                    yDivSide = round(divisionSize / yRatio)
 
-                                # Preparing informations to write into the .skinet file
-                                fusionInfo["division_size"] = divisionSize
-                                fusionInfo["min_overlap_part"] = 0
-                                fusionInfo["xStarts"] = xStarts
-                                fusionInfo["yStarts"] = yStarts
-                                fusionInfo["max_div_per_axis"] = nbMaxDivPerAxis
-                                fusionInfo["cortex_area"] = dD.getBWCount(allCortices)[1]
-                                fusionInfo["divisions"] = {}
+                                    # Preparing informations to write into the .skinet file
+                                    fusionInfo["division_size"] = divisionSize
+                                    fusionInfo["min_overlap_part"] = 0
+                                    fusionInfo["xStarts"] = xStarts
+                                    fusionInfo["yStarts"] = yStarts
+                                    fusionInfo["max_div_per_axis"] = nbMaxDivPerAxis
+                                    fusionInfo["cortex_area"] = allCorticesArea
+                                    fusionInfo["divisions"] = {}
 
-                                with open(os.path.join(image_results_path, f"{imageInfo['NAME']}_stats.json"),
-                                          "w") as saveFile:
-                                    stats = {"cortex": {"count": 1, "area": fusionInfo["cortex_area"]}}
-                                    try:
-                                        json.dump(stats, saveFile, indent='\t')
-                                    except TypeError:
-                                        print("    Failed to save statistics", flush=True)
+                                    step = "saving divisions of cleaned image"
+                                    # Extracting and saving all divisions
+                                    for divID in range(dD.getDivisionsCount(xStarts, yStarts)):
+                                        cortexDiv = dD.getImageDivision(allCorticesSmall, xStartsEquivalent,
+                                                                        yStartsEquivalent,
+                                                                        divID, divisionSize=(xDivSide, yDivSide))
+                                        black, white = dD.getBWCount(cortexDiv.astype(np.uint8))
+                                        partOfDiv = white / (white + black)
+                                        fusionInfo["divisions"][divID] = {"cortex_area": white,
+                                                                          "cortex_representative_part": partOfDiv,
+                                                                          "used": partOfDiv > fusionDivThreshold}
+                                        if partOfDiv > fusionDivThreshold:
+                                            x, xEnd, y, yEnd = dD.getDivisionByID(xStarts, yStarts, divID, divisionSize)
+                                            fusionInfo["divisions"][divID]["coordinates"] = {"x1": x, "x2": xEnd, "y1": y,
+                                                                                             "y2": yEnd}
+                                            imageDivision = dD.getImageDivision(imageInfo['FULL_RES_IMAGE'], xStarts,
+                                                                                yStarts,
+                                                                                divID, divisionSize)
+                                            cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_{divID}.jpg"),
+                                                        cv2.cvtColor(imageDivision, cv2.COLOR_RGB2BGR), CV2_IMWRITE_PARAM)
 
-                                step = "saving divisions of cleaned image"
-                                # Extracting and saving all divisions
-                                for divID in range(dD.getDivisionsCount(xStarts, yStarts)):
-                                    cortexDiv = dD.getImageDivision(allCorticesSmall, xStartsEquivalent,
-                                                                    yStartsEquivalent,
-                                                                    divID, divisionSize=(xDivSide, yDivSide))
-                                    black, white = dD.getBWCount(cortexDiv.astype(np.uint8))
-                                    partOfDiv = white / (white + black)
-                                    fusionInfo["divisions"][divID] = {"cortex_area": white,
-                                                                      "cortex_representative_part": partOfDiv,
-                                                                      "used": partOfDiv > fusionDivThreshold}
-                                    if partOfDiv > fusionDivThreshold:
-                                        x, xEnd, y, yEnd = dD.getDivisionByID(xStarts, yStarts, divID, divisionSize)
-                                        fusionInfo["divisions"][divID]["coordinates"] = {"x1": x, "x2": xEnd, "y1": y,
-                                                                                         "y2": yEnd}
-                                        imageDivision = dD.getImageDivision(imageInfo['FULL_RES_IMAGE'], xStarts,
-                                                                            yStarts,
-                                                                            divID, divisionSize)
-                                        cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_{divID}.jpg"),
-                                                    cv2.cvtColor(imageDivision, cv2.COLOR_RGB2BGR), CV2_IMWRITE_PARAM)
-
-                                # Writing informations into the .skinet file
-                                with open(fusion_info_file_path, 'w') as fusionInfoFile:
-                                    try:
-                                        json.dump(fusionInfo, fusionInfoFile, indent="\t")
-                                    except TypeError:
-                                        print("    Failed to save fusion info file", file=sys.stderr, flush=True)
+                                    # Writing informations into the .skinet file
+                                    with open(fusion_info_file_path, 'w') as fusionInfoFile:
+                                        try:
+                                            json.dump(fusionInfo, fusionInfoFile, indent="\t")
+                                        except TypeError:
+                                            print("    Failed to save fusion info file", file=sys.stderr, flush=True)
 
                         if not displayOnlyAP:
                             print(" - Applying masks on image")
