@@ -484,7 +484,7 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
     names, images, missingImages, missingAnnotations = getInfoRawDataset(rawDatasetPath, verbose=True,
                                                                          adapter=adapter, mainFormat=imageFormat)
     if classesInfo is None:
-        if mode == 'main':
+        if mode in ["main", 'mest_main']:
             classesInfo = NEPHRO_CLASSES
         elif mode == "cortex":
             classesInfo = CORTICES_CLASSES
@@ -497,7 +497,7 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
                     suffix=f" {formatTime(round(time() - start_time))} Current : {file}")
         createMasksOfImage(rawDatasetPath, file, datasetName, adapter, classesInfo=classesInfo,
                            resize=resize, imageFormat=imageFormat)
-        if mode == "main":
+        if mode in ["main", 'mest_main']:
             fuseCortices(datasetName, file, deleteBaseMasks=deleteBaseCortexMasks, silent=True)
             cleanImage(datasetName, file, cleaningClass='cortex')
         elif mode == "mest_glom":
