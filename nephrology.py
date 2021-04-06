@@ -639,7 +639,7 @@ class NephrologyInferenceModel:
                             # TODO : Build automatically classes_hierarchy
                             classes_hierarchy = None
                             if not self.__CORTEX_MODE and len(self.__CUSTOM_CLASS_NAMES) == 10:
-                                classes_hierarchy = {3: [4, 5], 8: [9, 10], 9: [10]}
+                                classes_hierarchy = {3: [4, 5], 8: [9, 10], 10: [9]}
                             step = "computing confusion matrix"
                             AP, _, _, _, confusion_matrix = utils.compute_ap(gt_boxes=gt_bbox, gt_class_ids=gt_class_id,
                                                                              gt_masks=gt_mask, pred_boxes=res["rois"],
@@ -658,7 +658,7 @@ class NephrologyInferenceModel:
                                     hierarchy = [2, {3: 1}]
                                     image_shape = self.__CORTEX_SIZE
                                 else:
-                                    hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{9: 10}, 10]}]
+                                    hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{10: 9}, 9]}]
                                     image_shape = (imageInfo['HEIGHT'], imageInfo['WIDTH'])
                                 confusion_matrix = utils.compute_confusion_matrix(
                                     image_shape=image_shape, config=self.__CONFIG,
