@@ -111,10 +111,8 @@ class NephrologyInferenceModel:
         # Testing only for one of the format, as Error would have already been raised if modelPath was not correct
         isExportedModelDir = os.path.exists(os.path.join(modelPath, 'saved_model'))
         if isExportedModelDir:
-            self.__MODE = reg.search(os.path.basename(modelPath)).group(1)
             self.__MODEL_PATH = os.path.join(self.__MODEL_PATH, 'saved_model')
-        else:
-            self.__MODE = reg.search(os.path.basename(os.path.dirname(modelPath))).group(1)
+        self.__MODE = reg.search(os.path.basename(modelPath)).group(1)
         cortex_mode = self.__MODE == "cortex"
 
         self.__MODEL = TensorflowDetector(self.__MODEL_PATH)
