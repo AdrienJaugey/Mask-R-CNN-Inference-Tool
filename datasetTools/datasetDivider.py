@@ -68,7 +68,7 @@ def getDivisionByID(xStarts: [int], yStarts: [int], idDivision: int, divisionSiz
     if not 0 <= idDivision < len(xStarts) * len(yStarts):
         return -1, -1, -1, -1
     yIndex = idDivision // len(xStarts)
-    xIndex = idDivision - yIndex * len(xStarts)
+    xIndex = idDivision % len(xStarts)
 
     x = xStarts[xIndex]
     xEnd = x + (divisionSize if type(divisionSize) is int else divisionSize[0])
@@ -116,9 +116,9 @@ def getBWCount(mask):
     :param mask: the mask image
     :return: number of black pixels, number of white pixels
     """
-    mask = mask.astype(np.bool).flatten()
-    totalPx = int(mask.shape[0])
-    whitePx = int(np.sum(mask))
+    mask_ = mask.copy().astype(np.bool).flatten()
+    totalPx = int(mask_.shape[0])
+    whitePx = int(np.sum(mask_))
     return totalPx - whitePx, whitePx
 
 

@@ -168,15 +168,11 @@ def sortImages(datasetPath: str, unusedDirPath: str = None, mode: str = "main"):
     NOT_TO_COUNT = ['images', 'full_images']
     baseClass = None
     if mode == "main":
-        NOT_TO_COUNT.extend(['cortex', 'medullaire', 'capsule', 'artefact'])
+        NOT_TO_COUNT.extend(['cortex', 'medullaire', 'capsule'])
         baseClass = "cortex"
     elif mode == "cortex":
         NOT_TO_COUNT.extend(["nsg", "nsg_complet", "nsg_partiel", "tubule_sain", "tubule_atrophique", "vaisseau",
                              "intima", "media", "pac", "artefact", "veine"])
-    elif mode == "mest_main":
-        NOT_TO_COUNT.extend(['cortex', 'medullaire', 'capsule', 'artefact',
-                             'intima', 'media', 'nsg_complet', 'nsg_partiel'])
-        baseClass = "cortex"
     elif mode == "mest_glom":
         NOT_TO_COUNT.extend(["nsg_complet", "nsg_partiel", "tubule_sain", "tubule_atrophique", "vaisseau",
                              "intima", "media", "pac", "artefact", "veine", "medullaire", "capsule"])
@@ -210,9 +206,8 @@ def sortImages(datasetPath: str, unusedDirPath: str = None, mode: str = "main"):
         print("Moving {} non-usable images directories into correct folder".format(len(toBeMoved)))
         for imageWithoutCortexDir in toBeMoved:
             srcPath = os.path.join(datasetPath, imageWithoutCortexDir)
-            if os.path.exists(srcPath):
-                dstPath = os.path.join(unusedDirPath, imageWithoutCortexDir)
-                move(srcPath, dstPath)
+            dstPath = os.path.join(unusedDirPath, imageWithoutCortexDir)
+            move(srcPath, dstPath)
 
 
 def createValDataset(datasetPath: str, valDatasetPath: str = None, valDatasetSizePart=0.1, valDatasetMinSize=30,
@@ -459,7 +454,7 @@ def generateCortexDataset(rawDataset: str, outputDataset="nephrology_cortex_data
             dD.divideDataset(inputPath, outputPath, squareSideLength=1024, min_overlap_part=overlap,
                              mode="cortex", verbose=1)
     if separateDivInsteadOfImage:
-        # Creating val dataset by separating image divisions
+        # Creating val dataset by
         recreateInfo["val_dataset"] = createValDataset(outputDataset, valDatasetPath=outputDataset + '_val',
                                                        rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
                                                        recreateInfo=recreateValList)
@@ -475,7 +470,7 @@ def generateCortexDataset(rawDataset: str, outputDataset="nephrology_cortex_data
 
 def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_dataset", cleanBeforeStart=True,
                          mode="glom", imageFormat='jpg', divisionSize=1024, overlap=0.33,
-                         separateDivInsteadOfImage=False, separateByPatient=True,
+                         separateDivInsteadOfImage=False,
                          recreateValList=None, adapter: AnnotationAdapter = None):
     """
     Generates datasets folder from a base directory, all paths are customizable, and it can also remove previous
@@ -483,14 +478,12 @@ def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_
     :param rawDataset: path to the base directory
     :param outputDataset: path to the output cortex dataset
     :param cleanBeforeStart: if True, will delete previous directories that could still exist
-    :param mode: the mode to use : glom or main
+    :param mode: the mode to use : glom or fiat
     :param imageFormat: the image format to look for and to use
     :param divisionSize: size of the output images
     :param overlap: the least overlap between two divisions
     :param separateDivInsteadOfImage: if True, divisions of same image can be separated into training and val
                                       directories
-    :param separateByPatient: if True, will select patients based on images names and then gather all the images
-                              of these patients into validation dataset
     :param recreateValList: list of the images to use to recreate cortex dataset
     :param adapter: the adapter to use if given, else it will be chosen depending on the annotations found
     :return: None
@@ -498,8 +491,8 @@ def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_
     outputDataset = outputDataset.format(mode=mode)
     recreateInfo = {"mode": "mest", "submode": mode, "output_dataset": outputDataset,
                     "clean_before_start": cleanBeforeStart, "image_format": imageFormat, "division_size": divisionSize,
-                    "min_overlap_part": overlap, "val_dataset": [],
-                    "separate": "div" if separateDivInsteadOfImage else ("patient" if separateByPatient else "images")}
+                    "min_overlap_part": overlap, "separate": "div" if separateDivInsteadOfImage else "images",
+                    "val_dataset": []}
     # Removing former dataset directories
     if cleanBeforeStart:
         import shutil
@@ -528,40 +521,32 @@ def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_
                                                            valDatasetPath=outputDataset + '_val',
                                                            rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
                                                            recreateInfo=recreateValList)
-    elif mode == "main":
+    elif mode == "fiat":
         if not separateDivInsteadOfImage:
-            if separateByPatient:
-                recreateInfo["val_dataset"] = createValDatasetByPeople(rawDataset=rawDataset,
-                                                                       datasetPath="temp_" + outputDataset,
-                                                                       valDatasetPath='temp_' + outputDataset + '_val',
-                                                                       nbPatientBiopsie=7, nbPatientNephrectomy=3,
-                                                                       recreateInfo=recreateValList)
-            else:
-                # Taking some images from the main dataset to make the validation dataset
-                recreateInfo["val_dataset"] = createValDataset("temp_" + outputDataset,
-                                                               valDatasetPath='temp_' + outputDataset + '_val',
-                                                               rename=False, recreateInfo=recreateValList)
-
+            recreateInfo["val_dataset"] = createValDataset("temp_" + outputDataset,
+                                                           valDatasetPath="temp_" + outputDataset + '_val',
+                                                           rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
+                                                           recreateInfo=recreateValList)
         # Dividing the dataset
         if separateDivInsteadOfImage:
             divide = {"temp_" + outputDataset: outputDataset}
         else:
             divide = {"temp_" + outputDataset + '_val': outputDataset + '_val',
-                      "temp_" + outputDataset: outputDataset + '_train'}
+                      "temp_" + outputDataset + '_train': outputDataset + '_train'}
         for inputPath, outputPath in divide.items():
             dD.divideDataset(inputPath, outputPath, squareSideLength=divisionSize, min_overlap_part=overlap,
                              mode=f"mest_{mode}", verbose=1)
 
         if separateDivInsteadOfImage:
-            # Creating val dataset by separating image divisions
+            # Creating val dataset by
             recreateInfo["val_dataset"] = createValDataset(outputDataset, valDatasetPath=outputDataset + '_val',
                                                            rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
                                                            recreateInfo=recreateValList)
         for datasetPath in [outputDataset + '_train', outputDataset + '_val']:
-            sortImages(datasetPath, outputDataset + '_unused', mode="mest_main")
+            sortImages(datasetPath, outputDataset + '_unused', mode="mest_fiat")
 
-    infoNephrologyDataset(outputDataset + '_train', baseClass='cortex' if mode == "main" else 'nsg')
-    infoNephrologyDataset(outputDataset + '_val', baseClass='cortex' if mode == "main" else 'nsg')
+    infoNephrologyDataset(outputDataset + '_train', baseClass='nsg')
+    infoNephrologyDataset(outputDataset + '_val', baseClass='nsg')
     if recreateValList is None or len(recreateValList) == 0:
         with open(f"dataset_mest_{mode}_{formatDate()}.json", 'w') as recreateFile:
             json.dump(recreateInfo, recreateFile, indent="\t")
@@ -594,7 +579,6 @@ def regenerateDataset(rawDataset, recreateFilePath, adapter: AnnotationAdapter =
                              imageFormat=recreateInfo["image_format"], divisionSize=recreateInfo["division_size"],
                              overlap=recreateInfo["min_overlap_part"],
                              separateDivInsteadOfImage=recreateInfo["separate"] == "div",
-                             separateByPatient=recreateInfo["separate"] == "patient",
                              recreateValList=recreateInfo["val_dataset"], adapter=adapter)
     else:
-        raise NotImplementedError(f"{recreateInfo['mode']} dataset mode is not implemented")
+        raise NotImplementedError(f"{recreateInfo['mode']} dataset mode not available")

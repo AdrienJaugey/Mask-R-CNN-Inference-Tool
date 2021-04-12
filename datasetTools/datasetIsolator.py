@@ -5,7 +5,8 @@ from time import time
 
 from common_utils import progressBar
 from datasetTools.datasetDivider import CV2_IMWRITE_PARAM
-from datasetTools.datasetWrapper import loadSameResImage
+from datasetTools.datasetWrapper import loadSameResImage, getBboxFromName
+from mrcnn import utils
 from mrcnn.utils import in_roi, extract_bboxes
 
 
@@ -84,8 +85,47 @@ def center_mask(mask_bbox, image_shape, min_output_shape=1024, verbose=0):
     return img_bbox
 
 
-def isolateClass(datasetPath: str, outputDatasetPath: str, classToIsolate: str, image_size=1024, imageFormat="jpg",
-                 allow_oversized=True, verbose=0, silent=False):
+def getCenteredClassBboxes(datasetPath: str, imageName: str, classToCenter: str, image_size=1024,
+                           imageFormat="jpg", allow_oversized=True, config=None, verbose=0):
+    """
+    Computes and returns bboxes of all masks of the given image and class
+    :param datasetPath: path to the dataset containing the image folder
+    :param imageName: the image name
+    :param classToCenter: the class to center and get the bbox from
+    :param image_size: the minimal height and width of the bboxes
+    :param imageFormat: the image format to use to get original image
+    :param allow_oversized: if False, masks that does not fit image_size will be skipped
+    :param config: if given, config file is used to know if mini_masks are used
+    :param verbose: level of verbosity
+    :return: (N, 4) ndarray of [y1, x1, y2, x2] matching bboxes
+    """
+    imagePath = os.path.join(datasetPath, imageName, 'images', f'{imageName}.{imageFormat}')
+    image = cv2.imread(imagePath, cv2.IMREAD_COLOR)
+    image_shape = image.shape[:2]
+    classDirPath = os.path.join(datasetPath, imageName, classToCenter)
+    maskList = os.listdir(classDirPath)
+    classBboxes = np.zeros((len(maskList), 4), dtype=int)
+    toDelete = []
+    for idx, mask in enumerate(maskList):
+        maskPath = os.path.join(classDirPath, mask)
+        if config is not None and config.USE_MINI_MASK:
+            bbox = getBboxFromName(mask)
+        else:
+            maskImage = cv2.imread(maskPath, cv2.IMREAD_GRAYSCALE)
+            bbox = utils.extract_bboxes(maskImage)
+        if not allow_oversized:
+            h, w = bbox[2:] - bbox[:2]
+            if h > image_size or w > image_size:
+                if verbose > 1:
+                    print(f"{mask} mask could not fit into {(image_size, image_size)} image")
+                toDelete.append(idx)
+        classBboxes[idx] = center_mask(bbox, image_shape, min_output_shape=image_size, verbose=verbose)
+    classBboxes = np.delete(classBboxes, toDelete, axis=0)
+    return classBboxes
+
+
+def isolateClass(datasetPath: str, outputDatasetPath: str, classToIsolate: str, image_size=1024,
+                 imageFormat="jpg", allow_oversized=True, verbose=0, silent=False):
     """
     Separate base image and masks based on a class by taking each of this class's masks and centering them on a smaller
     image of shape (image_size, image_size, 1 or 3)

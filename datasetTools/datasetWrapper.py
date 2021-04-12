@@ -94,10 +94,8 @@ def getBboxFromName(imageName):
     :param imageName: the image name from which you want the bbox
     :return: the bbox as [y1, x1, y2, x2]
     """
-    res = os.path.basename(imageName)
-    res = "".join(res.split('.')[:-1])
-    res = res.split("_")[2:]
-    return np.array([int(x) for x in res])
+    lastParts = os.path.splitext(os.path.basename(imageName))[0].split('_')[-4:]
+    return np.array([int(x) for x in lastParts])
 
 
 def resizeMasks(baseMasks, xRatio: float, yRatio: float):
@@ -150,6 +148,7 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
     targetDirectoryPath = os.path.join(datasetName, imgName, 'images')
     if not os.path.exists(targetDirectoryPath):
         os.makedirs(targetDirectoryPath)
+        # TODO use file copy if unchanged else cv2
         cv2.imwrite(os.path.join(targetDirectoryPath, f"{imgName}.{imageFormat}"), img, CV2_IMWRITE_PARAM)
 
     # Finding annotation files
@@ -484,7 +483,7 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
     names, images, missingImages, missingAnnotations = getInfoRawDataset(rawDatasetPath, verbose=True,
                                                                          adapter=adapter, mainFormat=imageFormat)
     if classesInfo is None:
-        if mode in ["main", 'mest_main']:
+        if mode == 'main':
             classesInfo = NEPHRO_CLASSES
         elif mode == "cortex":
             classesInfo = CORTICES_CLASSES
@@ -497,7 +496,7 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
                     suffix=f" {formatTime(round(time() - start_time))} Current : {file}")
         createMasksOfImage(rawDatasetPath, file, datasetName, adapter, classesInfo=classesInfo,
                            resize=resize, imageFormat=imageFormat)
-        if mode in ["main", 'mest_main']:
+        if mode == "main":
             fuseCortices(datasetName, file, deleteBaseMasks=deleteBaseCortexMasks, silent=True)
             cleanImage(datasetName, file, cleaningClass='cortex')
         elif mode == "mest_glom":
