@@ -305,8 +305,8 @@ class NephrologyInferenceModel:
                 # as we need it to clean the image, we remove it from the mask list before checking if a class
                 # we want to predict has an annotated mask
                 if self.__MODE in ['main', 'mest_main', 'mest_glom'] and not imageInfo['HAS_ANNOTATION']:
-                    if base_class not in self.__CUSTOM_CLASS_NAMES and base_class in maskDirs:
-                        maskDirs.remove(base_class)
+                    if imageInfo['BASE_CLASS'] not in self.__CUSTOM_CLASS_NAMES and imageInfo['BASE_CLASS'] in maskDirs:
+                        maskDirs.remove(imageInfo['BASE_CLASS'])
                         imageInfo['HAS_ANNOTATION'] = any([d in self.__CUSTOM_CLASS_NAMES for d in maskDirs])
                 if imageInfo['HAS_ANNOTATION'] and not silent:
                     print("    - AP and confusion matrix will be computed")
