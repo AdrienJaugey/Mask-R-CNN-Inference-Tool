@@ -106,13 +106,14 @@ class NephrologyInferenceModel:
         print("Initialisation")
         self.__STEP = "init"
 
+        # to capture mode + version : ^skinet_([a-zA-Z_]+)_v([0-9]+|%LAST%).*$
         self.__MODEL_PATH = find_latest_weight(modelPath)
         reg = re.compile(r'^skinet_([a-zA-Z_]+)_v[0-9]+.*$')
         # Testing only for one of the format, as Error would have already been raised if modelPath was not correct
         isExportedModelDir = os.path.exists(os.path.join(modelPath, 'saved_model'))
         if isExportedModelDir:
             self.__MODEL_PATH = os.path.join(self.__MODEL_PATH, 'saved_model')
-        self.__MODE = reg.search(os.path.basename(modelPath)).group(1)
+        self.__MODE = reg.search(os.path.basename(self.__MODEL_PATH)).group(1)
         cortex_mode = self.__MODE == "cortex"
 
         self.__MODEL = TensorflowDetector(self.__MODEL_PATH)
