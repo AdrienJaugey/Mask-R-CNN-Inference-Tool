@@ -1,4 +1,4 @@
-import math
+import shutil
 import xml.etree.ElementTree as et
 from datasetTools.AnnotationAdapter import XMLAdapter
 
@@ -111,7 +111,8 @@ class ASAPAdapter(XMLAdapter):
     @staticmethod
     def readFile(filePath):
         canRead = ASAPAdapter.canRead(filePath)
-        assert canRead
+        if not canRead:
+            raise TypeError('This file is not an ASAP annotation file')
         tree = et.parse(filePath)
         root = tree.getroot()
         masks = []
@@ -126,3 +127,27 @@ class ASAPAdapter(XMLAdapter):
                 ptsMask.append([xCoordinate, yCoordinate])
             masks.append((maskClass, ptsMask))
         return masks
+
+    @staticmethod
+    def offsetAnnotations(filePath, xOffset=0, yOffset=0, outputFilePath=None):
+        canRead = ASAPAdapter.canRead(filePath)
+        if not canRead:
+            raise TypeError('This file is not an ASAP annotation file')
+        if xOffset == yOffset == 0:
+            if outputFilePath is not None and outputFilePath != filePath:
+                shutil.copyfile(filePath, outputFilePath)
+            else:
+                return None
+        else:
+            tree = et.parse(filePath)
+            root = tree.getroot()
+            # Going through the XML tree and updating all Annotation nodes
+            for annotation in root.findall('./Annotations/Annotation'):
+                # Going through the Annotation node and updating all Coordinate nodes
+                for points in annotation.find('Coordinates'):
+                    xCoordinate = points.attrib.get('X')
+                    yCoordinate = points.attrib.get('Y')
+                    points.set('X', str(int(xCoordinate) + xOffset))
+                    points.set('Y', str(int(yCoordinate) + yOffset))
+            tree.write(filePath if outputFilePath is None else outputFilePath, encoding='unicode', xml_declaration=True)
+        return None

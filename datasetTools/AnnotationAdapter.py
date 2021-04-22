@@ -83,6 +83,18 @@ class AnnotationAdapter(ABC):
         """
         return None
 
+    @staticmethod
+    def offsetAnnotations(filePath, xOffset=0, yOffset=0, outputFilePath=None):
+        """
+        Offsets annotations of a file
+        :param filePath: file path to the annotation file
+        :param xOffset: the x-axis offset to apply to annotations
+        :param yOffset: the y-axis offset to apply to annotations
+        :param outputFilePath: path to the output file, if None, will modify the base file
+        :return: None
+        """
+        return None
+
 
 class XMLAdapter(AnnotationAdapter, ABC):
 
@@ -108,7 +120,7 @@ class XMLAdapter(AnnotationAdapter, ABC):
         return fileName + '.xml'
 
     def __str__(self):
-        return "<?xml version=\"1.0\"?>\n" + et.tostring(self.root, encoding='unicode', method='xml')
+        return et.tostring(self.root, encoding='unicode', method='xml', xml_declaration=True)
 
     @staticmethod
     def canRead(filePath):

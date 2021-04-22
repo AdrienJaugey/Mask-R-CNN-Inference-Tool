@@ -120,7 +120,7 @@ class TensorflowDetector:
 
         with open(labelMapPath, 'r') as file:
             self.__CATEGORY_INDEX__ = {int(key): value for key, value in json.load(file).items()}
-        print("Loading...", end="")
+        print("Loading... ", end="")
         self.__MODEL__ = tf.saved_model.load(modelPath if isSavedModelDir else os.path.join(modelPath, 'saved_model'))
         self.__MODEL_PATH__ = modelPath
         print("Done !")

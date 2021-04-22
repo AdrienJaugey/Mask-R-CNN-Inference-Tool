@@ -1,3 +1,5 @@
+import shutil
+
 from datasetTools.AnnotationAdapter import JSONAdapter
 import jsonschema as sch
 import json
@@ -143,17 +145,43 @@ class LabelMeAdapter(JSONAdapter):
     @staticmethod
     def readFile(filePath):
         canRead = LabelMeAdapter.canRead(filePath)
-        assert canRead
+        if not canRead:
+            raise TypeError('This file is not a LabelMe annotation file')
         masks = []
         with open(filePath, 'r') as file:
             data = json.load(file)
+        if data['version'] != LABELME_VERSION:
+            print(f"{filePath} version ({data['version']}) of annotation file is different from the one used "
+                  f"to implement LabelMe annotation reader ({LABELME_VERSION}).")
+            print("Errors may occur so consider updating LabelMeAdapter::readFile().")
+        for i, shape in enumerate(data["shapes"]):
+            ptsMask = []
+            for coordinates in shape["points"]:
+                ptsMask.append([coordinates[0], coordinates[1]])
+            masks.append((shape["group_id"], ptsMask))
+        return masks
+
+    @staticmethod
+    def offsetAnnotations(filePath, xOffset=0, yOffset=0, outputFilePath=None):
+        canRead = LabelMeAdapter.canRead(filePath)
+        if not canRead:
+            raise TypeError('This file is not a LabelMe annotation file')
+        if xOffset == yOffset == 0:
+            if outputFilePath is not None and outputFilePath != filePath:
+                shutil.copyfile(filePath, outputFilePath)
+            else:
+                return None
+        else:
+            with open(filePath, 'r') as file:
+                data = json.load(file)
             if data['version'] != LABELME_VERSION:
-                print("{} version ({}) of annotation file is different from the".format(filePath, data["version"]),
-                      "one used to implement LabelMe annotation reader ({}).".format(LABELME_VERSION))
+                print(f"{filePath} version ({data['version']}) of annotation file is different from the one used "
+                      f"to implement LabelMe annotation reader ({LABELME_VERSION}).")
                 print("Errors may occur so consider updating LabelMeAdapter::readFile().")
             for i, shape in enumerate(data["shapes"]):
-                ptsMask = []
                 for coordinates in shape["points"]:
-                    ptsMask.append([coordinates[0], coordinates[1]])
-                masks.append((shape["group_id"], ptsMask))
-        return masks
+                    coordinates[0] += xOffset
+                    coordinates[1] += yOffset
+            with open(filePath if outputFilePath is None else outputFilePath, 'w') as file:
+                json.dump(data, file, indent='\t')
+        return None

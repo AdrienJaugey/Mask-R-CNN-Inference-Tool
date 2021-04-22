@@ -102,19 +102,22 @@ def fuse_results(results, image_shape, division_size=1024, min_overlap_part=0.33
     return fused_results
 
 
-def fuse_results(results, image_info: dict, division_size: int = 1024, config=None):
+def fuse_results(results, image_info: dict, division_size: int = 1024, cortex_size=None, config=None):
     """
         Fuse results of multiple predictions (divisions for example)
         :param results: list of the results of the predictions
         :param image_info: the input image informations
         :param division_size: Size of a division
+        :param cortex_size: If given, represents the resized shape of the cortex image
+        :param config: config of the network
         :return: same structure contained in results
         """
     if 'X_STARTS' in image_info and 'Y_STARTS' in image_info:
         div_size = division_size if division_size != "noDiv" else 1024
 
         def get_coordinates(divisionID):
-            return np.array(dD.getDivisionByID(image_info['X_STARTS'], image_info['Y_STARTS'], divisionID, div_size))
+            x1, x2, y1, y2 = dD.getDivisionByID(image_info['X_STARTS'], image_info['Y_STARTS'], divisionID, div_size)
+            return np.array([y1, x1, y2, x2])
 
     elif 'ROI_COORDINATES' in image_info:
 
@@ -126,8 +129,8 @@ def fuse_results(results, image_info: dict, division_size: int = 1024, config=No
 
     div_side_length = results[0]['masks'].shape[0]
     use_mini_mask = config is not None and config.USE_MINI_MASK
-    height = image_info['HEIGHT']
-    width = image_info['WIDTH']
+    height = image_info['HEIGHT'] if cortex_size is None else cortex_size[0]
+    width = image_info['WIDTH'] if cortex_size is None else cortex_size[1]
 
     # Counting total sum of predicted masks
     size = 0
@@ -179,6 +182,7 @@ def fuse_results(results, image_info: dict, division_size: int = 1024, config=No
                     #                                       * ([tempHeightRatio, tempWidthRatio] * 2)).astype(int)
                     #                             + (tuple(offset_roi[:2]) * 2))
                     #     mask = cv2.resize(np.uint8(mask), (division_size, division_size))
+                    # TODO Check why cortex mask is 17k*30k instead of 2048² => fuse_results refactoring ?
                     masks[offset_roi[0]:offset_roi[2], offset_roi[1]:offset_roi[3], iterator + idx] = mask
 
         iterator += resSize

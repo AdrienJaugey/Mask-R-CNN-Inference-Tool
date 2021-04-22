@@ -741,7 +741,7 @@ def expand_mask(bbox, mini_mask, image_shape):
         _mini_mask = mini_mask
     mask = np.zeros(image_shape[:2] + (_mini_mask.shape[-1],), dtype=bool)
     for i in range(mask.shape[-1]):
-        m = _mini_mask[:, :, i]
+        m = _mini_mask[:, :, i].astype(bool).astype(np.uint8) * 255
         y1, x1, y2, x2 = _bbox[i][:4]
         h = y2 - y1
         w = x2 - x1
