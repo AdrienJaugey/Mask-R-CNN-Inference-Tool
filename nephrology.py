@@ -150,7 +150,8 @@ class NephrologyInferenceModel:
         nbClass = self.__NB_CLASS
         divSize = 1024 if self.__DIVISION_SIZE == "noDiv" else self.__DIVISION_SIZE
         min_overlap_part = self.__MIN_OVERLAP_PART
-        self.__CONFUSION_MATRIX = np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64)
+        self.__CONFUSION_MATRIX = {'pixel': np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64),
+                                   'mask': np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64)}
         self.__APs = []
 
         class SkinetConfig:
@@ -285,6 +286,9 @@ class NephrologyInferenceModel:
                 maskDirs = os.listdir(os.path.join('data', imageInfo['NAME']))
                 if 'BASE_CLASS' in imageInfo:
                     if imageInfo['BASE_CLASS'] in maskDirs:
+                        if imageInfo['BASE_CLASS'] not in self.__CUSTOM_CLASS_NAMES \
+                                and imageInfo['BASE_CLASS'] in maskDirs:
+                            maskDirs.remove(imageInfo['BASE_CLASS'])
                         imageInfo.update({'BASE_AREA': 0, 'BASE_COUNT': 0})
                         baseClassDirPath = os.path.join('data', imageInfo['NAME'], imageInfo['BASE_CLASS'])
                         for baseClassMask in os.listdir(baseClassDirPath):
@@ -301,13 +305,15 @@ class NephrologyInferenceModel:
                         imageInfo['cleaned_image_path'] = os.path.join(imagesDirPath, imageFilePath)
                         image = cv2.cvtColor(cv2.imread(imageInfo['cleaned_image_path']), cv2.COLOR_BGR2RGB)
 
+                for notAClass in ['images', 'full_images']:
+                    if notAClass in maskDirs:
+                        maskDirs.remove(notAClass)
                 # We want to know if image has annotation, if we don't want to detect cortex and this mask exist
                 # as we need it to clean the image, we remove it from the mask list before checking if a class
                 # we want to predict has an annotated mask
-                if self.__MODE in ['main', 'mest_main', 'mest_glom'] and not imageInfo['HAS_ANNOTATION']:
-                    if imageInfo['BASE_CLASS'] not in self.__CUSTOM_CLASS_NAMES and imageInfo['BASE_CLASS'] in maskDirs:
-                        maskDirs.remove(imageInfo['BASE_CLASS'])
-                        imageInfo['HAS_ANNOTATION'] = any([d in self.__CUSTOM_CLASS_NAMES for d in maskDirs])
+                if not imageInfo['HAS_ANNOTATION']:
+                    imageInfo['HAS_ANNOTATION'] = any([d in self.__CUSTOM_CLASS_NAMES for d in maskDirs])
+
                 if imageInfo['HAS_ANNOTATION'] and not silent:
                     print("    - AP and confusion matrix will be computed")
 
@@ -329,12 +335,10 @@ class NephrologyInferenceModel:
             results_log.write(f"Image; Duration (s); Precision; {os.path.basename(self.__MODEL_PATH)}\n")
         return results_path, logsPath
 
-    def inference(self, images: list, results_path=None, save_results=True,
-                  fusion_bb_threshold=0., fusion_mask_threshold=0.1,
-                  filter_bb_threshold=0.5, filter_mask_threshold=0.9,
-                  priority_table=None, nbMaxDivPerAxis=3, fusionDivThreshold=0.1,
-                  displayOnlyAP=False, savePreFusionImage=False, savePreFilterImage=False,
-                  allowSparse=True, minMaskArea=300, on_border_threshold=0.25, perPixelConfMatrix=True,
+    def inference(self, images: list, results_path=None, save_results=True, fusion_bb_threshold=0.,
+                  fusion_mask_threshold=0.1, filter_bb_threshold=0.5, filter_mask_threshold=0.9, priority_table=None,
+                  nbMaxDivPerAxis=3, fusionDivThreshold=0.1, displayOnlyAP=False, savePreFusionImage=False,
+                  savePreFilterImage=False, allowSparse=True, minMaskArea=300, on_border_threshold=0.25,
                   enableCortexFusionDiv=True):
 
         if len(images) == 0:
@@ -348,7 +352,8 @@ class NephrologyInferenceModel:
             print("No result will be saved")
             results_path = None
 
-        self.__CONFUSION_MATRIX.fill(0)
+        self.__CONFUSION_MATRIX['mask'].fill(0)
+        self.__CONFUSION_MATRIX['pixel'].fill(0)
         self.__APs.clear()
         total_start_time = time()
         failedImages = []
@@ -368,8 +373,8 @@ class NephrologyInferenceModel:
                     self.process_image(IMAGE_PATH, results_path, allowSparse, savePreFusionImage, fusion_bb_threshold,
                                        fusion_mask_threshold, savePreFilterImage, filter_bb_threshold,
                                        filter_mask_threshold, priority_table, on_border_threshold, minMaskArea,
-                                       enableCortexFusionDiv, fusionDivThreshold, nbMaxDivPerAxis, perPixelConfMatrix,
-                                       save_results, displayOnlyAP, logsPath)
+                                       enableCortexFusionDiv, fusionDivThreshold, nbMaxDivPerAxis, save_results,
+                                       displayOnlyAP, logsPath)
             except Exception as e:
                 traceback.print_exception(type(e), e, e.__traceback__)
                 failedImages.append(os.path.basename(IMAGE_PATH))
@@ -390,19 +395,17 @@ class NephrologyInferenceModel:
         if len(self.__APs) > 1:
             mAP = np.mean(self.__APs)
             print(f"Mean Average Precision is about {mAP:06.2%}")
-            name = "Final Confusion Matrix"
-            name2 = "Final Confusion Matrix (Normalized)"
             cmap = plt.cm.get_cmap('hot')
-            visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, self.__CUSTOM_CLASS_NAMES.copy(), title=name,
-                                               cmap=cmap, show=False,
-                                               fileName=(os.path.join(results_path, name.replace(' ', '_'))
-                                                         if save_results else None))
-            visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, self.__CUSTOM_CLASS_NAMES.copy(), title=name2,
-                                               cmap=cmap, show=False, normalize=True,
-                                               fileName=(os.path.join(results_path, name2.replace('(', '')
-                                                                      .replace(')', '')
-                                                                      .replace(' ', '_'))
-                                                         if save_results else None))
+            for mat_type in ['mask', 'pixel']:
+                for normalized in [False, True]:
+                    name = f"Final Confusion Matrix ({mat_type.capitalize()}){' (Normalized)' if normalized else ''}"
+                    confusionMatrixFileName = os.path.join(results_path, name.replace('(', '')
+                                                                             .replace(')', '')
+                                                                             .replace(' ', '_'))
+                    visualize.display_confusion_matrix(self.__CONFUSION_MATRIX[mat_type],
+                                                       self.__CUSTOM_CLASS_NAMES.copy(), title=name, cmap=cmap,
+                                                       show=False, normalize=normalized,
+                                                       fileName=confusionMatrixFileName)
             plt.close('all')
         else:
             mAP = -1
@@ -416,7 +419,7 @@ class NephrologyInferenceModel:
     def process_image(self, image_path, results_path, allowSparse, savePreFusionImage, fusion_bb_threshold,
                       fusion_mask_threshold, savePreFilterImage, filter_bb_threshold, filter_mask_threshold,
                       priority_table, on_border_threshold, minMaskArea, enableCortexFusionDiv, fusionDivThreshold,
-                      nbMaxDivPerAxis, perPixelConfMatrix, save_results, displayOnlyAP, logsPath):
+                      nbMaxDivPerAxis, save_results, displayOnlyAP, logsPath):
         cortex_mode = self.__MODE == "cortex"
         start_time = time()
         self.__STEP = "image preparation"
@@ -444,6 +447,7 @@ class NephrologyInferenceModel:
             progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference')
         for divId in range(imageInfo["NB_DIV"]):
             self.__STEP = f"{divId} div processing"
+            forceInference = False
             if 'X_STARTS' in imageInfo and 'Y_STARTS' in imageInfo:
                 division = dD.getImageDivision(fullImage if image is None else image, imageInfo["X_STARTS"],
                                                imageInfo["Y_STARTS"], divId, self.__DIVISION_SIZE)
@@ -451,13 +455,15 @@ class NephrologyInferenceModel:
                 currentRoI = imageInfo['ROI_COORDINATES'][divId]
                 division = (fullImage if image is None else image)[currentRoI[0]:currentRoI[2],
                            currentRoI[1]:currentRoI[3], :]
+                forceInference = True
             else:
                 raise ValueError('Cannot find image areas to use')
 
-            grayDivision = cv2.cvtColor(division, cv2.COLOR_RGB2GRAY)
-            colorPx = cv2.countNonZero(grayDivision)
-            del grayDivision
-            if colorPx / total_px > 0.1:
+            if not forceInference:
+                grayDivision = cv2.cvtColor(division, cv2.COLOR_RGB2GRAY)
+                colorPx = cv2.countNonZero(grayDivision)
+                del grayDivision
+            if forceInference or colorPx / total_px > 0.1:
                 self.__STEP = f"{divId} div inference"
                 results = self.__MODEL.process(division, normalizedCoordinates=False,
                                                score_threshold=self.__CONFIG.DETECTION_MIN_CONFIDENCE)
@@ -482,11 +488,11 @@ class NephrologyInferenceModel:
         # Post-processing of the predictions
         if not displayOnlyAP:
             print(" - Fusing results of all divisions")
-        # TODO Test fuse_results
         self.__STEP = "fusing results"
         # res = pp.fuse_results(res, fullImage.shape, division_size=self.__DIVISION_SIZE,
         #                       min_overlap_part=self.__MIN_OVERLAP_PART)
-        res = pp.fuse_results(res, imageInfo, division_size=self.__DIVISION_SIZE, config=self.__CONFIG)
+        res = pp.fuse_results(res, imageInfo, division_size=self.__DIVISION_SIZE,
+                              cortex_size=self.__CORTEX_SIZE, config=self.__CONFIG)
 
         if len(res['class_ids']) > 0:
             # TODO dyn call and args as dict for post-processing automation
@@ -628,8 +634,8 @@ class NephrologyInferenceModel:
                     per_pixel_conf_hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{10: 9}, 9]}]
 
                 AP = self.compute_ap_and_conf_matrix(image_results_path, imageInfo, res, ground_truth,
-                                                     per_mask_conf_hierarchy, per_pixel_conf_hierarchy,
-                                                     perPixelConfMatrix, save_results, displayOnlyAP)
+                                                     per_mask_conf_hierarchy, per_pixel_conf_hierarchy, save_results,
+                                                     displayOnlyAP)
                 del ground_truth
             if not cortex_mode:
                 self.compute_statistics(image_results_path, imageInfo, res, save_results)
@@ -808,16 +814,15 @@ class NephrologyInferenceModel:
             stat = stats[className]
             print(f"    - {className} : count = {stat['count']}, area = {stat['area']} px")
         if save_results:
-            with open(os.path.join(image_results_path, f"{image_info['NAME']}_stats.json"),
-                      "w") as saveFile:
+            with open(os.path.join(image_results_path, f"{image_info['NAME']}_stats.json"), "w") as saveFile:
                 try:
                     json.dump(stats, saveFile, indent='\t')
                 except TypeError:
                     print("    Failed to save statistics", flush=True)
 
     def compute_ap_and_conf_matrix(self, image_results_path, image_info, predicted, ground_truth,
-                                   per_mask_conf_hierarchy, per_pixel_conf_hierarchy=None, perPixelConfMatrix=True,
-                                   save_results=True, displayOnlyAP=False):
+                                   per_mask_conf_hierarchy, per_pixel_conf_hierarchy=None, save_results=True,
+                                   displayOnlyAP=False):
         """
         Computes AP and confusion matrix
         :param image_results_path: output folder of current image
@@ -826,7 +831,6 @@ class NephrologyInferenceModel:
         :param ground_truth: the ground truth results dictionary
         :param per_mask_conf_hierarchy: classes hierarchy for per mask confusion matrix
         :param per_pixel_conf_hierarchy: classes hierarchy for per pixel confusion matrix
-        :param perPixelConfMatrix: If True, confusion matrix will represents pixel instead of masks
         :param save_results: Whether to save files or not
         :param displayOnlyAP: Whether to display only AP or also current steps
         :return:
@@ -836,52 +840,49 @@ class NephrologyInferenceModel:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             self.__STEP = "computing confusion matrix"
-            AP, _, _, _, confusion_matrix = utils.compute_ap(gt_boxes=ground_truth['rois'],
-                                                             gt_class_ids=ground_truth['class_ids'],
-                                                             gt_masks=ground_truth['masks'],
-                                                             pred_boxes=predicted["rois"],
-                                                             pred_class_ids=predicted["class_ids"],
-                                                             pred_masks=predicted['masks'],
-                                                             pred_scores=predicted["scores"],
-                                                             nb_class=-1 if perPixelConfMatrix else self.__NB_CLASS,
-                                                             score_threshold=0.3,
-                                                             iou_threshold=0.5,
-                                                             confusion_iou_threshold=0.5,
-                                                             classes_hierarchy=per_mask_conf_hierarchy,
-                                                             confusion_background_class=True,
-                                                             confusion_only_best_match=False)
-            if perPixelConfMatrix:
-                if per_pixel_conf_hierarchy is None:
-                    per_pixel_conf_hierarchy = [i + 1 for i in range(self.__NB_CLASS)]
-                if self.__CORTEX_SIZE is not None:
-                    image_shape = self.__CORTEX_SIZE
-                else:
-                    image_shape = (image_info['HEIGHT'], image_info['WIDTH'])
-                confusion_matrix = utils.compute_confusion_matrix(
-                    image_shape=image_shape, config=self.__CONFIG,
-                    expectedResults=ground_truth, predictedResults=predicted,
-                    classes_hierarchy=per_pixel_conf_hierarchy, num_classes=self.__NB_CLASS
-                )
-            print(f"{'' if displayOnlyAP else '   '} - Average Precision is about {AP:06.2%}")
-            self.__CONFUSION_MATRIX = np.add(self.__CONFUSION_MATRIX, confusion_matrix)
+            conf_matrix = {}
+            AP, _, _, _, conf_matrix['mask'] = utils.compute_ap(gt_boxes=ground_truth['rois'],
+                                                                gt_class_ids=ground_truth['class_ids'],
+                                                                gt_masks=ground_truth['masks'],
+                                                                pred_boxes=predicted["rois"],
+                                                                pred_class_ids=predicted["class_ids"],
+                                                                pred_masks=predicted['masks'],
+                                                                pred_scores=predicted["scores"],
+                                                                nb_class=self.__NB_CLASS,
+                                                                score_threshold=0.3,
+                                                                iou_threshold=0.5,
+                                                                confusion_iou_threshold=0.5,
+                                                                classes_hierarchy=per_mask_conf_hierarchy,
+                                                                confusion_background_class=True,
+                                                                confusion_only_best_match=False)
             self.__APs.append(AP)
+            self.__CONFUSION_MATRIX['mask'] = np.add(self.__CONFUSION_MATRIX['mask'], conf_matrix['mask'])
+            if per_pixel_conf_hierarchy is None:
+                per_pixel_conf_hierarchy = [i + 1 for i in range(self.__NB_CLASS)]
+            if self.__CORTEX_SIZE is not None:
+                image_shape = self.__CORTEX_SIZE
+            else:
+                image_shape = (image_info['HEIGHT'], image_info['WIDTH'])
+            conf_matrix['pixel'] = utils.compute_confusion_matrix(
+                image_shape=image_shape, config=self.__CONFIG,
+                expectedResults=ground_truth, predictedResults=predicted,
+                classes_hierarchy=per_pixel_conf_hierarchy, num_classes=self.__NB_CLASS
+            )
+            self.__CONFUSION_MATRIX['pixel'] = np.add(self.__CONFUSION_MATRIX['pixel'], conf_matrix['pixel'])
+            print(f"{'' if displayOnlyAP else '   '} - Average Precision is about {AP:06.2%}")
             cmap = plt.cm.get_cmap('hot')
             if save_results:
                 self.__STEP = "saving confusion matrix"
-                name = f"{image_info['NAME']} Confusion Matrix"
-                confusionMatrixFileName = os.path.join(image_results_path, name.replace(' ', '_'))
-                name2 = f"{image_info['NAME']} Confusion Matrix (Normalized)"
-                confusionMatrixFileName2 = os.path.join(image_results_path, name2.replace('(', '')
-                                                        .replace(')', '')
-                                                        .replace(' ', '_'))
-                visualize.display_confusion_matrix(confusion_matrix, self.__CUSTOM_CLASS_NAMES.copy(),
-                                                   title=name,
-                                                   cmap=cmap, show=False,
-                                                   fileName=confusionMatrixFileName)
-                visualize.display_confusion_matrix(confusion_matrix, self.__CUSTOM_CLASS_NAMES.copy(),
-                                                   title=name2,
-                                                   cmap=cmap, show=False, normalize=True,
-                                                   fileName=confusionMatrixFileName2)
+                for mat_type in ['mask', 'pixel']:
+                    for normalized in [False, True]:
+                        name = (f"{image_info['NAME']} Confusion Matrix ({mat_type.capitalize()})"
+                                f"{' (Normalized)' if normalized else ''}")
+                        confusionMatrixFileName = os.path.join(image_results_path, name.replace('(', '')
+                                                                                       .replace(')', '')
+                                                                                       .replace(' ', '_'))
+                        visualize.display_confusion_matrix(conf_matrix[mat_type], self.__CUSTOM_CLASS_NAMES.copy(),
+                                                           title=name, cmap=cmap, show=False, normalize=normalized,
+                                                           fileName=confusionMatrixFileName)
         return AP
 
     def finalize_cortex_mode(self, image_results_path, image_info, predicted, enableCortexFusionDiv, fusionDivThreshold,
@@ -906,8 +907,7 @@ class NephrologyInferenceModel:
             if enableCortexFusionDiv:
                 # Preparing to export all "fusion" divisions with stats
                 self.generate_fusion_div_ressources(image_results_path, image_info, allCorticesSmall,
-                                                    allCorticesArea, fusionDivThreshold,
-                                                    nbMaxDivPerAxis)
+                                                    allCorticesArea, fusionDivThreshold, nbMaxDivPerAxis)
 
     def keep_only_cortex(self, image_results_path, image_info, allCortices):
         """
@@ -939,8 +939,15 @@ class NephrologyInferenceModel:
         allCortices = cv2.resize(np.uint8(allCortices), (image_info['WIDTH'], image_info['HEIGHT']),
                                  interpolation=cv2.INTER_CUBIC)
         allCorticesArea = dD.getBWCount(allCortices)[1]
+        stats = {
+            "cortex": {
+                "count": 1,
+                "area": allCorticesArea,
+                "x_offset": int(allCorticesROI[1]),
+                "y_offset": int(allCorticesROI[0])
+            }
+        }
         with open(os.path.join(image_results_path, f"{image_info['NAME']}_stats.json"), "w") as saveFile:
-            stats = {"cortex": {"count": 1, "area": allCorticesArea}}
             try:
                 json.dump(stats, saveFile, indent='\t')
             except TypeError:
