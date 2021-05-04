@@ -253,7 +253,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
                       figsize=(16, 16), ax=None, fig=None, image_format="jpg",
                       show_mask=True, show_bbox=True,
                       colors=None, colorPerClass=False, captions=None,
-                      fileName=None, onlyImage=False, silent=False, config=None):
+                      fileName=None, save_cleaned_img=False, silent=False, config=None):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -283,8 +283,13 @@ def display_instances(image, boxes, masks, class_ids, class_names,
 
     # Generate random colors
     nb_color = (len(class_names) - 1) if colorPerClass else N
-    colors = colors or random_colors(nb_color, shuffle=(not colorPerClass))
-
+    colors = colors if colors is not None else random_colors(nb_color, shuffle=(not colorPerClass))
+    if type(colors[0][0]) is int:
+        _colors = []
+        for color in colors:
+            _colors.append([c / 255. for c in color])
+    else:
+        _colors = colors
     # Show area outside image boundaries.
     height, width = image.shape[:2]
     ax.set_ylim(height + 10, -10)
@@ -298,10 +303,9 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     # masked_image = image.astype(np.uint32).copy()
     for i in range(N):
         if colorPerClass:
-            color = colors[class_ids[i] - 1]
+            color = _colors[class_ids[i] - 1]
         else:
-            color = colors[i]
-
+            color = _colors[i]
         # Bounding box
         if not np.any(boxes[i]):
             # Skip this instance. Has no bbox. Likely lost in image cropping.
@@ -353,7 +357,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     fig.tight_layout()
     if fileName is not None:
         fig.savefig(f"{fileName}.{image_format}")
-        if onlyImage:
+        if save_cleaned_img:
             BGR_img = cv2.cvtColor(masked_image, cv2.COLOR_RGB2BGR)
             cv2.imwrite(f"{fileName}_clean.{image_format}", BGR_img, CV2_IMWRITE_PARAM)
     if auto_show:
@@ -514,7 +518,8 @@ def plot_precision_recall(AP, precisions, recalls):
     _ = ax.plot(recalls, precisions)
 
 
-def plot_overlaps(gt_class_ids, pred_class_ids, pred_scores,
+# TODO Delete
+'''def plot_overlaps(gt_class_ids, pred_class_ids, pred_scores,
                   overlaps, class_names, threshold=0.5):
     """Draw a grid showing how ground truth objects are classified.
     gt_class_ids: [N] int. Ground truth class IDs
@@ -550,7 +555,7 @@ def plot_overlaps(gt_class_ids, pred_class_ids, pred_scores,
 
     plt.tight_layout()
     plt.xlabel("Ground Truth")
-    plt.ylabel("Predictions")
+    plt.ylabel("Predictions")'''
 
 
 def draw_boxes(image, boxes=None, refined_boxes=None,

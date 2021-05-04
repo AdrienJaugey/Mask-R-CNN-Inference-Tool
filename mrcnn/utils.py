@@ -20,15 +20,16 @@ import scipy
 import skimage.color
 import skimage.io
 import skimage.transform
-import tensorflow as tf
+# import tensorflow as tf
 
-from mrcnn import compat
+# from mrcnn import compat
 from mrcnn.visualize import create_multiclass_mask
 from datasetTools import datasetDivider as dD
 
-# URL from which to download the latest COCO trained weights
-from mrcnn.config import Config
+# TODO Optimize Imports
+# from mrcnn.config import Config
 
+# URL from which to download the latest COCO trained weights
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
 
 
@@ -332,7 +333,8 @@ def non_max_suppression(boxes, scores, threshold):
     return np.array(pick, dtype=np.int32)
 
 
-def apply_box_deltas(boxes, deltas):
+# TODO Delete
+'''def apply_box_deltas(boxes, deltas):
     """Applies the given deltas to the given boxes.
     boxes: [N, (y1, x1, y2, x2)]. Note that (y2, x2) is outside the box.
     deltas: [N, (dy, dx, log(dh), log(dw))]
@@ -405,7 +407,7 @@ def box_refinement(box, gt_box):
     dh = np.log(gt_height / height)
     dw = np.log(gt_width / width)
 
-    return np.stack([dy, dx, dh, dw], axis=1)
+    return np.stack([dy, dx, dh, dw], axis=1)'''
 
 
 ############################################################
@@ -708,7 +710,8 @@ def minimize_mask(bbox, mask, mini_shape):
     mini_mask = np.zeros(mini_shape + (_mask.shape[-1],), dtype=bool)
     for i in range(_mask.shape[-1]):
         # Pick slice and cast to bool in case load_mask() returned wrong dtype
-        m = _mask[:, :, i].astype(bool)
+        # TODO Bool masks raising deprecation warning
+        m = _mask[:, :, i].astype(bool).astype(np.uint8) * 255
         y1, x1, y2, x2 = _bbox[i][:4]
         m = m[y1:y2, x1:x2]
         if m.size == 0:
@@ -738,7 +741,7 @@ def expand_mask(bbox, mini_mask, image_shape):
         _mini_mask = mini_mask
     mask = np.zeros(image_shape[:2] + (_mini_mask.shape[-1],), dtype=bool)
     for i in range(mask.shape[-1]):
-        m = _mini_mask[:, :, i]
+        m = _mini_mask[:, :, i].astype(bool).astype(np.uint8) * 255
         y1, x1, y2, x2 = _bbox[i][:4]
         h = y2 - y1
         w = x2 - x1
@@ -746,6 +749,67 @@ def expand_mask(bbox, mini_mask, image_shape):
         m = resize(m, (h, w))
         mask[y1:y2, x1:x2, i] = np.around(m).astype(np.bool)
     return mask[:, :, 0] if soleMask else mask
+
+
+def minimize_mask_float(mask, bbox, output_shape=(28, 28), offset=32):
+    """
+    Minimizes given mask(s) to floating point masks of the given shape
+    :param mask: mask as a 2-D uint8 ndarray of shape (H, W) or masks as a 3-D uint8 ndarray of shape (H, W, N)
+    :param bbox: bbox as a 1-D uint8 ndarray of shape (4) or masks as a 2-D uint8 ndarray of shape (N, 4)
+    :param output_shape: shape of the output mini-mask(s)
+    :param offset: the offset on each side of the image part that will be resized (used to avoid
+    :return: Minimized mask(s) in the same ndarray format as input ones but with output_shape as (H, W) and with float64
+             dtype
+    """
+    soleMask = False
+    if len(bbox.shape) != 2 and len(mask.shape) != 3:
+        soleMask = True
+        _bbox = np.expand_dims(bbox, 0)
+        _mask = np.expand_dims(mask, 2)
+    else:
+        _bbox = bbox
+        _mask = mask
+    mini_masks = np.zeros(output_shape + (_mask.shape[-1],), dtype=np.float64)
+    for i in range(_mask.shape[-1]):
+        # Computing mask shape with offset on all sides
+        mask_shape = tuple(shift_bbox(_bbox[i][:4])[2:] + np.array([offset * 2] * 2))
+        temp_mask = np.zeros(mask_shape, dtype=np.uint8)  # Empty mask
+        y1, x1, y2, x2 = _bbox[i][:4]
+        temp_mask[offset:-offset, offset:-offset] = _mask[y1:y2, x1:x2, i]  # Filling it with mask
+        # Resizing to output shape
+        mini_masks[:, :, i] = resize(temp_mask.astype(bool).astype(np.float64), output_shape)
+    return mini_masks[:, :, 0] if soleMask else mini_masks
+
+
+def expand_mask_float(mini_mask, bbox, output_shape=(1024, 1024), offset=32):
+    """
+    Expands given floating point mini-mask(s) back to binary mask(s) with the same shape as the image
+    :param mini_mask: mini-mask as a 2-D uint8 ndarray of shape (H, W) or mini-masks as a 3-D uint8 ndarray of
+                      shape (H, W, N)
+    :param bbox: bbox as a 1-D uint8 ndarray of shape (4) or masks as a 2-D uint8 ndarray of shape (N, 4)
+    :param output_shape:  shape of the output mask(s)
+    :param offset: the offset on each side of the image part that will be resized (used to avoid
+    :return: Expanded mask(s) in the same ndarray format as input ones but with output_shape as (H, W) and with uint8
+             dtype
+    """
+    if type(output_shape) is not tuple:
+        output_shape = tuple(output_shape)
+    soleMask = False
+    if len(bbox.shape) != 2 and len(mini_mask.shape) != 3:
+        soleMask = True
+        _bbox = np.expand_dims(bbox, 0)
+        _mini_mask = np.expand_dims(mini_mask, 2)
+    else:
+        _bbox = bbox
+        _mini_mask = mini_mask
+    masks = np.zeros(output_shape[:2] + (_mini_mask.shape[-1],), dtype=np.uint8)
+    for i in range(_mini_mask.shape[-1]):
+        mask_shape = tuple(shift_bbox(_bbox[i][:4])[2:] + np.array([offset * 2] * 2))
+        resized_mask = resize(_mini_mask[:, :, i], mask_shape)
+        y1, x1, y2, x2 = _bbox[i][:4]
+        masks[y1:y2, x1:x2, i] = np.where(resized_mask[offset:-offset, offset:-offset] >= 0.5,
+                                          255, 0).astype(np.uint8)
+    return masks[:, :, 0] if soleMask else masks
 
 
 # TODO: Build and use this function to reduce code duplication
@@ -773,7 +837,8 @@ def unmold_mask(mask, bbox, image_shape):
     return full_mask
 
 
-############################################################
+# TODO Delete
+'''############################################################
 #  Anchors
 ############################################################
 
@@ -833,7 +898,7 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
     for i in range(len(scales)):
         anchors.append(generate_anchors(scales[i], ratios, feature_shapes[i],
                                         feature_strides[i], anchor_stride))
-    return np.concatenate(anchors, axis=0)
+    return np.concatenate(anchors, axis=0)'''
 
 
 ############################################################
@@ -927,7 +992,7 @@ def remove_redundant_classes(classes_lvl, keepFirst=True):
 
 
 def compute_confusion_matrix(image_shape: iter, expectedResults: dict, predictedResults: dict,
-                             classes_hierarchy, num_classes: int, config: Config = None):
+                             classes_hierarchy, num_classes: int, config=None):
     """
     Computes confusion matrix at pixel precision
     :param image_shape: the initial image shape
@@ -957,6 +1022,7 @@ def trim_zeros(x):
     return x[~np.all(x == 0, axis=1)]
 
 
+# TODO Delete
 # def compute_matches(gt_boxes, gt_class_ids, gt_masks,
 #                     pred_boxes, pred_class_ids, pred_scores, pred_masks,
 #                     iou_threshold=0.5, score_threshold=0.0):
@@ -1137,7 +1203,8 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
         confusion_background_class=confusion_background_class,
         confusion_only_best_match=confusion_only_best_match
     )
-
+    if len(gt_class_ids) == len(pred_class_ids) == 0:
+        return 1., 1., 1., overlaps, confusion_matrix
     # Compute precision and recall at each prediction box step
     precisions = np.cumsum(pred_match > -1) / (np.arange(len(pred_match)) + 1)
     recalls = np.cumsum(pred_match > -1).astype(np.float32) / len(gt_match)
@@ -1201,7 +1268,8 @@ def compute_recall(pred_boxes, gt_boxes, iou):
     return recall, positive_ids
 
 
-# ## Batch Slicing
+# TODO delete
+'''# ## Batch Slicing
 # Some custom layers support a batch size of 1 only, and require a lot of work
 # to support batches greater than 1. This function slices an input tensor
 # across the batch dimension and feeds batches of size 1. Effectively,
@@ -1242,7 +1310,7 @@ def batch_slice(inputs, graph_fn, batch_size, names=None):
     if len(result) == 1:
         result = result[0]
 
-    return result
+    return result'''
 
 
 def download_trained_weights(coco_model_path, verbose=1):

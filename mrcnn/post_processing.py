@@ -50,7 +50,8 @@ def fuse_results(results, image_shape, division_size=1024, min_overlap_part=0.33
     for res in results:
         # Getting the division ID based on iterator or given ids and getting its coordinates
         divId = res["div_id"]
-        xStart, xEnd, yStart, yEnd = dD.getDivisionByID(xStarts, yStarts, divId, division_size)
+        xStart, xEnd, yStart, yEnd = dD.getDivisionByID(xStarts, yStarts, divId,
+                                                        division_size if division_size != "noDiv" else 1024)
 
         # Formatting and adding all the division's predictions to global ones
         for prediction_index in range(len(res['scores'])):
@@ -99,6 +100,94 @@ def fuse_results(results, image_shape, division_size=1024, min_overlap_part=0.33
         "masks": masks
     }
     return fused_results
+
+
+def fuse_results(results, image_info: dict, division_size: int = 1024, cortex_size=None, config=None):
+    """
+        Fuse results of multiple predictions (divisions for example)
+        :param results: list of the results of the predictions
+        :param image_info: the input image informations
+        :param division_size: Size of a division
+        :param cortex_size: If given, represents the resized shape of the cortex image
+        :param config: config of the network
+        :return: same structure contained in results
+        """
+    if 'X_STARTS' in image_info and 'Y_STARTS' in image_info:
+        div_size = division_size if division_size != "noDiv" else 1024
+
+        def get_coordinates(divisionID):
+            x1, x2, y1, y2 = dD.getDivisionByID(image_info['X_STARTS'], image_info['Y_STARTS'], divisionID, div_size)
+            return np.array([y1, x1, y2, x2])
+
+    elif 'ROI_COORDINATES' in image_info:
+
+        def get_coordinates(divisionID):
+            return image_info['ROI_COORDINATES'][divisionID]
+
+    else:
+        raise ValueError('Cannot fuse results without division X & Y coordinates or RoI coordinates')
+
+    div_side_length = results[0]['masks'].shape[0]
+    use_mini_mask = config is not None and config.USE_MINI_MASK
+    height = image_info['HEIGHT'] if cortex_size is None else cortex_size[0]
+    width = image_info['WIDTH'] if cortex_size is None else cortex_size[1]
+
+    # Counting total sum of predicted masks
+    size = 0
+    for res in results:
+        size += len(res['scores'])
+
+    # Initialisation of arrays
+    if use_mini_mask:
+        masks = np.zeros((div_side_length, div_side_length, size), dtype=bool)
+    else:
+        masks = np.zeros((height, width, size), dtype=bool)
+    scores = np.zeros(size)
+    rois = np.zeros((size, 4), dtype=int)
+    class_ids = np.zeros(size, dtype=int)
+
+    iterator = 0
+    for res in results:
+        resSize = len(res['scores'])
+
+        # Appending bounding boxes, class ids and scores to global result dir
+        rois[iterator:iterator + resSize, :] = res['rois']
+        class_ids[iterator:iterator + resSize] = res['class_ids']
+        scores[iterator:iterator + resSize] = res['scores']
+
+        # Applying offset to bounding boxes
+        divId = res['div_id']
+        if division_size == "noDiv":
+            widthRatio = width / div_side_length
+            heightRatio = height / div_side_length
+            rois[iterator:iterator + resSize, :] = np.around(rois[iterator:iterator + resSize, :]
+                                                             * ([heightRatio, widthRatio] * 2)).astype(int)
+        else:
+            offset_roi = get_coordinates(divId)
+            rois[iterator:iterator + resSize, :] += (tuple(offset_roi[:2]) * 2)
+
+        if use_mini_mask:
+            masks[:, :, iterator:iterator + resSize] = res['masks']
+        else:
+            for idx in range(resSize):
+                if division_size == "noDiv":
+                    mask = np.uint8(res['masks'][:, :, idx])
+                    masks[:, :, iterator + idx] = cv2.resize(mask, (width, height), interpolation=cv2.INTER_CUBIC)
+                else:
+                    mask = res['masks'][:, :, idx]
+                    # if mask.shape[0] != division_size or mask.shape[1] != division_size:
+                    #     tempWidthRatio = division_size / mask.shape[1]
+                    #     tempHeightRatio = division_size / mask.shape[0]
+                    #     rois[iterator + idx] = (np.around(res['rois'][idx]
+                    #                                       * ([tempHeightRatio, tempWidthRatio] * 2)).astype(int)
+                    #                             + (tuple(offset_roi[:2]) * 2))
+                    #     mask = cv2.resize(np.uint8(mask), (division_size, division_size))
+                    # TODO Check why cortex mask is 17k*30k instead of 2048² => fuse_results refactoring ?
+                    masks[offset_roi[0]:offset_roi[2], offset_roi[1]:offset_roi[3], iterator + idx] = mask
+
+        iterator += resSize
+
+    return {"rois": rois, "class_ids": class_ids, "scores": scores, "masks": masks}
 
 
 def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None, displayProgress: str = None,
@@ -637,7 +726,7 @@ def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_t
             partOfR1 = intersection / bbAreas[i]
             partOfR2 = intersection / bbAreas[j]
             if partOfR1 > bb_threshold or partOfR2 > bb_threshold:
-                # Getting first mask and computing its area if not done yetfever dua lipa
+                # Getting first mask and computing its area if not done yet
                 mask1 = masks[:, :, i]
                 mask2 = masks[:, :, j]
 
@@ -816,7 +905,8 @@ def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_h
                         toDeleteClass.remove(parentId)
                     except ValueError:
                         if verbose > 1:
-                            print(f"\nTried to remove a parent mask ({parentId}) from the deletion list that not in it.")
+                            print(
+                                f"\nTried to remove a parent mask ({parentId}) from the deletion list that not in it.")
         if displayProgress is not None:
             current += 1
         if verbose > 1:
@@ -922,7 +1012,7 @@ def compute_on_border_part(image, mask):
     :return: part of the mask not being on the image as float
     """
     maskArea = dD.getBWCount(mask)[1]
-    if maskArea == 0:   # If no mask
+    if maskArea == 0:  # If no mask
         return 1.
     # Converting the image to grayscale as it is needed by cv2.countNonZero() and avoiding computing on 3 channels
     image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)

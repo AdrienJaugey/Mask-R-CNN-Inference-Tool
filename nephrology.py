@@ -7,6 +7,8 @@ import sys
 import warnings
 import gc
 
+from datasetTools.CustomDataset import SkinetCustomDataset
+
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -18,11 +20,10 @@ with warnings.catch_warnings():
     import matplotlib.pyplot as plt
     from time import time
     from skimage.io import imread, imsave
-    from datasetTools import datasetDivider as dD, datasetWrapper as dW, AnnotationAdapter
+    from datasetTools import datasetDivider as dD, datasetWrapper as dW, AnnotationAdapter, datasetIsolator as dI
 
-    from mrcnn.config import Config
     from mrcnn import utils
-    from mrcnn import model as modellib
+    from mrcnn.TensorflowDetector import TensorflowDetector
     from mrcnn import visualize
     from mrcnn import post_processing as pp
 
@@ -103,57 +104,74 @@ class NephrologyInferenceModel:
                  min_overlap_part_cortex=0.5, cortex_size=None, mini_mask_size=96, forceFullSizeMasks=False,
                  low_memory=False):
         print("Initialisation")
-        self.__CLASSES_INFO = classesInfo
-        self.__CORTEX_MODE = not classesInfo[0]["ignore"]
-        cortex_mode = self.__CORTEX_MODE
+        self.__STEP = "init"
+
+        # to capture mode + version : ^skinet_([a-zA-Z_]+)_v([0-9]+|%LAST%).*$
         self.__MODEL_PATH = find_latest_weight(modelPath)
+        reg = re.compile(r'^skinet_([a-zA-Z_]+)_v[0-9]+.*$')
+        # Testing only for one of the format, as Error would have already been raised if modelPath was not correct
+        isExportedModelDir = os.path.exists(os.path.join(modelPath, 'saved_model'))
+        if isExportedModelDir:
+            self.__MODEL_PATH = os.path.join(self.__MODEL_PATH, 'saved_model')
+        self.__MODE = reg.search(os.path.basename(self.__MODEL_PATH)).group(1)
+        cortex_mode = self.__MODE == "cortex"
+
+        self.__MODEL = TensorflowDetector(self.__MODEL_PATH)
+        if not self.__MODEL.isLoaded():
+            raise ValueError("Please provide correct path to model.")
+        # TODO Build classesInfo from model's config ?
+        self.__CLASSES_INFO = classesInfo
+
         self.__DIVISION_SIZE = divisionSize
         self.__MIN_OVERLAP_PART_MAIN = min_overlap_part_main
         self.__MIN_OVERLAP_PART_CORTEX = min_overlap_part_cortex
-        self.__MIN_OVERLAP_PART = min_overlap_part_cortex if self.__CORTEX_MODE else min_overlap_part_main
-        self.__CORTEX_SIZE = None if not self.__CORTEX_MODE else (1024, 1024) if cortex_size is None else cortex_size
+        self.__MIN_OVERLAP_PART = min_overlap_part_cortex if cortex_mode else min_overlap_part_main
+        self.__CORTEX_SIZE = None if not cortex_mode else (1024, 1024) if cortex_size is None else cortex_size
         self.__LOW_MEMORY = low_memory
         self.__CUSTOM_CLASS_NAMES = []
         for classInfo in classesInfo:
             if not classInfo["ignore"]:
                 self.__CUSTOM_CLASS_NAMES.append(classInfo["name"])
         self.__NB_CLASS = len(self.__CUSTOM_CLASS_NAMES)
+        self.__VISUALIZE_NAMES = self.__CUSTOM_CLASS_NAMES.copy()
+        self.__VISUALIZE_NAMES.insert(0, 'background')
+
+        self.__COLORS = [[0, 0, 0]] * self.__NB_CLASS
+        model_config = self.__MODEL.getConfig()
+        for classId in model_config:
+            self.__COLORS[classId - 1] = model_config[classId]["color"]
         # Root directory of the project
-        self.__ROOT_DIR = os.getcwd()
+        '''self.__ROOT_DIR = os.getcwd()
 
         # Directory to save logs and trained model
-        self.__MODEL_DIR = os.path.join(self.__ROOT_DIR, "logs")
+        self.__MODEL_DIR = os.path.join(self.__ROOT_DIR, "logs")'''
 
         # Configurations
         nbClass = self.__NB_CLASS
         divSize = 1024 if self.__DIVISION_SIZE == "noDiv" else self.__DIVISION_SIZE
-        self.__CONFUSION_MATRIX = np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64)
+        min_overlap_part = self.__MIN_OVERLAP_PART
+        self.__CONFUSION_MATRIX = {'pixel': np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64),
+                                   'mask': np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64)}
         self.__APs = []
 
-        class SkinetConfig(Config):
+        class SkinetConfig:
             NAME = "skinet"
-            GPU_COUNT = 1
-            IMAGES_PER_GPU = 1
             NUM_CLASSES = 1 + nbClass
-            IMAGE_MIN_DIM = divSize
-            IMAGE_MAX_DIM = divSize
-            RPN_ANCHOR_SCALES = (8, 16, 64, 128, 256)
-            TRAIN_ROIS_PER_IMAGE = 800
+            IMAGE_SIDE = divSize
+            MIN_OVERLAP = min_overlap_part
             DETECTION_MIN_CONFIDENCE = min_confidence
-            STEPS_PER_EPOCH = 400
-            VALIDATION_STEPS = 50
             USE_MINI_MASK = not cortex_mode and not forceFullSizeMasks
             MINI_MASK_SHAPE = (mini_mask_size, mini_mask_size)  # (height, width) of the mini-mask
 
         self.__CONFIG = SkinetConfig()
 
-        # Recreate the model in inference mode
+        '''# Recreate the model in inference mode
         self.__MODEL = modellib.MaskRCNN(mode="inference", config=self.__CONFIG, model_dir=self.__MODEL_DIR)
 
         # Load trained weights (fill in path to trained weights here)
         assert self.__MODEL_PATH is not None and self.__MODEL_PATH != "", "Provide path to trained weights"
         print("Loading weights from", self.__MODEL_PATH)
-        self.__MODEL.load_weights(self.__MODEL_PATH, by_name=True)
+        self.__MODEL.load_weights(self.__MODEL_PATH, by_name=True)'''
         print()
 
     def prepare_image(self, imagePath, results_path, silent=False):
@@ -169,6 +187,7 @@ class NephrologyInferenceModel:
         fullImage = None
         imageInfo = None
         image_results_path = None
+        cortex_mode = self.__MODE == "cortex"
         if os.path.exists(imagePath):
             imageInfo = {
                 'PATH': imagePath,
@@ -180,7 +199,7 @@ class NephrologyInferenceModel:
 
             # Reading input image in RGB color order
             imageChanged = False
-            if self.__CORTEX_MODE:  # If in cortex mode, resize image to lower resolution
+            if cortex_mode:  # If in cortex mode, resize image to lower resolution
                 imageInfo['FULL_RES_IMAGE'] = cv2.cvtColor(cv2.imread(imagePath), cv2.COLOR_BGR2RGB)
                 height, width, _ = imageInfo['FULL_RES_IMAGE'].shape
                 fullImage = cv2.resize(imageInfo['FULL_RES_IMAGE'], self.__CORTEX_SIZE)
@@ -190,7 +209,14 @@ class NephrologyInferenceModel:
                 height, width, _ = fullImage.shape
             imageInfo['HEIGHT'] = int(height)
             imageInfo['WIDTH'] = int(width)
-            imageInfo['CORTEX_AREA'] = height * width
+
+            if "main" in self.__MODE:
+                imageInfo['BASE_CLASS'] = "cortex"
+            elif self.__MODE == "mest_glom":
+                imageInfo['BASE_CLASS'] = "nsg"
+            if 'BASE_CLASS' in imageInfo:
+                imageInfo['BASE_AREA'] = height * width
+                imageInfo['BASE_COUNT'] = 1
 
             # Conversion of the image if format is not png or jpg
             if imageInfo['IMAGE_FORMAT'] not in ['png', 'jpg']:
@@ -217,12 +243,12 @@ class NephrologyInferenceModel:
                 imageInfo['X_STARTS'] = imageInfo['Y_STARTS'] = [0]
             else:
                 imageInfo['X_STARTS'] = dD.computeStartsOfInterval(
-                    maxVal=self.__CORTEX_SIZE[0] if self.__CORTEX_MODE else width,
+                    maxVal=self.__CORTEX_SIZE[0] if cortex_mode else width,
                     intervalLength=self.__DIVISION_SIZE,
                     min_overlap_part=self.__MIN_OVERLAP_PART
                 )
                 imageInfo['Y_STARTS'] = dD.computeStartsOfInterval(
-                    maxVal=self.__CORTEX_SIZE[1] if self.__CORTEX_MODE else height,
+                    maxVal=self.__CORTEX_SIZE[1] if cortex_mode else height,
                     intervalLength=self.__DIVISION_SIZE,
                     min_overlap_part=self.__MIN_OVERLAP_PART
                 )
@@ -230,29 +256,47 @@ class NephrologyInferenceModel:
 
             # If annotations found, create masks and clean image if possible
             annotationExists = False
-            imageInfo['HAS_ANNOTATION'] = False
+
             for ext in AnnotationAdapter.ANNOTATION_FORMAT:
                 annotationExists = annotationExists or os.path.exists(os.path.join(imageInfo['DIR_PATH'],
                                                                                    imageInfo['NAME'] + '.' + ext))
+            imageInfo['HAS_ANNOTATION'] = annotationExists if self.__MODE == "mest_glom" else False
             if annotationExists:
                 if not silent:
-                    print(" - Annotation file found: creating dataset files and cleaning image if possible")
+                    print(" - Annotation file found: creating dataset files and cleaning image if possible", flush=True)
                 dW.createMasksOfImage(imageInfo['DIR_PATH'], imageInfo['NAME'], 'data', classesInfo=self.__CLASSES_INFO,
                                       imageFormat=imageInfo['IMAGE_FORMAT'], resize=self.__CORTEX_SIZE,
                                       config=self.__CONFIG)
-                if not self.__CORTEX_MODE:
+                if self.__MODE in ['main', 'mest_main']:
                     dW.fuseCortices('data', imageInfo['NAME'], imageFormat=imageInfo['IMAGE_FORMAT'],
                                     deleteBaseMasks=True, silent=True)
                     dW.cleanImage('data', imageInfo['NAME'], cleaningClass="cortex", cleanMasks=False,
                                   imageFormat=imageInfo['IMAGE_FORMAT'])
+                elif self.__MODE == "mest_glom":
+                    dW.cleanImage('data', imageInfo['NAME'], cleaningClass='nsg', cleanMasks=False,
+                                  imageFormat=imageInfo['IMAGE_FORMAT'])
+                    imageInfo.pop('X_STARTS')
+                    imageInfo.pop('Y_STARTS')
+                    imageInfo['ROI_COORDINATES'] = dI.getCenteredClassBboxes(
+                        datasetPath='data', imageName=imageInfo['NAME'], classToCenter='nsg',
+                        image_size=self.__DIVISION_SIZE, imageFormat=imageInfo['IMAGE_FORMAT'],
+                        allow_oversized=True, config=self.__CONFIG
+                    )
+                    imageInfo['NB_DIV'] = len(imageInfo['ROI_COORDINATES'])
                 maskDirs = os.listdir(os.path.join('data', imageInfo['NAME']))
-                if not self.__CORTEX_MODE:
-                    if "cortex" in maskDirs:
-                        cortexDirPath = os.path.join('data', imageInfo['NAME'], 'cortex')
-                        cortexImageFilePath = os.listdir(cortexDirPath)[0]
-                        cortex = dW.loadSameResImage(os.path.join(cortexDirPath, cortexImageFilePath), fullImage.shape)
-                        imageInfo['CORTEX_AREA'] = dD.getBWCount(cortex)[1]
-                        del cortex
+                if 'BASE_CLASS' in imageInfo:
+                    if imageInfo['BASE_CLASS'] in maskDirs:
+                        if imageInfo['BASE_CLASS'] not in self.__CUSTOM_CLASS_NAMES \
+                                and imageInfo['BASE_CLASS'] in maskDirs:
+                            maskDirs.remove(imageInfo['BASE_CLASS'])
+                        imageInfo.update({'BASE_AREA': 0, 'BASE_COUNT': 0})
+                        baseClassDirPath = os.path.join('data', imageInfo['NAME'], imageInfo['BASE_CLASS'])
+                        for baseClassMask in os.listdir(baseClassDirPath):
+                            baseMask = dW.loadSameResImage(os.path.join(baseClassDirPath, baseClassMask),
+                                                           fullImage.shape)
+                            imageInfo['BASE_AREA'] += dD.getBWCount(baseMask)[1]
+                            imageInfo['BASE_COUNT'] += 1
+                            del baseMask
                     # If full_images directory exists it means than image has been cleaned so we have to get it another
                     # time
                     if 'full_images' in maskDirs:
@@ -261,15 +305,15 @@ class NephrologyInferenceModel:
                         imageInfo['cleaned_image_path'] = os.path.join(imagesDirPath, imageFilePath)
                         image = cv2.cvtColor(cv2.imread(imageInfo['cleaned_image_path']), cv2.COLOR_BGR2RGB)
 
+                for notAClass in ['images', 'full_images']:
+                    if notAClass in maskDirs:
+                        maskDirs.remove(notAClass)
                 # We want to know if image has annotation, if we don't want to detect cortex and this mask exist
                 # as we need it to clean the image, we remove it from the mask list before checking if a class
                 # we want to predict has an annotated mask
-                if "cortex" not in self.__CUSTOM_CLASS_NAMES and "cortex" in maskDirs:
-                    maskDirs.remove("cortex")
-                for classToPredict in self.__CUSTOM_CLASS_NAMES:
-                    if classToPredict in maskDirs:
-                        imageInfo['HAS_ANNOTATION'] = True
-                        break
+                if not imageInfo['HAS_ANNOTATION']:
+                    imageInfo['HAS_ANNOTATION'] = any([d in self.__CUSTOM_CLASS_NAMES for d in maskDirs])
+
                 if imageInfo['HAS_ANNOTATION'] and not silent:
                     print("    - AP and confusion matrix will be computed")
 
@@ -291,12 +335,10 @@ class NephrologyInferenceModel:
             results_log.write(f"Image; Duration (s); Precision; {os.path.basename(self.__MODEL_PATH)}\n")
         return results_path, logsPath
 
-    def inference(self, images: list, results_path=None, save_results=True,
-                  fusion_bb_threshold=0., fusion_mask_threshold=0.1,
-                  filter_bb_threshold=0.5, filter_mask_threshold=0.9,
-                  priority_table=None, nbMaxDivPerAxis=3, fusionDivThreshold=0.1,
-                  displayOnlyAP=False, savePreFusionImage=False, savePreFilterImage=False,
-                  allowSparse=True, minMaskArea=300, on_border_threshold=0.25, perPixelConfMatrix=True,
+    def inference(self, images: list, results_path=None, save_results=True, fusion_bb_threshold=0.,
+                  fusion_mask_threshold=0.1, filter_bb_threshold=0.5, filter_mask_threshold=0.9, priority_table=None,
+                  nbMaxDivPerAxis=3, fusionDivThreshold=0.1, displayOnlyAP=False, savePreFusionImage=False,
+                  savePreFilterImage=False, allowSparse=True, minMaskArea=300, on_border_threshold=0.25,
                   enableCortexFusionDiv=True):
 
         if len(images) == 0:
@@ -310,569 +352,36 @@ class NephrologyInferenceModel:
             print("No result will be saved")
             results_path = None
 
-        self.__CONFUSION_MATRIX.fill(0)
+        self.__CONFUSION_MATRIX['mask'].fill(0)
+        self.__CONFUSION_MATRIX['pixel'].fill(0)
         self.__APs.clear()
-        cmap = plt.cm.get_cmap('hot')
         total_start_time = time()
         failedImages = []
-        for i, IMAGE_PATH in enumerate(images):
+        cortex_mode = self.__MODE == "cortex"
+        for img_idx, IMAGE_PATH in enumerate(images):
             try:
                 # Last step of full image inference
                 if '_fusion_info.skinet' in IMAGE_PATH:
-                    if self.__CORTEX_MODE:
+                    if cortex_mode:
                         continue
-                    step = "initialisation"
-                    with open(IMAGE_PATH, 'r') as skinetFile:
-                        fusionInfo = json.load(skinetFile)
-                    print(f"Finalising {fusionInfo['image']} image {progressText(i + 1, len(images))}")
-                    fusionDir = fusionInfo["image"] + '_fusion'
-                    fusionDirPath = os.path.join(os.path.dirname(IMAGE_PATH), fusionDir)
-                    # TODO Dynamic image extension !!!
-                    cleaned_image_path = os.path.join(fusionDirPath, fusionInfo["image"] + "_cleaned.jpg")
-                    cleanedImage = cv2.imread(cleaned_image_path)
-                    image_results_path = os.path.join(results_path, fusionInfo['image'])
-                    os.makedirs(image_results_path, exist_ok=True)
-
-                    # Pasting each divisions and merging all the stats
-                    globalStats = None
-                    for imageFolder in os.listdir(results_path):
-                        step = f"{imageFolder} div fusion"
-                        if (fusionInfo['image'] + '_') in imageFolder:
-                            divID = imageFolder.split('_')[-1]
-                            if fusionInfo["divisions"][divID]["used"]:
-                                imagePath = os.path.join(results_path, imageFolder,
-                                                         imageFolder + "_predicted_clean.png")
-                                statsPath = os.path.join(results_path, imageFolder, imageFolder + "_stats.json")
-                                with open(statsPath, 'r') as tempStatsFile:
-                                    tempStats = json.load(tempStatsFile)
-                                if "cortex" in tempStats:
-                                    tempStats["cortex"]["area"] = fusionInfo["divisions"][divID]["cortex_area"]
-                                    with open(statsPath, 'w') as tempStatsFile:
-                                        json.dump(tempStats, tempStatsFile, indent="\t")
-                                if globalStats is None:
-                                    globalStats = tempStats
-                                else:
-                                    for className in tempStats:
-                                        if className == "cortex":
-                                            continue
-                                        globalStats[className]["count"] += tempStats[className]["count"]
-                                        globalStats[className]["area"] += tempStats[className]["area"]
-                                divImage = cv2.imread(imagePath)
-                                coo = fusionInfo["divisions"][divID]["coordinates"]
-                                cleanedImage[coo["y1"]:coo["y2"], coo["x1"]:coo["x2"], :] = divImage
-                                shutil.move(os.path.join(results_path, imageFolder),
-                                            os.path.join(image_results_path, "divisions", imageFolder))
-                    cv2.imwrite(os.path.join(image_results_path, fusionInfo['image'] + "_full_prediction.jpg"),
-                                cleanedImage, CV2_IMWRITE_PARAM)
-                    with open(os.path.join(image_results_path, fusionInfo['image'] + "_full_prediction_stats.json"),
-                              'w') as globalStatsFile:
-                        globalStats["cortex"] = {"count": 1, "area": fusionInfo["cortex_area"]}
-                        json.dump(globalStats, globalStatsFile, indent="\t")
-                    del cleanedImage
-                    print("Done\n")
+                    image_name = os.path.basename(IMAGE_PATH).replace('_fusion_info.skinet', '')
+                    print(f"Finalising {image_name} image {progressText(img_idx + 1, len(images))}")
+                    self.merge_fusion_div(results_path, IMAGE_PATH)
                 else:
-                    start_time = time()
-                    print(f"Using {IMAGE_PATH} image file {progressText(i + 1, len(images))}")
-                    visualizeNames = self.__CUSTOM_CLASS_NAMES.copy()
-                    visualizeNames.insert(0, 'background')
-
-                    step = "image preparation"
-                    image, fullImage, imageInfo, image_results_path = self.prepare_image(IMAGE_PATH, results_path,
-                                                                                         silent=displayOnlyAP)
-                    if imageInfo["HAS_ANNOTATION"]:
-                        step = "dataset creation"
-
-                        class CustomDataset(utils.Dataset):
-
-                            def __init__(self, custom_class_names, cortex_mode, cortex_size, config, image_format):
-                                super().__init__()
-                                self.__CUSTOM_CLASS_NAMES = custom_class_names.copy()
-                                self.__CORTEX_MODE = cortex_mode
-                                self.__CORTEX_SIZE = cortex_size
-                                self.__CONFIG = config
-                                self.__IMAGE_FORMAT = image_format
-
-                            def get_class_names(self):
-                                return self.__CUSTOM_CLASS_NAMES.copy()
-
-                            def load_images(self):
-                                # Add classes
-                                for class_id, class_name in enumerate(self.__CUSTOM_CLASS_NAMES):
-                                    self.add_class("skinet", class_id + 1, class_name)
-                                image_name = imageInfo["NAME"]
-                                img_path = os.path.join('data', image_name, "images",
-                                                        f"{image_name}.{self.__IMAGE_FORMAT}")
-                                self.add_image("skinet", image_id=imageInfo["NAME"], path=img_path)
-
-                            def image_reference(self, image_id_):
-                                """Return the skinet data of the image."""
-                                info = self.image_info[image_id_]
-                                if info["source"] == "skinet":
-                                    return info["skinet"]
-                                else:
-                                    super(self.__class__).image_reference(self, image_id_)
-
-                            def load_mask(self, image_id_):
-                                """Generate instance masks for cells of the given image ID.
-                                """
-                                info = self.image_info[image_id_]
-                                info = info.get("id")
-
-                                path = os.path.join('data', info)
-
-                                # Counting masks for current image
-                                number_of_masks = 0
-                                for masks_dir in os.listdir(path):
-                                    # For each directory excepting /images
-                                    if masks_dir not in self.__CUSTOM_CLASS_NAMES:
-                                        continue
-                                    temp_DIR = os.path.join(path, masks_dir)
-                                    # https://stackoverflow.com/questions/2632205/how-to-count-the-number-of-files-in-a-directory-using-python
-                                    number_of_masks += len([name_ for name_ in os.listdir(temp_DIR)
-                                                            if os.path.isfile(os.path.join(temp_DIR, name_))])
-                                if self.__CORTEX_MODE:
-                                    masks_shape = (self.__CORTEX_SIZE[0], self.__CORTEX_SIZE[1], number_of_masks)
-                                elif self.__CONFIG.USE_MINI_MASK:
-                                    masks_shape = (self.__CONFIG.MINI_MASK_SHAPE[0], self.__CONFIG.MINI_MASK_SHAPE[1],
-                                                   number_of_masks)
-                                else:
-                                    masks_shape = (imageInfo["HEIGHT"], imageInfo["WIDTH"], number_of_masks)
-                                masks = np.zeros(masks_shape, dtype=np.uint8)
-                                bboxes = np.zeros((number_of_masks, 4), dtype=np.int32)
-                                iterator = 0
-                                class_ids = np.zeros((number_of_masks,), dtype=int)
-                                for masks_dir in os.listdir(path):
-                                    if masks_dir not in self.__CUSTOM_CLASS_NAMES:
-                                        continue
-                                    temp_class_id = self.__CUSTOM_CLASS_NAMES.index(masks_dir) + 1
-                                    masks_dir_path = os.path.join(path, masks_dir)
-                                    for mask_file in os.listdir(masks_dir_path):
-                                        mask = imread(os.path.join(masks_dir_path, mask_file))
-                                        masks[:, :, iterator] = mask
-                                        if self.__CONFIG.USE_MINI_MASK:
-                                            bboxes[iterator] = dW.getBboxFromName(mask_file)
-                                        else:
-                                            bboxes[iterator] = utils.extract_bboxes(mask)
-                                        class_ids[iterator] = temp_class_id
-                                        iterator += 1
-                                # Handle occlusions /!\ In our case there is no possible occlusion (part of object that
-                                # is hidden), all objects are complete (some are parts of other)
-                                # occlusion = np.logical_not(masks[:, :, -1]).astype(np.uint8)
-                                # for i in range(number_of_masks - 2, -1, -1):
-                                #     masks[:, :, i] = masks[:, :, i] * occlusion
-                                #     occlusion = np.logical_and(occlusion, np.logical_not(masks[:, :, i]))
-                                return masks, class_ids.astype(np.int32), bboxes
-
-                        dataset_val = CustomDataset(self.__CUSTOM_CLASS_NAMES, self.__CORTEX_MODE,
-                                                    self.__CORTEX_SIZE, self.__CONFIG, imageInfo["IMAGE_FORMAT"])
-                        dataset_val.load_images()
-                        dataset_val.prepare()
-
-                        step = "loading annotated masks"
-                        image_id = dataset_val.image_ids[0]
-                        gt_mask, gt_class_id, gt_bbox = dataset_val.load_mask(image_id)
-                        if save_results:
-                            if not displayOnlyAP:
-                                print(" - Applying annotations on file to get expected results")
-                            fileName = os.path.join(image_results_path, f"{imageInfo['NAME']}_Expected")
-                            _ = visualize.display_instances(
-                                fullImage if self.__LOW_MEMORY else fullImage.copy(),
-                                gt_bbox, gt_mask, gt_class_id, visualizeNames,
-                                colorPerClass=True, figsize=(
-                                    (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                                    (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
-                                ), image_format=imageInfo['IMAGE_FORMAT'],
-                                title=f"{imageInfo['NAME']} Expected", fileName=fileName,
-                                silent=True, config=self.__CONFIG
-                            )
-                            if self.__LOW_MEMORY:
-                                del fullImage
-                                gc.collect()
-                                fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
-
-                    # Getting predictions for each division
-
-                    res = []
-                    total_px = self.__CONFIG.IMAGE_MAX_DIM * self.__CONFIG.IMAGE_MIN_DIM
-                    skipped = 0
-                    debugIterator = -1
-                    skippedText = ""
-                    inference_start_time = time()
-                    if not displayOnlyAP:
-                        progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference')
-                    for divId in range(imageInfo["NB_DIV"]):
-                        step = f"{divId} div processing"
-                        division = dD.getImageDivision(fullImage if image is None else image, imageInfo["X_STARTS"],
-                                                       imageInfo["Y_STARTS"], divId)
-                        grayDivision = cv2.cvtColor(division, cv2.COLOR_RGB2GRAY)
-                        colorPx = cv2.countNonZero(grayDivision)
-                        del grayDivision
-                        if colorPx / total_px > 0.1:
-                            step = f"{divId} div inference"
-                            results = self.__MODEL.detect([division])
-                            results[0]["div_id"] = divId
-                            if self.__CONFIG.USE_MINI_MASK:
-                                res.append(utils.reduce_memory(results[0].copy(), config=self.__CONFIG,
-                                                               allow_sparse=allowSparse))
-                            else:
-                                res.append(results[0].copy())
-                            del results
-                        elif not displayOnlyAP:
-                            skipped += 1
-                            skippedText = f"({skipped} empty division{'s' if skipped > 1 else ''} skipped) "
-                        del division
-                        gc.collect()
-                        if not displayOnlyAP:
-                            if divId + 1 == imageInfo["NB_DIV"]:
-                                inference_duration = round(time() - inference_start_time)
-                                skippedText += f"Duration = {formatTime(inference_duration)}"
-                            progressBar(divId + 1, imageInfo["NB_DIV"], prefix=' - Inference', suffix=skippedText)
-
-                    # Post-processing of the predictions
-                    if not displayOnlyAP:
-                        print(" - Fusing results of all divisions")
-
-                    step = "fusing results"
-                    res = pp.fuse_results(res, fullImage.shape, division_size=self.__DIVISION_SIZE,
-                                          min_overlap_part=self.__MIN_OVERLAP_PART)
-
-                    if savePreFusionImage:
-                        debugIterator += 1
-                        self.save_debug_image("pre fusion", debugIterator, fullImage, imageInfo, res,
-                                              image_results_path, visualizeNames, silent=displayOnlyAP)
-
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore")
-                        step = "fusing masks"
-                        progressBarPrefix = " - Fusing overlapping masks" if not displayOnlyAP else None
-                        res = pp.fuse_masks(res, bb_threshold=fusion_bb_threshold, mask_threshold=fusion_mask_threshold,
-                                            config=self.__CONFIG, displayProgress=progressBarPrefix, verbose=0)
-
-                        if not self.__CORTEX_MODE and len(self.__CUSTOM_CLASS_NAMES) == 10:
-                            if savePreFilterImage:
-                                debugIterator += 1
-                                self.save_debug_image("pre border filter", debugIterator, fullImage, imageInfo, res,
-                                                      image_results_path, visualizeNames, silent=displayOnlyAP)
-                            step = "removing border masks"
-                            progressBarPrefix = " - Removing border masks" if not displayOnlyAP else None
-                            classes_to_check = [7, 8, 9, 10]
-                            res = pp.filter_on_border_masks(res, fullImage if image is None else image,
-                                                            onBorderThreshold=on_border_threshold,
-                                                            classes=classes_to_check, config=self.__CONFIG,
-                                                            displayProgress=progressBarPrefix, verbose=0)
-
-                            if savePreFilterImage:
-                                debugIterator += 1
-                                self.save_debug_image("pre orphan filter", debugIterator, fullImage, imageInfo, res,
-                                                      image_results_path, visualizeNames, silent=displayOnlyAP)
-                                # TODO : Build automatically classes_hierarchy
-
-                            classes_hierarchy = {
-                                3: {"contains": [4, 5], "keep_if_no_child": False},
-                                8: {"contains": [9, 10], "keep_if_no_child": True}
-                            }
-                            step = "filtering orphan masks (pass 1)"
-                            progressBarPrefix = " - Removing orphan masks" if not displayOnlyAP else None
-                            res = pp.filter_orphan_masks(res, bb_threshold=filter_bb_threshold,
-                                                         mask_threshold=filter_mask_threshold,
-                                                         classes_hierarchy=classes_hierarchy,
-                                                         displayProgress=progressBarPrefix, config=self.__CONFIG,
-                                                         verbose=0)
-                        del image
-                        if savePreFilterImage:
-                            debugIterator += 1
-                            self.save_debug_image("pre filter", debugIterator, fullImage, imageInfo, res,
-                                                  image_results_path, visualizeNames, silent=displayOnlyAP)
-
-                        step = "filtering masks"
-                        progressBarPrefix = " - Removing non-sense masks" if not displayOnlyAP else None
-                        res = pp.filter_masks(res, bb_threshold=filter_bb_threshold, priority_table=priority_table,
-                                              mask_threshold=filter_mask_threshold, included_threshold=0.9,
-                                              including_threshold=0.6, verbose=0,
-                                              displayProgress=progressBarPrefix, config=self.__CONFIG)
-
-                        if not self.__CORTEX_MODE and len(self.__CUSTOM_CLASS_NAMES) == 10:
-                            if savePreFilterImage:
-                                debugIterator += 1
-                                self.save_debug_image("pre orphan filter (Pass 2)", debugIterator, fullImage, imageInfo,
-                                                      res, image_results_path, visualizeNames, silent=displayOnlyAP)
-                                # TODO : Build automatically classes_hierarchy
-
-                            classes_hierarchy = {
-                                3: {"contains": [4, 5], "keep_if_no_child": False},
-                                8: {"contains": [9, 10], "keep_if_no_child": True}
-                            }
-                            step = "filtering orphan masks (pass 2)"
-                            progressBarPrefix = " - Removing orphan masks" if not displayOnlyAP else None
-                            res = pp.filter_orphan_masks(res, bb_threshold=filter_bb_threshold,
-                                                         mask_threshold=filter_mask_threshold,
-                                                         classes_hierarchy=classes_hierarchy,
-                                                         displayProgress=progressBarPrefix, config=self.__CONFIG,
-                                                         verbose=0)
-
-                        if not self.__CORTEX_MODE and len(self.__CUSTOM_CLASS_NAMES) == 10:
-                            if savePreFusionImage:
-                                debugIterator += 1
-                                self.save_debug_image("pre class fusion", debugIterator, fullImage, imageInfo, res,
-                                                      image_results_path, visualizeNames, silent=displayOnlyAP)
-                            step = "fusing classes"
-                            progressBarPrefix = " - Fusing overlapping equivalent masks" if not displayOnlyAP else None
-                            classes_compatibility = [[4, 5]]  # Nsg partiel + nsg complet
-                            res = pp.fuse_class(res, bb_threshold=fusion_bb_threshold,
-                                                mask_threshold=fusion_mask_threshold,
-                                                classes_compatibility=classes_compatibility, config=self.__CONFIG,
-                                                displayProgress=progressBarPrefix, verbose=0)
-                            if savePreFilterImage:
-                                debugIterator += 1
-                                self.save_debug_image("pre small masks removal", debugIterator, fullImage, imageInfo,
-                                                      res, image_results_path, visualizeNames, silent=displayOnlyAP)
-                            step = "removing small masks"
-                            progressBarPrefix = " - Removing small masks" if not displayOnlyAP else None
-                            res = pp.filter_small_masks(res, min_size=minMaskArea, config=self.__CONFIG,
-                                                        displayProgress=progressBarPrefix, verbose=0)
-
-                    if imageInfo["HAS_ANNOTATION"]:
-                        if not displayOnlyAP:
-                            print(" - Computing Average Precision and Confusion Matrix")
-                        with warnings.catch_warnings():
-                            warnings.simplefilter("ignore")
-                            # TODO : Build automatically classes_hierarchy
-                            classes_hierarchy = None
-                            if not self.__CORTEX_MODE and len(self.__CUSTOM_CLASS_NAMES) == 10:
-                                classes_hierarchy = {3: [4, 5], 8: [9, 10], 10: [9]}
-                            step = "computing confusion matrix"
-                            AP, _, _, _, confusion_matrix = utils.compute_ap(gt_boxes=gt_bbox, gt_class_ids=gt_class_id,
-                                                                             gt_masks=gt_mask, pred_boxes=res["rois"],
-                                                                             pred_class_ids=res["class_ids"],
-                                                                             pred_scores=res["scores"],
-                                                                             pred_masks=res['masks'],
-                                                                             nb_class=-1 if perPixelConfMatrix else self.__NB_CLASS,
-                                                                             score_threshold=0.3,
-                                                                             iou_threshold=0.5,
-                                                                             confusion_iou_threshold=0.5,
-                                                                             classes_hierarchy=classes_hierarchy,
-                                                                             confusion_background_class=True,
-                                                                             confusion_only_best_match=False)
-                            if perPixelConfMatrix:
-                                if self.__CORTEX_MODE:
-                                    hierarchy = [2, {3: 1}]
-                                    image_shape = self.__CORTEX_SIZE
-                                else:
-                                    hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{10: 9}, 9]}]
-                                    image_shape = (imageInfo['HEIGHT'], imageInfo['WIDTH'])
-                                confusion_matrix = utils.compute_confusion_matrix(
-                                    image_shape=image_shape, config=self.__CONFIG,
-                                    expectedResults={'rois': gt_bbox, 'masks': gt_mask, 'class_ids': gt_class_id},
-                                    predictedResults=res, classes_hierarchy=hierarchy, num_classes=self.__NB_CLASS
-                                )
-                            print(f"{'' if displayOnlyAP else '   '} - Average Precision is about {AP:06.2%}")
-                            self.__CONFUSION_MATRIX = np.add(self.__CONFUSION_MATRIX, confusion_matrix)
-                            self.__APs.append(AP)
-                            if save_results:
-                                step = "saving confusion matrix"
-                                name = f"{imageInfo['NAME']} Confusion Matrix"
-                                confusionMatrixFileName = os.path.join(image_results_path, name.replace(' ', '_'))
-                                name2 = f"{imageInfo['NAME']} Confusion Matrix (Normalized)"
-                                confusionMatrixFileName2 = os.path.join(image_results_path, name2.replace('(', '')
-                                                                        .replace(')', '')
-                                                                        .replace(' ', '_'))
-                                visualize.display_confusion_matrix(confusion_matrix, self.__CUSTOM_CLASS_NAMES.copy(),
-                                                                   title=name,
-                                                                   cmap=cmap, show=False,
-                                                                   fileName=confusionMatrixFileName)
-                                visualize.display_confusion_matrix(confusion_matrix, self.__CUSTOM_CLASS_NAMES.copy(),
-                                                                   title=name2,
-                                                                   cmap=cmap, show=False, normalize=True,
-                                                                   fileName=confusionMatrixFileName2)
-                                del dataset_val, gt_mask, gt_bbox, gt_class_id
-
-                    if not self.__CORTEX_MODE:
-                        step = "computing statistics"
-                        print(" - Computing statistics on predictions")
-                        stats = pp.getCountAndArea(res, classesInfo=self.__CLASSES_INFO,
-                                                   selectedClasses=self.__CUSTOM_CLASS_NAMES, config=self.__CONFIG)
-                        print(f"    - cortex : area = {imageInfo['CORTEX_AREA']}")
-                        for className in self.__CUSTOM_CLASS_NAMES:
-                            stat = stats[className]
-                            print(f"    - {className} : count = {stat['count']}, area = {stat['area']} px")
-                        if save_results:
-                            with open(os.path.join(image_results_path, f"{imageInfo['NAME']}_stats.json"),
-                                      "w") as saveFile:
-                                stats["cortex"] = {"count": 1, "area": imageInfo["CORTEX_AREA"]}
-                                try:
-                                    json.dump(stats, saveFile, indent='\t')
-                                except TypeError:
-                                    print("    Failed to save statistics", flush=True)
-
-                    if save_results:
-                        if self.__CORTEX_MODE:
-                            step = "cleaning full resolution image"
-                            if not displayOnlyAP:
-                                print(" - Cleaning full resolution image and saving statistics")
-                            allCortices = None
-                            # Gathering every cortex masks into one
-                            for idxMask, classMask in enumerate(res['class_ids']):
-                                if classMask == 1:
-                                    if allCortices is None:  # First mask found
-                                        allCortices = res['masks'][:, :, idxMask].copy() * 255
-                                    else:  # Additional masks found
-                                        allCortices = cv2.bitwise_or(allCortices, res['masks'][:, :, idxMask] * 255)
-
-                            # To avoid cleaning an image without cortex
-                            if allCortices is not None:
-                                # Extracting the new Bbox
-                                allCorticesROI = utils.extract_bboxes(allCortices)
-
-                                fusion_dir = os.path.join(image_results_path, f"{imageInfo['NAME']}_fusion")
-                                os.makedirs(fusion_dir, exist_ok=True)
-                                allCorticesSmall = allCortices[allCorticesROI[0]:allCorticesROI[2],
-                                                               allCorticesROI[1]:allCorticesROI[3]]
-                                cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_cortex.jpg"),
-                                            allCorticesSmall, CV2_IMWRITE_PARAM)
-                                # Computing coordinates at full resolution
-                                yRatio = imageInfo['HEIGHT'] / self.__CORTEX_SIZE[0]
-                                xRatio = imageInfo['WIDTH'] / self.__CORTEX_SIZE[1]
-                                allCorticesROI[0] = int(allCorticesROI[0] * yRatio)
-                                allCorticesROI[1] = int(allCorticesROI[1] * xRatio)
-                                allCorticesROI[2] = int(allCorticesROI[2] * yRatio)
-                                allCorticesROI[3] = int(allCorticesROI[3] * xRatio)
-
-                                # Resizing and adding the 2 missing channels of the cortices mask
-                                allCortices = cv2.resize(np.uint8(allCortices),
-                                                         (imageInfo['WIDTH'], imageInfo['HEIGHT']),
-                                                         interpolation=cv2.INTER_CUBIC)
-                                allCorticesArea = dD.getBWCount(allCortices)[1]
-                                with open(os.path.join(image_results_path, f"{imageInfo['NAME']}_stats.json"),
-                                          "w") as saveFile:
-                                    stats = {"cortex": {"count": 1, "area": allCorticesArea}}
-                                    try:
-                                        json.dump(stats, saveFile, indent='\t')
-                                    except TypeError:
-                                        print("    Failed to save statistics", flush=True)
-
-                                temp = np.repeat(allCortices[:, :, np.newaxis], 3, axis=2)
-
-                                # Masking the image and saving it
-                                imageInfo['FULL_RES_IMAGE'] = cv2.bitwise_and(
-                                    imageInfo['FULL_RES_IMAGE'][allCorticesROI[0]: allCorticesROI[2],
-                                                                allCorticesROI[1]:allCorticesROI[3], :],
-                                    temp[allCorticesROI[0]: allCorticesROI[2],
-                                         allCorticesROI[1]:allCorticesROI[3], :])
-                                cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_cleaned.jpg"),
-                                            cv2.cvtColor(imageInfo['FULL_RES_IMAGE'], cv2.COLOR_RGB2BGR),
-                                            CV2_IMWRITE_PARAM)
-
-                                if enableCortexFusionDiv:
-                                    #########################################################
-                                    # Preparing to export all "fusion" divisions with stats #
-                                    #########################################################
-                                    fusion_info_file_path = os.path.join(image_results_path,
-                                                                         f"{imageInfo['NAME']}_fusion_info.skinet")
-                                    fusionInfo = {"image": imageInfo["NAME"]}
-
-                                    # Computing ratio between full resolution image and the low one
-                                    height, width, _ = imageInfo['FULL_RES_IMAGE'].shape
-                                    smallHeight, smallWidth = allCorticesSmall.shape
-                                    xRatio = width / smallWidth
-                                    yRatio = height / smallHeight
-
-                                    # Computing divisions coordinates for full and low resolution images
-                                    divisionSize = dD.getMaxSizeForDivAmount(nbMaxDivPerAxis, self.__DIVISION_SIZE,
-                                                                             self.__MIN_OVERLAP_PART_MAIN)
-                                    xStarts = dD.computeStartsOfInterval(width, intervalLength=divisionSize,
-                                                                         min_overlap_part=0)
-                                    yStarts = dD.computeStartsOfInterval(height, intervalLength=divisionSize,
-                                                                         min_overlap_part=0)
-
-                                    xStartsEquivalent = [round(x / xRatio) for x in xStarts]
-                                    yStartsEquivalent = [round(y / yRatio) for y in yStarts]
-                                    xDivSide = round(divisionSize / xRatio)
-                                    yDivSide = round(divisionSize / yRatio)
-
-                                    # Preparing informations to write into the .skinet file
-                                    fusionInfo["division_size"] = divisionSize
-                                    fusionInfo["min_overlap_part"] = 0
-                                    fusionInfo["xStarts"] = xStarts
-                                    fusionInfo["yStarts"] = yStarts
-                                    fusionInfo["max_div_per_axis"] = nbMaxDivPerAxis
-                                    fusionInfo["cortex_area"] = allCorticesArea
-                                    fusionInfo["divisions"] = {}
-
-                                    step = "saving divisions of cleaned image"
-                                    # Extracting and saving all divisions
-                                    for divID in range(dD.getDivisionsCount(xStarts, yStarts)):
-                                        cortexDiv = dD.getImageDivision(allCorticesSmall, xStartsEquivalent,
-                                                                        yStartsEquivalent,
-                                                                        divID, divisionSize=(xDivSide, yDivSide))
-                                        black, white = dD.getBWCount(cortexDiv.astype(np.uint8))
-                                        partOfDiv = white / (white + black)
-                                        fusionInfo["divisions"][divID] = {"cortex_area": white,
-                                                                          "cortex_representative_part": partOfDiv,
-                                                                          "used": partOfDiv > fusionDivThreshold}
-                                        if partOfDiv > fusionDivThreshold:
-                                            x, xEnd, y, yEnd = dD.getDivisionByID(xStarts, yStarts, divID, divisionSize)
-                                            fusionInfo["divisions"][divID]["coordinates"] = {"x1": x, "x2": xEnd, "y1": y,
-                                                                                             "y2": yEnd}
-                                            imageDivision = dD.getImageDivision(imageInfo['FULL_RES_IMAGE'], xStarts,
-                                                                                yStarts,
-                                                                                divID, divisionSize)
-                                            cv2.imwrite(os.path.join(fusion_dir, f"{imageInfo['NAME']}_{divID}.jpg"),
-                                                        cv2.cvtColor(imageDivision, cv2.COLOR_RGB2BGR), CV2_IMWRITE_PARAM)
-
-                                    # Writing informations into the .skinet file
-                                    with open(fusion_info_file_path, 'w') as fusionInfoFile:
-                                        try:
-                                            json.dump(fusionInfo, fusionInfoFile, indent="\t")
-                                        except TypeError:
-                                            print("    Failed to save fusion info file", file=sys.stderr, flush=True)
-
-                        if not displayOnlyAP:
-                            print(" - Applying masks on image")
-                        step = "saving predicted image"
-                        fileName = os.path.join(image_results_path, f"{imageInfo['NAME']}_Predicted")
-                        # No need of reloading or passing copy of image as it is the final drawing
-                        _ = visualize.display_instances(
-                            fullImage, res['rois'], res['masks'], res['class_ids'], visualizeNames, res['scores'],
-                            colorPerClass=True, fileName=fileName, onlyImage=True, silent=True, figsize=(
-                                (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                                (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
-                            ), image_format=imageInfo['IMAGE_FORMAT'], config=self.__CONFIG
-                        )
-                        # Annotations Extraction
-                        step = "saving annotations"
-                        if not displayOnlyAP:
-                            print(" - Saving predicted annotations files")
-                        for adapter in AnnotationAdapter.ANNOTATION_ADAPTERS:
-                            try:
-                                pp.export_annotations(imageInfo, res, self.__CLASSES_INFO,
-                                                      adapter, save_path=image_results_path,
-                                                      config=self.__CONFIG, verbose=0 if displayOnlyAP else 1)
-                            except Exception:
-                                print(f"Failed to export using {adapter.__qualname__} adapter")
-                    final_time = round(time() - start_time)
-                    print(f" Done in {formatTime(final_time)}\n")
-                    if not imageInfo['HAS_ANNOTATION']:
-                        AP = -1
-                    step = "finalizing"
-                    if save_results:
-                        with open(logsPath, 'a') as results_log:
-                            apText = f"{AP:4.3f}".replace(".", ",")
-                            results_log.write(f"{imageInfo['NAME']}; {final_time}; {apText}%;\n")
-                    del res, imageInfo, fullImage
-                    plt.clf()
-                    plt.close('all')
-                    gc.collect()
+                    print(f"Using {IMAGE_PATH} image file {progressText(img_idx + 1, len(images))}")
+                    image_name = os.path.splitext(os.path.basename(IMAGE_PATH))[0]
+                    self.process_image(IMAGE_PATH, results_path, allowSparse, savePreFusionImage, fusion_bb_threshold,
+                                       fusion_mask_threshold, savePreFilterImage, filter_bb_threshold,
+                                       filter_mask_threshold, priority_table, on_border_threshold, minMaskArea,
+                                       enableCortexFusionDiv, fusionDivThreshold, nbMaxDivPerAxis, save_results,
+                                       displayOnlyAP, logsPath)
             except Exception as e:
                 traceback.print_exception(type(e), e, e.__traceback__)
                 failedImages.append(os.path.basename(IMAGE_PATH))
-                print(f"/!\\ Failed {IMAGE_PATH} at \"{step}\"\n")
-                if save_results and step not in ["image preparation", "finalizing"]:
-                    apText = ""
-                    if imageInfo['HAS_ANNOTATION'] and step in []:
-                        apText = f"{AP:4.3f}".replace(".", ",")
-                    final_time = round(time() - start_time)
+                print(f"/!\\ Failed {IMAGE_PATH} at \"{self.__STEP}\"\n")
+                if save_results and self.__STEP not in ["image preparation", "finalizing"]:
                     with open(logsPath, 'a') as results_log:
-                        results_log.write(f"{imageInfo['NAME']}; {final_time}; {apText};FAILED ({step});\n")
+                        results_log.write(f"{image_name}; -1; -1;FAILED ({self.__STEP});\n")
         # Saving failed images list if not empty
         if len(failedImages) > 0:
             try:
@@ -886,18 +395,17 @@ class NephrologyInferenceModel:
         if len(self.__APs) > 1:
             mAP = np.mean(self.__APs)
             print(f"Mean Average Precision is about {mAP:06.2%}")
-            name = "Final Confusion Matrix"
-            name2 = "Final Confusion Matrix (Normalized)"
-            visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, self.__CUSTOM_CLASS_NAMES.copy(), title=name,
-                                               cmap=cmap, show=False,
-                                               fileName=(os.path.join(results_path, name.replace(' ', '_'))
-                                                         if save_results else None))
-            visualize.display_confusion_matrix(self.__CONFUSION_MATRIX, self.__CUSTOM_CLASS_NAMES.copy(), title=name2,
-                                               cmap=cmap, show=False, normalize=True,
-                                               fileName=(os.path.join(results_path, name2.replace('(', '')
-                                                                      .replace(')', '')
-                                                                      .replace(' ', '_'))
-                                                         if save_results else None))
+            cmap = plt.cm.get_cmap('hot')
+            for mat_type in ['mask', 'pixel']:
+                for normalized in [False, True]:
+                    name = f"Final Confusion Matrix ({mat_type.capitalize()}){' (Normalized)' if normalized else ''}"
+                    confusionMatrixFileName = os.path.join(results_path, name.replace('(', '')
+                                                                             .replace(')', '')
+                                                                             .replace(' ', '_'))
+                    visualize.display_confusion_matrix(self.__CONFUSION_MATRIX[mat_type],
+                                                       self.__CUSTOM_CLASS_NAMES.copy(), title=name, cmap=cmap,
+                                                       show=False, normalize=normalized,
+                                                       fileName=confusionMatrixFileName)
             plt.close('all')
         else:
             mAP = -1
@@ -908,18 +416,648 @@ class NephrologyInferenceModel:
                 mapText = f"{mAP:4.3f}".replace(".", ",")
                 results_log.write(f"GLOBAL; {total_time}; {mapText}%;\n")
 
-    def save_debug_image(self, step, debugIterator, fullImage, imageInfo, res, image_results_path, names, silent=True):
+    def process_image(self, image_path, results_path, allowSparse, savePreFusionImage, fusion_bb_threshold,
+                      fusion_mask_threshold, savePreFilterImage, filter_bb_threshold, filter_mask_threshold,
+                      priority_table, on_border_threshold, minMaskArea, enableCortexFusionDiv, fusionDivThreshold,
+                      nbMaxDivPerAxis, save_results, displayOnlyAP, logsPath):
+        cortex_mode = self.__MODE == "cortex"
+        start_time = time()
+        self.__STEP = "image preparation"
+        image, fullImage, imageInfo, image_results_path = self.prepare_image(image_path, results_path,
+                                                                             silent=displayOnlyAP)
+        if imageInfo["HAS_ANNOTATION"]:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                ground_truth = self.get_ground_truth(image_results_path, fullImage,
+                                                     imageInfo, displayOnlyAP, save_results)
+            if save_results:
+                if self.__LOW_MEMORY:
+                    del fullImage
+                    gc.collect()
+                    fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
+
+        # Getting predictions for each division
+        res = []
+        total_px = self.__CONFIG.IMAGE_SIDE ** 2
+        skipped = 0
+        debugIterator = -1
+        skippedText = ""
+        inference_start_time = time()
+        if not displayOnlyAP:
+            progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference')
+        for divId in range(imageInfo["NB_DIV"]):
+            self.__STEP = f"{divId} div processing"
+            forceInference = False
+            if 'X_STARTS' in imageInfo and 'Y_STARTS' in imageInfo:
+                division = dD.getImageDivision(fullImage if image is None else image, imageInfo["X_STARTS"],
+                                               imageInfo["Y_STARTS"], divId, self.__DIVISION_SIZE)
+            elif 'ROI_COORDINATES' in imageInfo:
+                currentRoI = imageInfo['ROI_COORDINATES'][divId]
+                division = (fullImage if image is None else image)[currentRoI[0]:currentRoI[2],
+                           currentRoI[1]:currentRoI[3], :]
+                forceInference = True
+            else:
+                raise ValueError('Cannot find image areas to use')
+
+            if not forceInference:
+                grayDivision = cv2.cvtColor(division, cv2.COLOR_RGB2GRAY)
+                colorPx = cv2.countNonZero(grayDivision)
+                del grayDivision
+            if forceInference or colorPx / total_px > 0.1:
+                self.__STEP = f"{divId} div inference"
+                results = self.__MODEL.process(division, normalizedCoordinates=False,
+                                               score_threshold=self.__CONFIG.DETECTION_MIN_CONFIDENCE)
+                results["div_id"] = divId
+                if self.__CONFIG.USE_MINI_MASK:
+                    res.append(utils.reduce_memory(results.copy(), config=self.__CONFIG, allow_sparse=allowSparse))
+                else:
+                    res.append(results.copy())
+                del results
+            elif not displayOnlyAP:
+                skipped += 1
+                skippedText = f"({skipped} empty division{'s' if skipped > 1 else ''} skipped) "
+            del division
+            gc.collect()
+
+            if not displayOnlyAP:
+                if divId + 1 == imageInfo["NB_DIV"]:
+                    inference_duration = round(time() - inference_start_time)
+                    skippedText += f"Duration = {formatTime(inference_duration)}"
+                progressBar(divId + 1, imageInfo["NB_DIV"], prefix=' - Inference', suffix=skippedText)
+
+        # Post-processing of the predictions
+        if not displayOnlyAP:
+            print(" - Fusing results of all divisions")
+        self.__STEP = "fusing results"
+        # res = pp.fuse_results(res, fullImage.shape, division_size=self.__DIVISION_SIZE,
+        #                       min_overlap_part=self.__MIN_OVERLAP_PART)
+        res = pp.fuse_results(res, imageInfo, division_size=self.__DIVISION_SIZE,
+                              cortex_size=self.__CORTEX_SIZE, config=self.__CONFIG)
+
+        if len(res['class_ids']) > 0:
+            # TODO dyn call and args as dict for post-processing automation
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.__STEP = "fusing masks"
+                progressBarPrefix = " - Fusing overlapping masks" if not displayOnlyAP else None
+                res = pp.fuse_masks(res, bb_threshold=fusion_bb_threshold, mask_threshold=fusion_mask_threshold,
+                                    config=self.__CONFIG, displayProgress=progressBarPrefix, verbose=0)
+
+                if "main" in self.__MODE:
+                    if savePreFilterImage:
+                        debugIterator += 1
+                        self.save_debug_image("pre border filter", debugIterator, fullImage, imageInfo, res,
+                                              image_results_path, silent=displayOnlyAP)
+                        if self.__LOW_MEMORY:
+                            del fullImage
+                            gc.collect()
+                            fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
+                    self.__STEP = "removing border masks"
+                    progressBarPrefix = " - Removing border masks" if not displayOnlyAP else None
+                    if self.__MODE == "main":
+                        classes_to_check = [7, 8, 9, 10]
+                    else:
+                        classes_to_check = [5, 6]
+                    res = pp.filter_on_border_masks(res, fullImage if image is None else image,
+                                                    onBorderThreshold=on_border_threshold,
+                                                    classes=classes_to_check, config=self.__CONFIG,
+                                                    displayProgress=progressBarPrefix, verbose=0)
+
+                if self.__MODE == "main":
+                    if savePreFilterImage:
+                        debugIterator += 1
+                        self.save_debug_image("pre orphan filter", debugIterator, fullImage, imageInfo, res,
+                                              image_results_path, silent=displayOnlyAP)
+                        if self.__LOW_MEMORY:
+                            del fullImage
+                            gc.collect()
+                            fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
+                        # TODO : Build automatically per_mask_conf_hierarchy
+
+                    per_mask_conf_hierarchy = {
+                        3: {"contains": [4, 5], "keep_if_no_child": False},
+                        8: {"contains": [9, 10], "keep_if_no_child": True}
+                    }
+                    self.__STEP = "filtering orphan masks (pass 1)"
+                    progressBarPrefix = " - Removing orphan masks" if not displayOnlyAP else None
+                    res = pp.filter_orphan_masks(res, bb_threshold=filter_bb_threshold,
+                                                 mask_threshold=filter_mask_threshold,
+                                                 classes_hierarchy=per_mask_conf_hierarchy,
+                                                 displayProgress=progressBarPrefix, config=self.__CONFIG,
+                                                 verbose=0)
+                del image
+
+                if type(priority_table[0][0]) is not bool or (type(priority_table[0][0]) is bool
+                                                              and any([any(row) for row in priority_table])):
+                    if savePreFilterImage:
+                        debugIterator += 1
+                        self.save_debug_image("pre filter", debugIterator, fullImage, imageInfo, res,
+                                              image_results_path, silent=displayOnlyAP)
+                        if self.__LOW_MEMORY:
+                            del fullImage
+                            gc.collect()
+                            fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
+
+                    self.__STEP = "filtering masks"
+                    progressBarPrefix = " - Removing non-sense masks" if not displayOnlyAP else None
+                    res = pp.filter_masks(res, bb_threshold=filter_bb_threshold, priority_table=priority_table,
+                                          mask_threshold=filter_mask_threshold, included_threshold=0.9,
+                                          including_threshold=0.6, verbose=0,
+                                          displayProgress=progressBarPrefix, config=self.__CONFIG)
+
+                if self.__MODE == "main":
+                    if savePreFilterImage:
+                        debugIterator += 1
+                        self.save_debug_image("pre orphan filter (Pass 2)", debugIterator, fullImage, imageInfo,
+                                              res, image_results_path, silent=displayOnlyAP)
+                        if self.__LOW_MEMORY:
+                            del fullImage
+                            gc.collect()
+                            fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
+
+                    self.__STEP = "filtering orphan masks (pass 2)"
+                    progressBarPrefix = " - Removing orphan masks" if not displayOnlyAP else None
+                    res = pp.filter_orphan_masks(res, bb_threshold=filter_bb_threshold,
+                                                 mask_threshold=filter_mask_threshold,
+                                                 classes_hierarchy=per_mask_conf_hierarchy,
+                                                 displayProgress=progressBarPrefix, config=self.__CONFIG,
+                                                 verbose=0)
+
+                    if savePreFusionImage:
+                        debugIterator += 1
+                        self.save_debug_image("pre class fusion", debugIterator, fullImage, imageInfo, res,
+                                              image_results_path, silent=displayOnlyAP)
+                        if self.__LOW_MEMORY:
+                            del fullImage
+                            gc.collect()
+                            fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
+                    self.__STEP = "fusing classes"
+                    progressBarPrefix = " - Fusing overlapping equivalent masks" if not displayOnlyAP else None
+                    classes_compatibility = [[4, 5]]  # Nsg partiel + nsg complet
+                    res = pp.fuse_class(res, bb_threshold=fusion_bb_threshold,
+                                        mask_threshold=fusion_mask_threshold,
+                                        classes_compatibility=classes_compatibility, config=self.__CONFIG,
+                                        displayProgress=progressBarPrefix, verbose=0)
+
+                if savePreFilterImage:
+                    debugIterator += 1
+                    self.save_debug_image("pre small masks removal", debugIterator, fullImage, imageInfo,
+                                          res, image_results_path, silent=displayOnlyAP)
+                    if self.__LOW_MEMORY:
+                        del fullImage
+                        gc.collect()
+                        fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
+                self.__STEP = "removing small masks"
+                progressBarPrefix = " - Removing small masks" if not displayOnlyAP else None
+                res = pp.filter_small_masks(res, min_size=minMaskArea, config=self.__CONFIG,
+                                            displayProgress=progressBarPrefix, verbose=0)
+                if savePreFusionImage:
+                    debugIterator += 1
+                    self.save_debug_image("pre fusion", debugIterator, fullImage, imageInfo, res,
+                                          image_results_path, silent=displayOnlyAP)
+                    if self.__LOW_MEMORY:
+                        del fullImage
+                        gc.collect()
+                        fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            if imageInfo["HAS_ANNOTATION"]:
+                # TODO : Build automatically per_mask_conf_hierarchy
+                per_mask_conf_hierarchy = None
+                per_pixel_conf_hierarchy = None
+                if self.__MODE == 'cortex':
+                    per_pixel_conf_hierarchy = [2, {3: 1}]  # Ensures that cortex overrides other classes
+                elif self.__MODE == 'main':
+                    if len(self.__CUSTOM_CLASS_NAMES) == 10:
+                        per_mask_conf_hierarchy = {3: [4, 5], 8: [9, 10], 10: [9]}
+                    per_pixel_conf_hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{10: 9}, 9]}]
+
+                AP = self.compute_ap_and_conf_matrix(image_results_path, imageInfo, res, ground_truth,
+                                                     per_mask_conf_hierarchy, per_pixel_conf_hierarchy, save_results,
+                                                     displayOnlyAP)
+                del ground_truth
+            if not cortex_mode:
+                self.compute_statistics(image_results_path, imageInfo, res, save_results)
+        if save_results:
+            if cortex_mode:
+                self.finalize_cortex_mode(image_results_path, imageInfo, res, enableCortexFusionDiv, fusionDivThreshold,
+                                          nbMaxDivPerAxis, displayOnlyAP)
+            if len(res['class_ids']) > 0:
+                if not displayOnlyAP:
+                    print(" - Applying masks on image")
+                self.__STEP = "saving predicted image"
+                self.draw_masks(image_results_path, fullImage, imageInfo, res, title=f"{imageInfo['NAME']} Predicted")
+            elif not displayOnlyAP:
+                print(" - No mask to apply on image")
+
+            # Annotations Extraction
+            self.export_annotations(image_results_path, imageInfo, res, displayOnlyAP)
+        final_time = round(time() - start_time)
+        print(f" Done in {formatTime(final_time)}\n")
+        if not imageInfo['HAS_ANNOTATION']:
+            AP = -1
+        self.__STEP = "finalizing"
+        if save_results:
+            with open(logsPath, 'a') as results_log:
+                apText = f"{AP:4.3f}".replace(".", ",")
+                results_log.write(f"{imageInfo['NAME']}; {final_time}; {apText}%;\n")
+        del res, imageInfo, fullImage
+        plt.clf()
+        plt.close('all')
+        gc.collect()
+        return AP
+
+    def draw_masks(self, image_results_path, img, image_info, masks_data, title=None, cleaned_image=True):
+        if title is None:
+            title = f"{image_info['NAME']} Masked"
+        fileName = os.path.join(image_results_path, title.replace(' ', '_').replace('(', '').replace(')', ''))
+        # No need of reloading or passing copy of image as it is the final drawing
+        visualize.display_instances(
+            img, masks_data['rois'], masks_data['masks'], masks_data['class_ids'],
+            self.__VISUALIZE_NAMES, masks_data['scores'] if 'scores' in masks_data else None, colors=self.__COLORS,
+            colorPerClass=True, fileName=fileName, save_cleaned_img=cleaned_image, silent=True, title=title, figsize=(
+                (1024 if self.__MODE == "cortex" else image_info["WIDTH"]) / 100,
+                (1024 if self.__MODE == "cortex" else image_info["HEIGHT"]) / 100
+            ), image_format=image_info['IMAGE_FORMAT'], config=self.__CONFIG
+        )
+
+    def merge_fusion_div(self, results_path, fusion_info_path, image_format='jpg'):
+        """
+        Last process of the full image prediction using fusion divisions
+        :param results_path: path to the results folder
+        :param fusion_info_path: path to the fusion info file
+        :param image_format: the image format to use
+        :return:
+        """
+        # Loading fusion info that are saved as a JSON formatted file
+        self.__STEP = "loading fusion info"
+        with open(fusion_info_path, 'r') as skinetFile:
+            fusionInfo = json.load(skinetFile)
+
+        # Loading the cleaned version of the original image
+        self.__STEP = "loading cleaned image"
+        cleaned_image_path = os.path.join(os.path.dirname(fusion_info_path), f"{fusionInfo['image']}_fusion",
+                                          f"{fusionInfo['image']}_cleaned.jpg")
+        cleanedImage = cv2.imread(cleaned_image_path)
+
+        # Generating output folder
+        image_results_path = os.path.join(results_path, fusionInfo['image'])
+        os.makedirs(image_results_path, exist_ok=True)
+
+        # Pasting each divisions and merging all the stats
+        globalStats = None
+        for fusionDivFolder in os.listdir(results_path):  # Going through each image dir in the results folder
+            self.__STEP = f"{fusionDivFolder} div fusion"
+            fusion_div_folder_path = os.path.join(results_path, fusionDivFolder)
+
+            # If the current one is a fusion division of the same image
+            if f"{fusionInfo['image']}_" in fusionDivFolder:
+                divID = fusionDivFolder.split('_')[-1]  # Getting the fusion division ID
+
+                # Checking that the division had to be inferred
+                if fusionInfo["divisions"][divID]["used"]:
+                    # Loading statistics of the fusion division to merge them with statistics of other divisions
+                    statsPath = os.path.join(fusion_div_folder_path, f"{fusionDivFolder}_stats.json")
+                    with open(statsPath, 'r') as tempStatsFile:
+                        tempStats = json.load(tempStatsFile)
+
+                    # Overwriting cortex area with correct value from fusion info file
+                    if "cortex" in tempStats:
+                        tempStats["cortex"]["area"] = fusionInfo["divisions"][divID]["cortex_area"]
+                        with open(statsPath, 'w') as tempStatsFile:
+                            json.dump(tempStats, tempStatsFile, indent="\t")
+
+                    # Merging statistics of all divisions
+                    if globalStats is None:
+                        globalStats = tempStats
+                    else:
+                        for className in tempStats:
+                            if className == "cortex":
+                                continue
+                            globalStats[className]["count"] += tempStats[className]["count"]
+                            globalStats[className]["area"] += tempStats[className]["area"]
+
+                    # Copy-Pasting the fusion div onto the cleaned original image
+                    imagePath = os.path.join(fusion_div_folder_path,
+                                             f"{fusionDivFolder}_predicted_clean.{image_format}")
+                    divImage = cv2.imread(imagePath)
+                    coo = fusionInfo["divisions"][divID]["coordinates"]
+                    cleanedImage[coo["y1"]:coo["y2"], coo["x1"]:coo["x2"], :] = divImage
+
+                    # Moving the fusion div folder to "divisions" sub folder of the output folder
+                    shutil.move(fusion_div_folder_path, os.path.join(image_results_path, "divisions", fusionDivFolder))
+
+        # Saving final image
+        self.__STEP = "saving full predicted image"
+        cv2.imwrite(os.path.join(image_results_path, f"{fusionInfo['image']}_full_prediction.jpg"),
+                    cleanedImage, CV2_IMWRITE_PARAM)
+
+        # Adding cortex area from fusion file to stats and saving them
+        self.__STEP = "saving full stats file"
+        with open(os.path.join(image_results_path, f"{fusionInfo['image']}_full_prediction_stats.json"),
+                  'w') as globalStatsFile:
+            globalStats["cortex"] = {"count": 1, "area": fusionInfo["cortex_area"]}
+            json.dump(globalStats, globalStatsFile, indent="\t")
+
+        del cleanedImage
+        print("Done\n")
+
+    def get_ground_truth(self, image_results_path, fullImage, image_info, displayOnlyAP, save_results):
+        """
+        Get ground-truth annotations and applies masks on image if enabled
+        :param image_results_path: the current image output folder
+        :param fullImage: the original image
+        :param image_info: info about the current image
+        :param displayOnlyAP: if True, will not print anything
+        :param save_results: if True, will apply masks
+        :return: gt_bbox, gt_class_id, gt_mask
+        """
+        self.__STEP = "dataset creation"
+        dataset_val = SkinetCustomDataset(self.__CUSTOM_CLASS_NAMES, self.__MODE, self.__CORTEX_SIZE,
+                                          self.__CONFIG, image_info, enable_occlusion=False)
+        dataset_val.load_images()
+        dataset_val.prepare()
+        self.__STEP = "loading annotated masks"
+        image_id = dataset_val.image_ids[0]
+        gt_mask, gt_class_id, gt_bbox = dataset_val.load_mask(image_id)
+        gt = {'rois': gt_bbox, 'class_ids': gt_class_id, 'masks': gt_mask}
+        if save_results:
+            if len(gt_class_id) > 0:
+                if not displayOnlyAP:
+                    print(" - Applying annotations on file to get expected results")
+                self.__STEP = "applying expected masks"
+                self.draw_masks(image_results_path, fullImage if self.__LOW_MEMORY else fullImage.copy(),
+                                image_info, gt, title=f"{image_info['NAME']}_Expected", cleaned_image=False)
+            elif not displayOnlyAP:
+                print(" - No mask expected, not saving expected image")
+        return gt
+
+    def compute_statistics(self, image_results_path, image_info, predicted, save_results=True):
+        """
+        Computes area and counts masks of each class
+        :param image_results_path: output folder of current image
+        :param image_info: info about current image
+        :param predicted: the predicted results dictionary
+        :param save_results: Whether to save statistics in a file or not
+        :return: None
+        """
+        self.__STEP = "computing statistics"
+        print(" - Computing statistics on predictions")
+        stats = pp.getCountAndArea(predicted, classesInfo=self.__CLASSES_INFO,
+                                   selectedClasses=self.__CUSTOM_CLASS_NAMES, config=self.__CONFIG)
+        if 'BASE_CLASS' in image_info:
+            if 'BASE_CLASS' in image_info:
+                stats[image_info['BASE_CLASS']] = {"count": image_info['BASE_COUNT'],
+                                                   "area": image_info["BASE_AREA"]}
+        for className in stats:
+            stat = stats[className]
+            print(f"    - {className} : count = {stat['count']}, area = {stat['area']} px")
+        if save_results:
+            with open(os.path.join(image_results_path, f"{image_info['NAME']}_stats.json"), "w") as saveFile:
+                try:
+                    json.dump(stats, saveFile, indent='\t')
+                except TypeError:
+                    print("    Failed to save statistics", flush=True)
+
+    def compute_ap_and_conf_matrix(self, image_results_path, image_info, predicted, ground_truth,
+                                   per_mask_conf_hierarchy, per_pixel_conf_hierarchy=None, save_results=True,
+                                   displayOnlyAP=False):
+        """
+        Computes AP and confusion matrix
+        :param image_results_path: output folder of current image
+        :param image_info: info about current image
+        :param predicted: the predicted results dictionary
+        :param ground_truth: the ground truth results dictionary
+        :param per_mask_conf_hierarchy: classes hierarchy for per mask confusion matrix
+        :param per_pixel_conf_hierarchy: classes hierarchy for per pixel confusion matrix
+        :param save_results: Whether to save files or not
+        :param displayOnlyAP: Whether to display only AP or also current steps
+        :return:
+        """
+        if not displayOnlyAP:
+            print(" - Computing Average Precision and Confusion Matrix")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.__STEP = "computing confusion matrix"
+            conf_matrix = {}
+            AP, _, _, _, conf_matrix['mask'] = utils.compute_ap(gt_boxes=ground_truth['rois'],
+                                                                gt_class_ids=ground_truth['class_ids'],
+                                                                gt_masks=ground_truth['masks'],
+                                                                pred_boxes=predicted["rois"],
+                                                                pred_class_ids=predicted["class_ids"],
+                                                                pred_masks=predicted['masks'],
+                                                                pred_scores=predicted["scores"],
+                                                                nb_class=self.__NB_CLASS,
+                                                                score_threshold=0.3,
+                                                                iou_threshold=0.5,
+                                                                confusion_iou_threshold=0.5,
+                                                                classes_hierarchy=per_mask_conf_hierarchy,
+                                                                confusion_background_class=True,
+                                                                confusion_only_best_match=False)
+            self.__APs.append(AP)
+            self.__CONFUSION_MATRIX['mask'] = np.add(self.__CONFUSION_MATRIX['mask'], conf_matrix['mask'])
+            if per_pixel_conf_hierarchy is None:
+                per_pixel_conf_hierarchy = [i + 1 for i in range(self.__NB_CLASS)]
+            if self.__CORTEX_SIZE is not None:
+                image_shape = self.__CORTEX_SIZE
+            else:
+                image_shape = (image_info['HEIGHT'], image_info['WIDTH'])
+            conf_matrix['pixel'] = utils.compute_confusion_matrix(
+                image_shape=image_shape, config=self.__CONFIG,
+                expectedResults=ground_truth, predictedResults=predicted,
+                classes_hierarchy=per_pixel_conf_hierarchy, num_classes=self.__NB_CLASS
+            )
+            self.__CONFUSION_MATRIX['pixel'] = np.add(self.__CONFUSION_MATRIX['pixel'], conf_matrix['pixel'])
+            print(f"{'' if displayOnlyAP else '   '} - Average Precision is about {AP:06.2%}")
+            cmap = plt.cm.get_cmap('hot')
+            if save_results:
+                self.__STEP = "saving confusion matrix"
+                for mat_type in ['mask', 'pixel']:
+                    for normalized in [False, True]:
+                        name = (f"{image_info['NAME']} Confusion Matrix ({mat_type.capitalize()})"
+                                f"{' (Normalized)' if normalized else ''}")
+                        confusionMatrixFileName = os.path.join(image_results_path, name.replace('(', '')
+                                                                                       .replace(')', '')
+                                                                                       .replace(' ', '_'))
+                        visualize.display_confusion_matrix(conf_matrix[mat_type], self.__CUSTOM_CLASS_NAMES.copy(),
+                                                           title=name, cmap=cmap, show=False, normalize=normalized,
+                                                           fileName=confusionMatrixFileName)
+        return AP
+
+    def finalize_cortex_mode(self, image_results_path, image_info, predicted, enableCortexFusionDiv, fusionDivThreshold,
+                             nbMaxDivPerAxis, displayOnlyAP):
+        self.__STEP = "cleaning full resolution image"
+        if not displayOnlyAP:
+            print(" - Cleaning full resolution image and saving statistics")
+        allCortices = None
+        # Gathering every cortex masks into one
+        for idxMask, classMask in enumerate(predicted['class_ids']):
+            if classMask == 1:
+                if allCortices is None:  # First mask found
+                    allCortices = predicted['masks'][:, :, idxMask].copy() * 255
+                else:  # Additional masks found
+                    allCortices = cv2.bitwise_or(allCortices, predicted['masks'][:, :, idxMask] * 255)
+        # To avoid cleaning an image without cortex
+        if allCortices is not None:
+            # Cleaning original image with cortex mask(s) and saving stats
+            allCorticesArea, allCorticesSmall = self.keep_only_cortex(
+                image_results_path, image_info, allCortices
+            )
+            if enableCortexFusionDiv:
+                # Preparing to export all "fusion" divisions with stats
+                self.generate_fusion_div_ressources(image_results_path, image_info, allCorticesSmall,
+                                                    allCorticesArea, fusionDivThreshold, nbMaxDivPerAxis)
+
+    def keep_only_cortex(self, image_results_path, image_info, allCortices):
+        """
+        Cleans the original biopsy/nephrectomy with cortex masks and extracts the cortex area
+        :param image_results_path: the current image output folder
+        :param image_info: info about the current image
+        :param allCortices: fused-cortices mask
+        :return: allCorticesArea, allCorticesSmall
+        """
+        self.__STEP = "init fusion dir"
+        fusion_dir = os.path.join(image_results_path, f"{image_info['NAME']}_fusion")
+        os.makedirs(fusion_dir, exist_ok=True)
+
+        # Saving useful part of fused-cortices mask
+        self.__STEP = "crop & save fused-cortices mask"
+        allCorticesROI = utils.extract_bboxes(allCortices)
+        allCorticesSmall = allCortices[allCorticesROI[0]:allCorticesROI[2], allCorticesROI[1]:allCorticesROI[3]]
+        cv2.imwrite(os.path.join(fusion_dir, f"{image_info['NAME']}_cortex.jpg"), allCorticesSmall, CV2_IMWRITE_PARAM)
+
+        # Computing coordinates at full resolution
+        yRatio = image_info['HEIGHT'] / self.__CORTEX_SIZE[0]
+        xRatio = image_info['WIDTH'] / self.__CORTEX_SIZE[1]
+        allCorticesROI[0] = int(allCorticesROI[0] * yRatio)
+        allCorticesROI[1] = int(allCorticesROI[1] * xRatio)
+        allCorticesROI[2] = int(allCorticesROI[2] * yRatio)
+        allCorticesROI[3] = int(allCorticesROI[3] * xRatio)
+
+        # Resizing fused-cortices mask and computing its area
+        allCortices = cv2.resize(np.uint8(allCortices), (image_info['WIDTH'], image_info['HEIGHT']),
+                                 interpolation=cv2.INTER_CUBIC)
+        allCorticesArea = dD.getBWCount(allCortices)[1]
+        stats = {
+            "cortex": {
+                "count": 1,
+                "area": allCorticesArea,
+                "x_offset": int(allCorticesROI[1]),
+                "y_offset": int(allCorticesROI[0])
+            }
+        }
+        with open(os.path.join(image_results_path, f"{image_info['NAME']}_stats.json"), "w") as saveFile:
+            try:
+                json.dump(stats, saveFile, indent='\t')
+            except TypeError:
+                print("    Failed to save statistics", flush=True)
+
+        # Masking the image and saving it
+        temp = np.repeat(allCortices[:, :, np.newaxis], 3, axis=2)
+        image_info['FULL_RES_IMAGE'] = cv2.bitwise_and(
+            image_info['FULL_RES_IMAGE'][allCorticesROI[0]: allCorticesROI[2], allCorticesROI[1]:allCorticesROI[3], :],
+            temp[allCorticesROI[0]: allCorticesROI[2], allCorticesROI[1]:allCorticesROI[3], :]
+        )
+        cv2.imwrite(os.path.join(fusion_dir, f"{image_info['NAME']}_cleaned.jpg"),
+                    cv2.cvtColor(image_info['FULL_RES_IMAGE'], cv2.COLOR_RGB2BGR),
+                    CV2_IMWRITE_PARAM)
+        return allCorticesArea, allCorticesSmall
+
+    def generate_fusion_div_ressources(self, image_results_path, image_info, allCorticesSmall,
+                                       allCorticesArea, fusionDivThreshold, nbMaxDivPerAxis):
+        """
+        Generates files to perform full image prediction using fusion divisions
+        :param image_results_path: the output folder of the current image
+        :param image_info: info about the current image
+        :param allCorticesSmall: fusion of all cortices masks
+        :param allCorticesArea: total area of the fusion of all cortices (correct value, not reduced)
+        :param fusionDivThreshold: Whether the fusion div will be saved or not (least part of cortex to be kept)
+        :param nbMaxDivPerAxis: the number of div per axis when dividing the fusion div with main mode parameters
+        :return: None
+        """
+        fusion_dir = os.path.join(image_results_path, f"{image_info['NAME']}_fusion")
+        fusionInfo = {"image": image_info["NAME"]}
+
+        # Computing ratio between full resolution image and the low one
+        self.__STEP = "computing image to full size image ratio"
+        height, width, _ = image_info['FULL_RES_IMAGE'].shape
+        smallHeight, smallWidth = allCorticesSmall.shape
+        xRatio = width / smallWidth
+        yRatio = height / smallHeight
+
+        # Computing divisions coordinates for full and low resolution images
+        self.__STEP = "computing fusion div coordinates"
+        divisionSize = dD.getMaxSizeForDivAmount(nbMaxDivPerAxis, self.__DIVISION_SIZE, self.__MIN_OVERLAP_PART_MAIN)
+        xStarts = dD.computeStartsOfInterval(width, intervalLength=divisionSize, min_overlap_part=0)
+        yStarts = dD.computeStartsOfInterval(height, intervalLength=divisionSize, min_overlap_part=0)
+        xStartsEquivalent = [round(x / xRatio) for x in xStarts]
+        yStartsEquivalent = [round(y / yRatio) for y in yStarts]
+        xDivSide = round(divisionSize / xRatio)
+        yDivSide = round(divisionSize / yRatio)
+
+        # Preparing informations to write into the .skinet file
+        fusionInfo["division_size"] = divisionSize
+        fusionInfo["min_overlap_part"] = 0
+        fusionInfo["xStarts"] = xStarts
+        fusionInfo["yStarts"] = yStarts
+        fusionInfo["max_div_per_axis"] = nbMaxDivPerAxis
+        fusionInfo["cortex_area"] = allCorticesArea
+        fusionInfo["divisions"] = {}
+
+        # Extracting and saving all divisions
+        for divID in range(dD.getDivisionsCount(xStarts, yStarts)):
+            self.__STEP = f"testing fusion div {divID}"
+            # Getting the corresponding part of small cortex mask
+            cortexDiv = dD.getImageDivision(allCorticesSmall, xStartsEquivalent, yStartsEquivalent,
+                                            divID, divisionSize=(xDivSide, yDivSide))
+            black, white = dD.getBWCount(cortexDiv.astype(np.uint8))
+            partOfDiv = white / (white + black)
+            used = partOfDiv > fusionDivThreshold
+            fusionInfo["divisions"][divID] = {"cortex_area": white, "cortex_representative_part": partOfDiv,
+                                              "used": used}
+
+            # If there is enough cortex in this division, saving corresponding part of the image as an image to infer
+            if used:
+                self.__STEP = f"saving fusion div {divID}"
+                x, xEnd, y, yEnd = dD.getDivisionByID(xStarts, yStarts, divID, divisionSize)
+                fusionInfo["divisions"][divID]["coordinates"] = {"x1": x, "x2": xEnd, "y1": y, "y2": yEnd}
+                imageDivision = dD.getImageDivision(image_info['FULL_RES_IMAGE'], xStarts, yStarts, divID, divisionSize)
+                cv2.imwrite(os.path.join(fusion_dir, f"{image_info['NAME']}_{divID}.jpg"),
+                            cv2.cvtColor(imageDivision, cv2.COLOR_RGB2BGR), CV2_IMWRITE_PARAM)
+
+        # Writing informations into the .skinet file
+        self.__STEP = "saving fusion info file"
+        fusion_info_file_path = os.path.join(image_results_path, f"{image_info['NAME']}_fusion_info.skinet")
+        with open(fusion_info_file_path, 'w') as fusionInfoFile:
+            try:
+                json.dump(fusionInfo, fusionInfoFile, indent="\t")
+            except TypeError:
+                print("    Failed to save fusion info file", file=sys.stderr, flush=True)
+
+    def save_debug_image(self, step, debugIterator, fullImage, image_info, res, image_results_path, silent=True):
         if not silent:
             print(f" - Saving {step} image")
-        step = step.replace(' ', '_').replace('(', '').replace(')', '')
-        fileName = os.path.join(image_results_path, f"{imageInfo['NAME']}_Inference_debug_{debugIterator:02d}_{step}")
-        visualize.display_instances(fullImage if self.__LOW_MEMORY else fullImage.copy(), res['rois'], res['masks'],
-                                    res['class_ids'], names, res['scores'], colorPerClass=True, fileName=fileName,
-                                    onlyImage=False, silent=True, figsize=(
-                (1024 if self.__CORTEX_MODE else imageInfo["WIDTH"]) / 100,
-                (1024 if self.__CORTEX_MODE else imageInfo["HEIGHT"]) / 100
-            ), image_format=imageInfo['IMAGE_FORMAT'], config=self.__CONFIG)
-        if self.__LOW_MEMORY:
-            del fullImage
-            gc.collect()
-            fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
+        title = f"{image_info['NAME']} Inference debug {debugIterator:02d} {step}"
+        self.draw_masks(image_results_path, fullImage if self.__LOW_MEMORY else fullImage.copy(),
+                        image_info, res, title, cleaned_image=False)
+
+    def export_annotations(self, image_results_path, image_info, predicted, silent):
+        """
+        Exports predicted results as annotations files
+        :param image_results_path: output folder of current image
+        :param image_info: info about current image
+        :param predicted: the predicted results dictionary
+        :param silent: Whether to print text or not
+        :return:
+        """
+        self.__STEP = "saving annotations"
+        if not silent:
+            print(" - Saving predicted annotations files")
+        for adapter in AnnotationAdapter.ANNOTATION_ADAPTERS:
+            try:
+                pp.export_annotations(image_info, predicted, self.__CLASSES_INFO,
+                                      adapter, save_path=image_results_path,
+                                      config=self.__CONFIG, verbose=0 if silent else 1)
+            except Exception:
+                print(f"Failed to export using {adapter.__qualname__} adapter")
