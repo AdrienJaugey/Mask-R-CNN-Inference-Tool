@@ -3,6 +3,9 @@ import json
 import warnings
 import cv2
 import numpy as np
+from time import time
+
+from common_utils import formatTime
 
 warnings.filterwarnings('ignore')
 os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices'
@@ -90,12 +93,12 @@ class TensorflowDetector:
     Based on : https://bit.ly/3p2iPDc
     """
 
-    def __init__(self, savedModelPath: str = None, labelMapPath: str = None):
+    def __init__(self, savedModelPath: str = None, labelMap: [str, dict] = None):
         self.__CATEGORY_INDEX__ = None
         self.__MODEL__ = None
         self.__MODEL_PATH__ = None
         if savedModelPath is not None and os.path.exists(savedModelPath):
-            self.load(savedModelPath, labelMapPath)
+            self.load(savedModelPath, labelMap)
 
     def isLoaded(self):
         return self.__MODEL__ is not None
@@ -106,24 +109,29 @@ class TensorflowDetector:
     def getConfig(self):
         return self.__CATEGORY_INDEX__
 
-    def load(self, modelPath: str, labelMapPath: str = None):
+    def load(self, modelPath: str, labelMap: [str, dict] = None):
         isExportedModelDir = os.path.exists(os.path.join(modelPath, 'saved_model'))
         isSavedModelDir = (os.path.exists(os.path.join(modelPath, 'saved_model.pb'))
                            and os.path.exists(os.path.join(modelPath, 'variables')))
         if not (isExportedModelDir or isSavedModelDir):
             raise ValueError("Provided model path is not a TF exported model or TF SavedModel folder.")
-        if labelMapPath is None:
+        if labelMap is None:
             if isExportedModelDir:
-                labelMapPath = os.path.join(modelPath, "label_map.json")
+                labelMap = os.path.join(modelPath, "label_map.json")
             else:
-                labelMapPath = os.path.join(modelPath, "assets", "label_map.json")
+                labelMap = os.path.join(modelPath, "assets", "label_map.json")
 
-        with open(labelMapPath, 'r') as file:
-            self.__CATEGORY_INDEX__ = {int(key): value for key, value in json.load(file).items()}
+        if type(labelMap) is str:
+            with open(labelMap, 'r') as file:
+                self.__CATEGORY_INDEX__ = {int(key): value for key, value in json.load(file).items()}
+        else:
+            self.__CATEGORY_INDEX__ = labelMap
         print("Loading... ", end="")
+        start_time = time()
         self.__MODEL__ = tf.saved_model.load(modelPath if isSavedModelDir else os.path.join(modelPath, 'saved_model'))
         self.__MODEL_PATH__ = modelPath
-        print("Done !")
+        total_time = round(time() - start_time)
+        print(f"Done ! ({formatTime(total_time)})")
 
     def process(self, image, computeMaskBbox=False, normalizedCoordinates=True, score_threshold=None):
         """

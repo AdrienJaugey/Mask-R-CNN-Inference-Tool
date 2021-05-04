@@ -8,6 +8,7 @@ Written by Waleed Abdulla
 """
 import json
 import logging
+import math
 import random
 import shutil
 import urllib.request
@@ -1199,8 +1200,7 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
         gt_boxes=gt_boxes, gt_class_ids=gt_class_ids, gt_masks=gt_masks, min_iou_to_count=score_threshold,
         pred_boxes=pred_boxes, pred_class_ids=pred_class_ids, pred_masks=pred_masks, pred_scores=pred_scores,
         nb_class=nb_class, ap_iou_threshold=iou_threshold, confusion_iou_threshold=confusion_iou_threshold,
-        classes_hierarchy=classes_hierarchy,
-        confusion_background_class=confusion_background_class,
+        classes_hierarchy=classes_hierarchy, confusion_background_class=confusion_background_class,
         confusion_only_best_match=confusion_only_best_match
     )
     if len(gt_class_ids) == len(pred_class_ids) == 0:
@@ -1208,7 +1208,9 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
     # Compute precision and recall at each prediction box step
     precisions = np.cumsum(pred_match > -1) / (np.arange(len(pred_match)) + 1)
     recalls = np.cumsum(pred_match > -1).astype(np.float32) / len(gt_match)
-
+    for i in range(len(recalls)):
+        if np.isnan(recalls[i]):
+            recalls[i] = 0.
     # Pad with start and end values to simplify the math
     precisions = np.concatenate([[0], precisions, [0]])
     recalls = np.concatenate([[0], recalls, [1]])

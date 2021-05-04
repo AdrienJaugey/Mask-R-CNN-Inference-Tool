@@ -159,14 +159,7 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     :return: None
     """
     matrix = np.copy(confusion_matrix)
-    # Adding background as first class
-    labels = class_names.copy()
-    if labels[0].lower() not in ['bg', 'background']:
-        labels.insert(0, "Background")
-    for i in range(len(labels)):
-        labels[i] = labels[i].replace('_', ' ').capitalize()
-
-    NB_CLASS = len(labels)
+    NB_CLASS = len(class_names)
 
     # plt.plot()
     fig, ax = plt.subplots(figsize=(9, 6.75), frameon=False)
@@ -190,12 +183,12 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     # Using class names as labels of both axis
     plt.xlabel("Predicted")
     ax.set_xticks(np.arange(NB_CLASS))
-    ax.set_xticklabels(labels)
+    ax.set_xticklabels(class_names)
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
     plt.ylabel("Ground Truth")
     ax.set_yticks(np.arange(NB_CLASS))
-    ax.set_yticklabels(labels)
+    ax.set_yticklabels(class_names)
 
     # Adding the text values above the image
     for i in range(NB_CLASS):

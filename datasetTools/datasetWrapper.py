@@ -206,11 +206,13 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
                    imageFormat, config=config)
 
 
-def fuseCortices(datasetPath: str, imageName: str, imageFormat="jpg", deleteBaseMasks=False, silent=False):
+def fuseClassMasks(datasetPath: str, imageName: str, targetedClass, imageFormat="jpg", deleteBaseMasks=False,
+                   silent=False):
     """
     Fuse each cortex masks into one
     :param datasetPath: the dataset that have been wrapped
     :param imageName: the image you want its cortex to be fused
+    :param targetedClass: the class of the masks that have to be fused
     :param imageFormat: format to use to save the final cortex masks
     :param deleteBaseMasks: delete the base masks images after fusion
     :param silent: if True will not print
@@ -218,26 +220,26 @@ def fuseCortices(datasetPath: str, imageName: str, imageFormat="jpg", deleteBase
     """
     # Getting the image directory path
     imageDir = os.path.join(datasetPath, imageName)
-    cortexDir = os.path.join(imageDir, 'cortex')
+    classDir = os.path.join(imageDir, targetedClass)
     imagePath = os.path.join(datasetPath, imageName, "images")
     imagePath = os.path.join(imagePath, os.listdir(imagePath)[0])
     image = cv2.imread(imagePath)
-    if os.path.exists(cortexDir):
-        listCortexImages = os.listdir(cortexDir)
+    if os.path.exists(classDir):
+        listCortexImages = os.listdir(classDir)
         if not silent:
-            print("Fusing {} cortices masks".format(imageName))
-        fusion = loadSameResImage(os.path.join(cortexDir, listCortexImages[0]), imageShape=image.shape)
+            print(f"Fusing {imageName} {targetedClass} class masks")
+        fusion = loadSameResImage(os.path.join(classDir, listCortexImages[0]), imageShape=image.shape)
         listCortexImages.remove(listCortexImages[0])
         for maskName in listCortexImages:  # Adding each mask to the same image
-            maskPath = os.path.join(cortexDir, maskName)
+            maskPath = os.path.join(classDir, maskName)
             mask = loadSameResImage(maskPath, imageShape=image.shape)
             fusion = cv2.add(fusion, mask)
         # Saving the fused mask image
-        cv2.imwrite(os.path.join(cortexDir, f"{imageName}_cortex.{imageFormat}"), fusion, CV2_IMWRITE_PARAM)
+        cv2.imwrite(os.path.join(classDir, f"{imageName}_{targetedClass}.{imageFormat}"), fusion, CV2_IMWRITE_PARAM)
         if deleteBaseMasks:
-            for maskName in os.listdir(cortexDir):  # Deleting each cortex mask except the fused one
-                if f'_cortex.{imageFormat}' not in maskName:
-                    maskPath = os.path.join(cortexDir, maskName)
+            for maskName in os.listdir(classDir):  # Deleting each cortex mask except the fused one
+                if f'_{targetedClass}.{imageFormat}' not in maskName:
+                    maskPath = os.path.join(classDir, maskName)
                     os.remove(maskPath)
 
 
@@ -497,7 +499,7 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
         createMasksOfImage(rawDatasetPath, file, datasetName, adapter, classesInfo=classesInfo,
                            resize=resize, imageFormat=imageFormat)
         if mode == "main":
-            fuseCortices(datasetName, file, deleteBaseMasks=deleteBaseCortexMasks, silent=True)
+            fuseClassMasks(datasetName, file, cortex, deleteBaseMasks=deleteBaseCortexMasks, silent=True)
             cleanImage(datasetName, file, cleaningClass='cortex')
         elif mode == "mest_glom":
             cleanImage(datasetName, file, cleaningClass='nsg', cleanMasks=True)

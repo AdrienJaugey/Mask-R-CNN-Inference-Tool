@@ -11,8 +11,7 @@ from datasetTools.ASAPAdapter import ASAPAdapter
 from datasetTools.LabelMeAdapter import LabelMeAdapter
 from common_utils import combination, formatTime, progressBar, progressText
 
-
-def fuse_results(results, image_shape, division_size=1024, min_overlap_part=0.33):
+'''def fuse_results(results, image_shape, division_size=1024, min_overlap_part=0.33):
     """
     Fuse results of multiple predictions (divisions for example)
     :param results: list of the results of the predictions
@@ -99,7 +98,7 @@ def fuse_results(results, image_shape, division_size=1024, min_overlap_part=0.33
         "scores": scores,
         "masks": masks
     }
-    return fused_results
+    return fused_results'''
 
 
 def fuse_results(results, image_info: dict, division_size: int = 1024, cortex_size=None, config=None):
@@ -387,6 +386,12 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
+def __fuse_masks__(results, args: dict, config=None, display=True, verbose=0, dynargs=None):
+    return fuse_masks(fused_results=results, bb_threshold=args.get('bb_threshold', 0.1),
+                      mask_threshold=args.get('mask_threshold', 0.1), config=config,
+                      displayProgress=' - Fusing overlapping masks' if display else None, verbose=verbose)
+
+
 def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_compatibility=None, config=None,
                displayProgress: str = None, verbose=0):
     """
@@ -608,6 +613,14 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
+def __fuse_class__(results, args: dict, config=None, display=True, verbose=0, dynargs=None):
+    return fuse_class(
+        fused_results=results, bb_threshold=args.get('bb_threshold', 0.1), config=config,
+        mask_threshold=args.get('mask_threshold', 0.1), classes_compatibility=args.get('classes_compatibility', None),
+        displayProgress=' - Fusing overlapping equivalent masks' if display else None, verbose=verbose
+    )
+
+
 class FilterBehavior(Enum):
     ERASED = -1
     BEST_CAN_BE_INCLUDED = 0
@@ -651,17 +664,14 @@ def comparePriority(class_id1, class_id2, priority_table=None, default: FilterBe
         return default
 
 
-def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_table=None,
-                 included_threshold=0.9, including_threshold=0.6,
-                 config=None, displayProgress: str = None, verbose=0):
+def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_table=None, config=None,
+                 displayProgress: str = None, verbose=0):
     """
     Post-prediction filtering to remove non-sense predictions
     :param fused_results: the results after fusion
     :param bb_threshold: the least part of overlapping bounding boxes to continue checking
     :param mask_threshold: the least part of a mask contained in another for it to be deleted
     :param priority_table: the priority table used to compare classes
-    :param included_threshold: the least part of a mask contained in another for it to be deleted
-    :param including_threshold: the least part of a mask containing another for it to be deleted
     :param config: the config to get mini_mask informations
     :param displayProgress: if string given, prints a progress bar using this as prefix
     :param verbose: 0 : nothing, 1+ : errors/problems, 2 : general information
@@ -791,6 +801,14 @@ def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_t
     rois = np.delete(rois, toDelete, axis=0)
     return {"rois": rois, "bbox_areas": bbAreas, "class_ids": class_ids,
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
+
+
+def __filter_masks__(results, args: dict, config=None, display=True, verbose=0, dynargs=None):
+    return filter_masks(
+        fused_results=results, bb_threshold=args.get("bb_threshold", 0.5), verbose=verbose,
+        mask_threshold=args.get("mask_threshold", 0.2), priority_table=args.get('priority_table', None),
+        config=config, displayProgress=" - Removing non-sense masks" if display else None
+    )
 
 
 def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_hierarchy=None,
@@ -931,6 +949,16 @@ def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_h
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
+def __filter_oprhans_masks__(results, args: dict, config=None, display=True, verbose=0, dynargs=None):
+    if 'classes_hierarchy' in args and type(list(args['classes_hierarchy'].keys())[0]) is str:
+        args['classes_hierarchy'] = {int(key): value for key, value in args['classes_hierarchy'].items()}
+    return filter_orphan_masks(
+        results=results, bb_threshold=args.get("bb_threshold", 0.5), verbose=verbose,
+        mask_threshold=args.get("mask_threshold", 0.5), classes_hierarchy=args.get('classes_hierarchy', None),
+        config=config, displayProgress=" - Removing orphan masks" if display else None
+    )
+
+
 def filter_small_masks(fused_results, min_size=300, classes=None, config=None, displayProgress: str = None, verbose=0):
     """
     Post-prediction filtering to remove masks that are too small
@@ -1002,6 +1030,13 @@ def filter_small_masks(fused_results, min_size=300, classes=None, config=None, d
     rois = np.delete(rois, toDelete, axis=0)
     return {"rois": rois, "bbox_areas": bbAreas, "class_ids": class_ids,
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
+
+
+def __filter_small_masks__(results, args: dict, config=None, display=True, verbose=0, dynargs=None):
+    return filter_small_masks(
+        fused_results=results, min_size=args.get('min_size', 300), classes=args.get('classes', None),
+        config=config, displayProgress=" - Removing small masks" if display else None, verbose=verbose
+    )
 
 
 def compute_on_border_part(image, mask):
@@ -1101,12 +1136,20 @@ def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
-def getCountAndArea(results: dict, classesInfo: dict, selectedClasses: [str], config=None):
+def __filter_on_border_masks__(results, args: dict, config=None, display=True, verbose=0, dynargs=None):
+    return filter_on_border_masks(
+        fused_results=results, image=dynargs['image'], onBorderThreshold=args.get('on_border_threshold', 0.25),
+        classes=args.get('classes', None), config=config, verbose=verbose,
+        displayProgress=" - Removing border masks" if display else None
+    )
+
+
+def get_count_and_area(results: dict, classes_info: dict, selected_classes: [str], config=None):
     """
     Computing count and area of classes from results
     :param results: the results
-    :param classesInfo: the dict with information about name, inference id, id... parameters of each class
-    :param selectedClasses: list of classes' names that you want to get statistics on
+    :param classes_info: the dict with information about name, inference id, id... parameters of each class
+    :param selected_classes: list of classes' names that you want to get statistics on
     :param config: the config to get mini_mask informations
     :return: Dict of "className": {"count": int, "area": int} elements for each classes
     """
@@ -1118,9 +1161,9 @@ def getCountAndArea(results: dict, classesInfo: dict, selectedClasses: [str], co
 
     # Getting the inferenceIDs of the wanted classes
     selectedClassesID = {}
-    for classInfo in classesInfo:
-        if classInfo["name"] in selectedClasses:
-            selectedClassesID[classInfo["inferenceID"]] = classInfo["name"]
+    for classInfo in classes_info:
+        if classInfo["name"] in selected_classes:
+            selectedClassesID[classInfo["id"]] = classInfo["name"]
             res[classInfo["name"]] = {"count": 0, "area": 0}
 
     # For each predictions, if class ID matching with one we want
@@ -1146,8 +1189,14 @@ def getCountAndArea(results: dict, classesInfo: dict, selectedClasses: [str], co
     return res
 
 
-def getPoints(mask, xOffset=0, yOffset=0, epsilon=1,
-              show=False, waitSeconds=10, info=False):
+def __get_count_and_area__(results, args: dict, config=None, display=True, verbose=0, dynargs=None):
+    return get_count_and_area(
+        results=results, classes_info=dynargs['classes_info'],
+        selected_classes=args['selected_classes'], config=config
+    )
+
+
+def getPoints(mask, xOffset=0, yOffset=0, epsilon=1, show=False, waitSeconds=10, info=False):
     """
     Return a list of points describing the given mask as a polygon
     :param mask: the mask you want the points
@@ -1265,7 +1314,7 @@ def export_annotations(image_info: dict, results: dict, classes_info: [{int, str
         # Find the first class not to be ignored with the same id
         while classInfo is None:
             temp = classes_info[iterator]
-            if not temp["ignore"] and temp["inferenceID"] == class_ids[i]:
+            if temp["id"] == class_ids[i]:
                 classInfo = temp
             iterator += 1
         adapter_instance.addAnnotation(classInfo, points)
@@ -1279,8 +1328,16 @@ def export_annotations(image_info: dict, results: dict, classes_info: [{int, str
     adapter_instance.saveToFile(save_path, image_info['NAME'])
 
 
+def __export_annotations__(results, args: dict, config=None, display=True, verbose=0, dynargs=None):
+    export_annotations(
+        image_info=dynargs['image_info'], results=results, classes_info=dynargs['classes_info'],
+        adapter=args['adapter'], save_path=args.get('save_path', 'predicted'), config=config, verbose=verbose
+    )
+
+
 class PostProcessingMethod(Enum):
     MASK_FUSION = "fusion"
+    CLASS_FUSION = "class_fusion"
     MASK_FILTER = "filter"
     ORPHAN_FILTER = "orphan_filter"
     SMALL_FILTER = "small_filter"
@@ -1288,14 +1345,24 @@ class PostProcessingMethod(Enum):
     GET_STATS = "statistics"
     EXPORT_ANNOTATIONS = "export_as_annotations"
 
-    def method(self, args=None):
-        methods = {
-            PostProcessingMethod.MASK_FUSION.name: fuse_masks,
-            PostProcessingMethod.MASK_FILTER.name: filter_masks,
-            PostProcessingMethod.ORPHAN_FILTER.name: filter_orphan_masks,
-            PostProcessingMethod.SMALL_FILTER.name: filter_small_masks,
-            PostProcessingMethod.BORDER_FILTER.name: filter_on_border_masks,
-            PostProcessingMethod.GET_STATS.name: getCountAndArea,
-            PostProcessingMethod.EXPORT_ANNOTATIONS.name: export_annotations
+    def dynargs(self):
+        dynamic_args = {
+            PostProcessingMethod.BORDER_FILTER.name: ['image'],
+            PostProcessingMethod.GET_STATS.name: ['classes_info'],
+            PostProcessingMethod.EXPORT_ANNOTATIONS.name: ['image_info', 'classes_info']
         }
-        return methods[self.name] if args is None else methods[self.name](args)
+        return dynamic_args.get(self.name, [])
+
+    def method(self, results=None, args=None, config=None, display=True, verbose=0, dynargs=None):
+        methods = {
+            PostProcessingMethod.MASK_FUSION.name: __fuse_masks__,
+            PostProcessingMethod.CLASS_FUSION.name: __fuse_class__,
+            PostProcessingMethod.MASK_FILTER.name: __filter_masks__,
+            PostProcessingMethod.ORPHAN_FILTER.name: __filter_oprhans_masks__,
+            PostProcessingMethod.SMALL_FILTER.name: __filter_small_masks__,
+            PostProcessingMethod.BORDER_FILTER.name: __filter_on_border_masks__,
+            PostProcessingMethod.GET_STATS.name: __get_count_and_area__,
+            PostProcessingMethod.EXPORT_ANNOTATIONS.name: __export_annotations__
+        }
+        return methods[self.name] if results is None or args is None else methods[self.name](results, args, config,
+                                                                                             display, verbose, dynargs)
