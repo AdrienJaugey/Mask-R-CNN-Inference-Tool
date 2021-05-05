@@ -123,7 +123,7 @@ def infoPatients(rawDataset, mode: str = "main"):
     return patients, patients_biopsy, patients_nephrectomy
 
 
-def selectPatients(patientsBiopsie, patientsNephrectomie, nbPatientBiopsie=5, nbPatientNephrectomie=4):
+def selectPatients(patientsBiopsie, patientsNephrectomie, nbPatientBiopsie=8, nbPatientNephrectomie=2):
     communs = []
     for pb in patientsBiopsie:
         for pn in patientsNephrectomie:
@@ -142,14 +142,11 @@ def selectPatients(patientsBiopsie, patientsNephrectomie, nbPatientBiopsie=5, nb
         selected = communs.copy()
         nbPatientBiopsie -= len(communs)
         if nbPatientBiopsie > 0:
-            temp = np.random.choice(patientsBiopsie, size=nbPatientBiopsie, replace=False)
-            for patient in temp:
-                selected.append(patient)
+            selected.extend(np.random.choice(patientsBiopsie, size=nbPatientBiopsie, replace=False))
+
         nbPatientNephrectomie -= len(communs)
         if nbPatientNephrectomie > 0:
-            temp = np.random.choice(patientsNephrectomie, size=nbPatientNephrectomie, replace=False)
-            for patient in temp:
-                selected.append(patient)
+            selected.extend(np.random.choice(patientsNephrectomie, size=nbPatientNephrectomie, replace=False))
     return selected
 
 
@@ -167,12 +164,16 @@ def sortImages(datasetPath: str, unusedDirPath: str = None, mode: str = "main"):
 
     NOT_TO_COUNT = ['images', 'full_images']
     baseClass = None
-    if mode == "main":
-        NOT_TO_COUNT.extend(['cortex', 'medullaire', 'capsule'])
-        baseClass = "cortex"
-    elif mode == "cortex":
+    if mode == "cortex":
         NOT_TO_COUNT.extend(["nsg", "nsg_complet", "nsg_partiel", "tubule_sain", "tubule_atrophique", "vaisseau",
                              "intima", "media", "pac", "artefact", "veine"])
+    elif mode == "main":
+        NOT_TO_COUNT.extend(['cortex', 'medullaire', 'capsule'])
+        baseClass = "cortex"
+    elif mode == "mest_main":
+        NOT_TO_COUNT.extend(["cortex", "medullaire", "capsule", "nsg_complet",
+                             "nsg_partiel", "intima", "media", "artefact"])
+        baseClass = "cortex"
     elif mode == "mest_glom":
         NOT_TO_COUNT.extend(["nsg_complet", "nsg_partiel", "tubule_sain", "tubule_atrophique", "vaisseau",
                              "intima", "media", "pac", "artefact", "veine", "medullaire", "capsule"])
@@ -207,7 +208,10 @@ def sortImages(datasetPath: str, unusedDirPath: str = None, mode: str = "main"):
         for imageWithoutCortexDir in toBeMoved:
             srcPath = os.path.join(datasetPath, imageWithoutCortexDir)
             dstPath = os.path.join(unusedDirPath, imageWithoutCortexDir)
-            move(srcPath, dstPath)
+            try:
+                move(srcPath, dstPath)
+            except FileNotFoundError:
+                pass
 
 
 def createValDataset(datasetPath: str, valDatasetPath: str = None, valDatasetSizePart=0.1, valDatasetMinSize=30,
@@ -285,7 +289,7 @@ def createValDatasetByPeople(rawDataset, datasetPath: str, valDatasetPath: str =
         if len(toMove) > 0:
             print("Moving {} images directories into val dataset".format(len(toMove)))
             for dirName in toMove:
-                # print(os.path.join(datasetPath, dirName), " vers ", os.path.join(valDatasetPath, dirName))
+                # print(os.path.join(datasetPath, dirName), " to ", os.path.join(valDatasetPath, dirName))
                 move(os.path.join(datasetPath, dirName), os.path.join(valDatasetPath, dirName))
         selected.sort()
         return selected
@@ -469,8 +473,7 @@ def generateCortexDataset(rawDataset: str, outputDataset="nephrology_cortex_data
 
 
 def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_dataset", cleanBeforeStart=True,
-                         mode="glom", imageFormat='jpg', divisionSize=1024, overlap=0.33,
-                         separateDivInsteadOfImage=False,
+                         mode="glom", imageFormat='jpg', divisionSize=1024, overlap=0.33, separate="images",
                          recreateValList=None, adapter: AnnotationAdapter = None):
     """
     Generates datasets folder from a base directory, all paths are customizable, and it can also remove previous
@@ -478,11 +481,11 @@ def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_
     :param rawDataset: path to the base directory
     :param outputDataset: path to the output cortex dataset
     :param cleanBeforeStart: if True, will delete previous directories that could still exist
-    :param mode: the mode to use : glom or fiat
+    :param mode: the mode to use : glom or main
     :param imageFormat: the image format to look for and to use
     :param divisionSize: size of the output images
     :param overlap: the least overlap between two divisions
-    :param separateDivInsteadOfImage: if True, divisions of same image can be separated into training and val
+    :param separate: if True, divisions of same image can be separated into training and val
                                       directories
     :param recreateValList: list of the images to use to recreate cortex dataset
     :param adapter: the adapter to use if given, else it will be chosen depending on the annotations found
@@ -490,21 +493,20 @@ def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_
     """
     outputDataset = outputDataset.format(mode=mode)
     recreateInfo = {"mode": "mest", "submode": mode, "output_dataset": outputDataset,
-                    "clean_before_start": cleanBeforeStart, "image_format": imageFormat, "division_size": divisionSize,
-                    "min_overlap_part": overlap, "separate": "div" if separateDivInsteadOfImage else "images",
-                    "val_dataset": []}
+                    "clean_before_start": cleanBeforeStart, "image_format": imageFormat,
+                    "division_size": divisionSize, "min_overlap_part": separate, "val_dataset": []}
     # Removing former dataset directories
     if cleanBeforeStart:
         import shutil
         dirToDel = ["temp_" + outputDataset, "temp_" + outputDataset + '_train', "temp_" + outputDataset + '_val',
-                    outputDataset, outputDataset + '_train', outputDataset + '_val']
+                    outputDataset, outputDataset + '_train', outputDataset + '_val', outputDataset + '_unused']
         for directory in dirToDel:
             if os.path.exists(directory):
                 shutil.rmtree(directory, ignore_errors=True)
     # Creating masks for cortices images
     dW.startWrapper(rawDataset, "temp_" + outputDataset, mode=f"mest_{mode}", adapter=adapter)
     if mode == "glom":
-        if not separateDivInsteadOfImage:
+        if not separate == "div":
             recreateInfo["val_dataset"] = createValDataset("temp_" + outputDataset,
                                                            valDatasetPath="temp_" + outputDataset + '_val',
                                                            rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
@@ -521,32 +523,39 @@ def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_
                                                            valDatasetPath=outputDataset + '_val',
                                                            rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
                                                            recreateInfo=recreateValList)
-    elif mode == "fiat":
-        if not separateDivInsteadOfImage:
-            recreateInfo["val_dataset"] = createValDataset("temp_" + outputDataset,
-                                                           valDatasetPath="temp_" + outputDataset + '_val',
-                                                           rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
-                                                           recreateInfo=recreateValList)
+    elif mode == "main":
+        if separate in ["images", "patient"]:
+            if separate == "images":
+                recreateInfo["val_dataset"] = createValDataset("temp_" + outputDataset,
+                                                               valDatasetPath="temp_" + outputDataset + '_val',
+                                                               rename=False, valDatasetSizePart=0.05,
+                                                               valDatasetMinSize=10, recreateInfo=recreateValList)
+            else:
+                recreateInfo["val_dataset"] = createValDatasetByPeople(rawDataset=rawDataset,
+                                                                       datasetPath="temp_" + outputDataset,
+                                                                       valDatasetPath='temp_' + outputDataset + '_val',
+                                                                       nbPatientBiopsie=8, nbPatientNephrectomy=2,
+                                                                       recreateInfo=recreateValList)
         # Dividing the dataset
-        if separateDivInsteadOfImage:
+        if separate == "div":
             divide = {"temp_" + outputDataset: outputDataset}
         else:
             divide = {"temp_" + outputDataset + '_val': outputDataset + '_val',
-                      "temp_" + outputDataset + '_train': outputDataset + '_train'}
+                      "temp_" + outputDataset: outputDataset + '_train'}
         for inputPath, outputPath in divide.items():
             dD.divideDataset(inputPath, outputPath, squareSideLength=divisionSize, min_overlap_part=overlap,
                              mode=f"mest_{mode}", verbose=1)
 
-        if separateDivInsteadOfImage:
+        if separate == "div":
             # Creating val dataset by
             recreateInfo["val_dataset"] = createValDataset(outputDataset, valDatasetPath=outputDataset + '_val',
                                                            rename=True, valDatasetSizePart=0.05, valDatasetMinSize=10,
                                                            recreateInfo=recreateValList)
         for datasetPath in [outputDataset + '_train', outputDataset + '_val']:
-            sortImages(datasetPath, outputDataset + '_unused', mode="mest_fiat")
+            sortImages(datasetPath, outputDataset + '_unused', mode="mest_main")
 
-    infoNephrologyDataset(outputDataset + '_train', baseClass='nsg')
-    infoNephrologyDataset(outputDataset + '_val', baseClass='nsg')
+    infoNephrologyDataset(outputDataset + '_train', baseClass='nsg' if mode == "glom" else "cortex")
+    infoNephrologyDataset(outputDataset + '_val', baseClass="glom" if mode == "glom" else "cortex")
     if recreateValList is None or len(recreateValList) == 0:
         with open(f"dataset_mest_{mode}_{formatDate()}.json", 'w') as recreateFile:
             json.dump(recreateInfo, recreateFile, indent="\t")
@@ -575,10 +584,9 @@ def regenerateDataset(rawDataset, recreateFilePath, adapter: AnnotationAdapter =
                               recreateValList=recreateInfo["val_dataset"], adapter=adapter)
     elif recreateInfo["mode"] == "mest":
         generateMESTCDataset(rawDataset=rawDataset, outputDataset=recreateInfo["output_dataset"],
-                             mode=recreateInfo["submode"], cleanBeforeStart=recreateInfo["clean_before_start"],
+                             cleanBeforeStart=recreateInfo["clean_before_start"], mode=recreateInfo["submode"],
                              imageFormat=recreateInfo["image_format"], divisionSize=recreateInfo["division_size"],
-                             overlap=recreateInfo["min_overlap_part"],
-                             separateDivInsteadOfImage=recreateInfo["separate"] == "div",
+                             overlap=recreateInfo["min_overlap_part"], separate=recreateInfo["separate"],
                              recreateValList=recreateInfo["val_dataset"], adapter=adapter)
     else:
         raise NotImplementedError(f"{recreateInfo['mode']} dataset mode not available")
