@@ -1,5 +1,7 @@
 import shutil
 import xml.etree.ElementTree as et
+
+from common_utils import rgb_to_hex
 from datasetTools.AnnotationAdapter import XMLAdapter
 
 
@@ -39,12 +41,16 @@ class ASAPAdapter(XMLAdapter):
         self.nbGroup = 0
         self.classCount = {}
 
+    @staticmethod
+    def getName():
+        return "ASAP"
+
     def addAnnotation(self, classInfo: {}, points):
         if classInfo["name"] not in self.classCount:
             self.classCount[classInfo["name"]] = 0
 
         mask = et.Element('Annotation')
-        mask.set('Name', "{} {} ({})".format(classInfo["name"], self.classCount[classInfo["name"]], self.nbAnnotation))
+        mask.set('Name', f"{classInfo['name']} {self.classCount[classInfo['name']]} ({self.nbAnnotation})")
         mask.set("Type", "Polygon")
         mask.set("PartOfGroup", classInfo["name"])
         mask.set("Color", "#F4FA58")
@@ -72,7 +78,7 @@ class ASAPAdapter(XMLAdapter):
         group = et.Element('Group')
         group.set('Name', classInfo["name"])
         group.set('PartOfGroup', "None")
-        group.set("Color", classInfo["color"])
+        group.set("Color", classInfo.get("asap_color", rgb_to_hex(classInfo["color"])))
         group.text = "\n\t\t\t"
         group.tail = "\n\t\t"
 

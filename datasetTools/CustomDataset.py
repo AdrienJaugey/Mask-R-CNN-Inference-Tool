@@ -4,17 +4,15 @@ from skimage.io import imread
 
 from datasetTools.datasetWrapper import getBboxFromName
 from mrcnn import utils
+from mrcnn.Config import Config
 
 
 class SkinetCustomDataset(utils.Dataset):
 
-    def __init__(self, custom_class_names, mode, cortex_size, config, image_info,
-                 enable_occlusion=False):
+    def __init__(self, image_info, config: Config, enable_occlusion=False):
         super().__init__()
-        self.__CUSTOM_CLASS_NAMES = custom_class_names.copy()
-        self.__MODE = mode
-        self.__CORTEX_SIZE = cortex_size
         self.__CONFIG = config
+        self.__CUSTOM_CLASS_NAMES = [c['name'] for c in config.get_classes_info()]
         self.__IMAGE_INFO = image_info
         self.__ENABLE_OCCLUSION = enable_occlusion
 
@@ -61,11 +59,10 @@ class SkinetCustomDataset(utils.Dataset):
             # https://stackoverflow.com/questions/2632205/how-to-count-the-number-of-files-in-a-directory-using-python
             number_of_masks += len([name_ for name_ in os.listdir(temp_DIR)
                                     if os.path.isfile(os.path.join(temp_DIR, name_))])
-        if self.__MODE == "cortex":
-            masks_shape = (self.__CORTEX_SIZE[0], self.__CORTEX_SIZE[1], number_of_masks)
-        elif self.__CONFIG.USE_MINI_MASK:
-            masks_shape = (self.__CONFIG.MINI_MASK_SHAPE[0], self.__CONFIG.MINI_MASK_SHAPE[1],
-                           number_of_masks)
+        if self.__CONFIG.get_param().get('resize', None) is not None:
+            masks_shape = tuple(self.__CONFIG.get_param().get('resize', None)) + (number_of_masks,)
+        elif self.__CONFIG.is_using_mini_mask():
+            masks_shape = self.__CONFIG.get_mini_mask_shape() + (number_of_masks,)
         else:
             masks_shape = (self.__IMAGE_INFO["HEIGHT"], self.__IMAGE_INFO["WIDTH"], number_of_masks)
         masks = np.zeros(masks_shape, dtype=np.uint8)
@@ -80,7 +77,7 @@ class SkinetCustomDataset(utils.Dataset):
             for mask_file in os.listdir(masks_dir_path):
                 mask = imread(os.path.join(masks_dir_path, mask_file))
                 masks[:, :, iterator] = mask
-                if self.__CONFIG.USE_MINI_MASK:
+                if self.__CONFIG.is_using_mini_mask():
                     bboxes[iterator] = getBboxFromName(mask_file)
                 else:
                     bboxes[iterator] = utils.extract_bboxes(mask)

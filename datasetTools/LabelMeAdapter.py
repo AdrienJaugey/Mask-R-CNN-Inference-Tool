@@ -105,13 +105,17 @@ class LabelMeAdapter(JSONAdapter):
         self.classCount = {}
         self.nbAnnotation = 0
 
+    @staticmethod
+    def getName():
+        return "LabelMe"
+
     def addAnnotation(self, classInfo: {}, points):
         if classInfo["name"] not in self.classCount:
             self.classCount[classInfo["name"]] = 0
         mask = {
-            "label": "{} {} ({})".format(classInfo["name"], self.classCount[classInfo["name"]], self.nbAnnotation),
+            "label": f"{classInfo['name']} {self.classCount[classInfo['name']]} ({self.nbAnnotation})",
             "points": points,
-            "group_id": int(classInfo["id"]),
+            "group_id": int(classInfo.get('labelme_id', classInfo['id'])),
             "shape_type": "polygon",
             "flags": {}
         }

@@ -109,7 +109,8 @@ class TensorflowDetector:
     def getConfig(self):
         return self.__CATEGORY_INDEX__
 
-    def load(self, modelPath: str, labelMap: [str, dict] = None):
+    def load(self, modelPath: str, labelMap: [str, dict] = None, verbose=0):
+        modelPath = os.path.normpath(modelPath)
         isExportedModelDir = os.path.exists(os.path.join(modelPath, 'saved_model'))
         isSavedModelDir = (os.path.exists(os.path.join(modelPath, 'saved_model.pb'))
                            and os.path.exists(os.path.join(modelPath, 'variables')))
@@ -126,7 +127,10 @@ class TensorflowDetector:
                 self.__CATEGORY_INDEX__ = {int(key): value for key, value in json.load(file).items()}
         else:
             self.__CATEGORY_INDEX__ = labelMap
-        print("Loading... ", end="")
+        if verbose > 0:
+            print(f"Loading {modelPath} ... ", end="")
+        else:
+            print(f"Loading ... ", end="")
         start_time = time()
         self.__MODEL__ = tf.saved_model.load(modelPath if isSavedModelDir else os.path.join(modelPath, 'saved_model'))
         self.__MODEL_PATH__ = modelPath

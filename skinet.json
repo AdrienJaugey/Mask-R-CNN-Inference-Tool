@@ -1,7 +1,8 @@
 {
     "first_mode": "cortex",
-    "modes": {
-        "cortex": {
+    "modes": [
+        {
+            "name": "cortex",
             "previous": null,
             "next": "mest_main",
             "classes": [
@@ -41,9 +42,14 @@
                 {"method": "fusion", "bb_threshold": 0.1, "mask_threshold": 0.1},
                 {"method": "small_filter", "min_size": 300}
             ],
+            "statistics": [
+                {"method": "count_and_area", "selected_classes": "all"}
+            ],
+            "export": "all",
             "return": ["cortex"]
         },
-        "main": {
+        {
+            "name": "main",
             "previous": "cortex",
             "next": null,
             "classes": [
@@ -179,9 +185,14 @@
                     "min_size": 50
                 }
             ],
+            "statistics": [
+                {"method": "count_and_area", "selected_classes": "all"}
+            ],
+            "export": "all",
             "return": null
         },
-        "mest_main": {
+        {
+            "name": "mest_main",
             "previous": "cortex",
             "next": "mest_glom",
             "classes": [
@@ -264,9 +275,14 @@
                     "min_size": 50
                 }
             ],
+            "statistics": [
+                {"method": "count_and_area", "selected_classes": "all"}
+            ],
+            "export": "all",
             "return": ["nsg"]
         },
-        "mest_glom": {
+        {
+            "name": "mest_glom",
             "previous": "mest_main",
             "next": null,
             "classes": [
@@ -345,7 +361,20 @@
                     "min_size": 50
                 }
             ],
+            "statistics": [
+                {"method": "count_and_area", "selected_classes": "all"},
+                {
+                    "method": "base_mask_histo",
+                    "classes": {"nsg": "all"},
+                    "box_epsilon": 0,
+                    "test_masks": true,
+                    "mask_threshold": 0.9,
+                    "display_per_base_mask": false,
+                    "display_global": true
+                }
+            ],
+            "export": "all",
             "return": null
         }
-    }
+    ]
 }

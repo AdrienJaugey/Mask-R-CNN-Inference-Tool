@@ -10,6 +10,7 @@ from common_utils import progressBar, formatTime
 from datasetTools import AnnotationAdapter as adapt
 from datasetTools.AnnotationAdapter import AnnotationAdapter
 from datasetTools.datasetDivider import getBWCount, CV2_IMWRITE_PARAM
+from mrcnn.Config import Config
 from mrcnn.utils import extract_bboxes, expand_mask, minimize_mask
 
 NEPHRO_CLASSES = [
@@ -47,7 +48,7 @@ MESTC_GLOM_CLASSES = [
 
 
 def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 'dataset_train',
-               maskClass: str = 'masks', imageFormat="jpg", config=None):
+               maskClass: str = 'masks', imageFormat="jpg", config: Config = None):
     """
     Create the mask image based on its polygon points
     :param imgName: name w/o extension of the base image
@@ -57,7 +58,7 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
     :param datasetName: name of the output dataset
     :param maskClass: name of the associated class of the current mask
     :param imageFormat: output format of the masks' images
-    :param config: config file of the CNN
+    :param config: config object
     :return: None
     """
     # Defining path where the result image will be stored and creating dir if not exists
@@ -77,9 +78,9 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
     cv2.fillPoly(mask, [ptsMask], 255)
 
     bbox_coordinates = ""
-    if config is not None and config.USE_MINI_MASK:
+    if config is not None and config.is_using_mini_mask():
         bbox = extract_bboxes(mask)
-        mask = minimize_mask(bbox, mask, config.MINI_MASK_SHAPE)
+        mask = minimize_mask(bbox, mask, config.get_mini_mask_shape())
         mask = mask.astype(np.uint8) * 255
         y1, x1, y2, x2 = bbox
         bbox_coordinates = f"_{y1}_{x1}_{y2}_{x2}"
@@ -115,7 +116,7 @@ def resizeMasks(baseMasks, xRatio: float, yRatio: float):
 
 def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'dataset_train',
                        adapter: AnnotationAdapter = None, classesInfo: dict = None, imageFormat="jpg", resize=None,
-                       config=None):
+                       config: Config = None):
     """
     Create all the masks of a given image by parsing xml annotations file
     :param rawDatasetPath: path to the folder containing images and associated annotations
@@ -125,12 +126,12 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
     :param classesInfo: Information about all classes that are used, by default will be nephrology classes Info
     :param imageFormat: output format of the image and masks
     :param resize: if the image and masks have to be resized
-    :param config: config class of Mask R-CNN to use mini masks if enabled
+    :param config: config object
     :return: None
     """
     # Getting shape of original image (same for all this masks)
     if classesInfo is None:
-        classesInfo = NEPHRO_CLASSES
+        classesInfo = NEPHRO_CLASSES if config is None else config.get_classes_info()
 
     img = cv2.imread(os.path.join(rawDatasetPath, f"{imgName}.{imageFormat}"))
     if img is None:
@@ -166,7 +167,7 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
     if adapter is None:
         # No adapter given, we are looking for the adapter with highest priority level that can read an/the annotation
         # file
-        adapters = adapt.ANNOTATION_ADAPTERS
+        adapters = list(adapt.ANNOTATION_ADAPTERS.values())
         adapterPriority = -1
         for f in imageFiles:
             for a in adapters:
@@ -266,7 +267,7 @@ def cleanCortexDir(datasetPath: str):
 
 
 def cleanImage(datasetPath: str, imageName: str, cleaningClass: str, imageFormat="jpg", cleanMasks=False,
-               minAreaThreshold=300, config=None):
+               minAreaThreshold=300, config: Config = None):
     """
     Creating the full_images directory and cleaning the base image by removing non-cleaning-class areas
     :param datasetPath: the dataset that have been wrapped
@@ -274,7 +275,8 @@ def cleanImage(datasetPath: str, imageName: str, cleaningClass: str, imageFormat
     :param cleaningClass: the class to use to clean the image
     :param cleanMasks: if true, will clean masks based on the cleaning-class-mask
     :param imageFormat: the image format to use to save the image
-    :param config: config file of the CNN
+    :param minAreaThreshold: remove mask if its area is smaller than this threshold
+    :param config: config object
     :return: None
     """
     assert cleaningClass is not None and cleaningClass != "", "Cleaning class is required."
@@ -343,9 +345,9 @@ def cleanImage(datasetPath: str, imageName: str, cleaningClass: str, imageFormat
 
                                 # If mini-mask are enabled, we minimize it before saving it
                                 bbox_coordinates = ""
-                                if config is not None and config.USE_MINI_MASK:
+                                if config is not None and config.is_using_mini_mask():
                                     bbox = extract_bboxes(mask)
-                                    mask = minimize_mask(bbox, mask, config.MINI_MASK_SHAPE)
+                                    mask = minimize_mask(bbox, mask, config.get_mini_mask_shape())
                                     mask = mask.astype(np.uint8) * 255
                                     y1, x1, y2, x2 = bbox
                                     bbox_coordinates = f"_{y1}_{x1}_{y2}_{x2}"
@@ -504,4 +506,3 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
         elif mode == "mest_glom":
             cleanImage(datasetName, file, cleaningClass='nsg', cleanMasks=True)
     progressBar(1, 1, prefix='Creating masks', suffix=f"{formatTime(round(time() - start_time))}" + " " * 25)
-

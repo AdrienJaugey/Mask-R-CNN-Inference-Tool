@@ -3,15 +3,18 @@ import os
 import re
 import traceback
 import shutil
-import sys
 import warnings
 import gc
+from enum import Enum
 
+from datasetTools.AnnotationAdapter import export_annotations
 from datasetTools.CustomDataset import SkinetCustomDataset
+from mrcnn.Config import Config, DynamicMethod
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+    from abc import ABC, abstractmethod
     from common_utils import progressBar, formatTime, formatDate, progressText
     from datasetTools.datasetDivider import CV2_IMWRITE_PARAM
     import time
@@ -26,6 +29,7 @@ with warnings.catch_warnings():
     from mrcnn.TensorflowDetector import TensorflowDetector
     from mrcnn import visualize
     from mrcnn import post_processing as pp
+    from mrcnn import statistics as stats
 
 
 def get_ax(rows=1, cols=1, size=8):
@@ -102,8 +106,8 @@ class NephrologyInferenceModel:
 
     def __init__(self, configPath: str, low_memory=False):
         self.__STEP = "init"
-        with open(configPath, 'r') as jsonFile:
-            self.__CONFIG_FILE = json.load(jsonFile)
+        self.__CONFIG = Config(configPath)
+        self.__CONFIG_PATH = configPath
         self.__LOW_MEMORY = low_memory
         self.__READY = False
         self.__MODE = None
@@ -125,26 +129,15 @@ class NephrologyInferenceModel:
         self.__CONFUSION_MATRIX = None
         self.__APs = None
 
-        self.__CONFIG = None
-
         self.__PREVIOUS_RES = None
 
-    def __get_mode_config__(self, mode: str = None):
-        return self.__CONFIG_FILE['modes'][self.__MODE if mode is None else mode]
-
     def load(self, mode: str, forceFullSizeMasks=False, forceModelPath=None):
-        # Loading the inference mode
-        mode_config = self.__get_mode_config__(mode)
-
         # If mode is already loaded, nothing to do
         if self.__MODE == mode:
-            self.__CONFIG.USE_MINI_MASK = not forceFullSizeMasks and mode_config['parameters']['mini_mask'] is not None
-            self.__CONFIG.MINI_MASK_SHAPE = tuple([mode_config['parameters']['mini_mask']
-                                                   if self.__CONFIG.USE_MINI_MASK else 0] * 2)  # (H, W)
             print(f"{mode} mode is already loaded.\n")
             return
 
-        self.__MODEL_PATH = find_latest_weight(mode_config['parameters']['weight_file']
+        self.__MODEL_PATH = find_latest_weight(self.__CONFIG.get_param(mode)['weight_file']
                                                if forceModelPath is None else forceModelPath)
 
         # Testing only for one of the format, as Error would have already been raised if modelPath was not correct
@@ -152,55 +145,42 @@ class NephrologyInferenceModel:
         if isExportedModelDir:
             self.__MODEL_PATH = os.path.join(self.__MODEL_PATH, 'saved_model')
 
-        self.__CLASS_2_ID = {}
-        self.__ID_2_CLASS = {}
-        for idx, classInfo in enumerate(mode_config['classes']):
-            _idx = idx + 1
-            classInfo['id'] = _idx
-            self.__ID_2_CLASS[_idx] = classInfo['name']
-            self.__CLASS_2_ID[classInfo['name']] = _idx
-        self.__CLASSES_INFO = mode_config['classes'].copy()
+        self.__CLASSES_INFO = self.__CONFIG.get_classes_info(mode)
+        self.__CLASS_2_ID = self.__CONFIG.get_mode_config(mode)['class_to_id']
 
+        label_map = {c["id"]: c for c in self.__CONFIG.get_classes_info(mode)}
         if self.__MODEL is None:
-            self.__MODEL = TensorflowDetector(self.__MODEL_PATH, {c['id']: c for c in mode_config['classes']})
+            self.__MODEL = TensorflowDetector(self.__MODEL_PATH, label_map)
         else:
-            self.__MODEL.load(self.__MODEL_PATH, {c['id']: c for c in mode_config['classes']})
+            self.__MODEL.load(self.__MODEL_PATH, label_map)
         self.__READY = self.__MODEL.isLoaded()
         if not self.__MODEL.isLoaded():
             raise ValueError("Please provide correct path to model.")
 
+        self.__CONFIG.set_current_mode(mode, forceFullSizeMasks)
         self.__MODE = mode
 
-        self.__DIVISION_SIZE = mode_config['parameters']['roi_size']
-        self.__MIN_OVERLAP_PART = mode_config['parameters']['min_overlap_part']
-        if mode_config['parameters']['resize'] is None:
+        self.__DIVISION_SIZE = self.__CONFIG.get_param()['roi_size']
+        self.__MIN_OVERLAP_PART = self.__CONFIG.get_param()['min_overlap_part']
+        if self.__CONFIG.get_param().get('resize', None) is None:
             self.__RESIZE = None
         else:
-            self.__RESIZE = tuple(mode_config['parameters']['resize'])
+            self.__RESIZE = tuple(self.__CONFIG.get_param()['resize'])
 
-        self.__NB_CLASS = len(mode_config['classes'])
-        self.__CUSTOM_CLASS_NAMES = [classInfo["name"] for classInfo in mode_config['classes']]
+        self.__NB_CLASS = len(self.__CLASSES_INFO)
+        self.__CUSTOM_CLASS_NAMES = [classInfo["name"] for classInfo in self.__CLASSES_INFO]
         self.__VISUALIZE_NAMES = ['Background']
         self.__VISUALIZE_NAMES.extend([classInfo.get('display_name', classInfo['name'])
-                                       for classInfo in mode_config['classes']])
+                                       for classInfo in self.__CLASSES_INFO])
 
-        self.__COLORS = [classInfo["color"] for classInfo in mode_config['classes']]
+        self.__COLORS = [classInfo["color"] for classInfo in self.__CLASSES_INFO]
 
         # Configurations
         self.__CONFUSION_MATRIX = {'pixel': np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64),
                                    'mask': np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64)}
         self.__APs = []
 
-        class SkinetConfig:
-            NAME = "skinet"
-            NUM_CLASSES = 1 + len(mode_config['classes'])
-            IMAGE_SIDE = mode_config['parameters']['roi_size']
-            MIN_OVERLAP = mode_config['parameters']['min_overlap_part']
-            DETECTION_MIN_CONFIDENCE = mode_config['parameters']['min_confidence']
-            USE_MINI_MASK = not forceFullSizeMasks and mode_config['parameters']['mini_mask'] is not None
-            MINI_MASK_SHAPE = tuple([mode_config['parameters']['mini_mask'] if USE_MINI_MASK else 0] * 2)  # (H, W)
-
-        self.__CONFIG = SkinetConfig()
+        mode_config = self.__CONFIG.get_mode_config()
         print()
 
     def __prepare_image__(self, imagePath, results_path, chainMode=False, silent=False):
@@ -216,18 +196,16 @@ class NephrologyInferenceModel:
         fullImage = None
         imageInfo = None
         image_results_path = None
-        mode_config = self.__get_mode_config__()
-        parameters = mode_config['parameters']
-        roi_mode = parameters["roi_mode"]
+        roi_mode = self.__CONFIG.get_param()["roi_mode"]
         suffix = ""
-        if chainMode and mode_config['previous'] is not None:
+        if chainMode and self.__CONFIG.get_previous_mode() is not None:
             image_name, extension = os.path.splitext(os.path.basename(imagePath))
             extension = extension.replace('.', '')
             if extension not in ['png', 'jpg']:
                 extension = 'jpg'
-            if self.__get_mode_config__(mode_config['previous'])['parameters'].get('resize', None) is not None:
+            if self.__CONFIG.get_param('previous').get('resize', None) is not None:
                 suffix = "_base"
-            imagePath = os.path.join(results_path, image_name, mode_config['previous'],
+            imagePath = os.path.join(results_path, image_name, self.__CONFIG.get_previous_mode(),
                                      f"{image_name}{suffix}.{extension}")
         if os.path.exists(imagePath):
             imageInfo = {
@@ -254,8 +232,8 @@ class NephrologyInferenceModel:
             imageInfo['HEIGHT'] = int(height)
             imageInfo['WIDTH'] = int(width)
 
-            if parameters.get('base_class', None) is not None:
-                imageInfo['BASE_CLASS'] = parameters['base_class']
+            if self.__CONFIG.get_param().get('base_class', None) is not None:
+                imageInfo['BASE_CLASS'] = self.__CONFIG.get_param()['base_class']
 
             if 'BASE_CLASS' in imageInfo:
                 imageInfo['BASE_AREA'] = height * width
@@ -297,26 +275,18 @@ class NephrologyInferenceModel:
                 for ext in AnnotationAdapter.ANNOTATION_FORMAT:
                     annotationExists = annotationExists or os.path.exists(os.path.join(imageInfo['DIR_PATH'],
                                                                                        imageInfo['NAME'] + '.' + ext))
-            if parameters['allow_empty_annotations']:
+            if self.__CONFIG.get_param()['allow_empty_annotations']:
                 imageInfo['HAS_ANNOTATION'] = annotationExists
 
-            previous_mode = self.__get_mode_config__().get('previous', None)
-            if chainMode and 'BASE_CLASS' in imageInfo and previous_mode is not None:
-                previous_mode = self.__get_mode_config__(previous_mode)
-                baseClassId = 0
-                for idx, aClass in enumerate(previous_mode['classes']):
-                    if aClass['name'] == imageInfo['BASE_CLASS']:
-                        baseClassId = idx + 1
-                        break
-                if self.__PREVIOUS_RES is not None and 'class_ids' in self.__PREVIOUS_RES \
-                        and baseClassId in self.__PREVIOUS_RES['class_ids']:
+            if chainMode and 'BASE_CLASS' in imageInfo and self.__CONFIG.get_previous_mode() is not None:
+                baseClassId = self.__CONFIG.get_class_id(imageInfo['BASE_CLASS'], 'previous')
+                if self.__PREVIOUS_RES is not None and baseClassId in self.__PREVIOUS_RES['class_ids']:
                     indices = np.arange(len(self.__PREVIOUS_RES['class_ids']))
                     indices = indices[np.isin(self.__PREVIOUS_RES['class_ids'], [baseClassId])]
                     if len(indices) > 0:
-                        temp = previous_mode['parameters'].get("mini_mask", None)
-                        previousModeUsedMiniMask = temp is not None and self.__PREVIOUS_RES['masks'].shape[0] == temp\
-                                                   and self.__PREVIOUS_RES['masks'].shape[1] == temp
-                        previousResize = previous_mode['parameters'].get('resize', None)
+                        temp = self.__CONFIG.get_mini_mask_shape('previous')
+                        previousModeUsedMiniMask = temp is not None and self.__PREVIOUS_RES['masks'].shape[:2] == temp
+                        previousResize = self.__CONFIG.get_param('previous').get('resize', None)
                         fusedMask = np.zeros((height, width), dtype=np.uint8)
                         for idx in indices:
                             mask = self.__PREVIOUS_RES['masks'][:, :, idx].astype(np.uint8) * 255
@@ -332,7 +302,7 @@ class NephrologyInferenceModel:
                             fusedMask = np.bitwise_or(fusedMask, mask)
                         image = cv2.bitwise_and(fullImage, np.repeat(fusedMask[..., np.newaxis], 3, axis=2))
 
-                        crop_to_base_class = mode_config['parameters'].get('crop_to_base_class', False)
+                        crop_to_base_class = self.__CONFIG.get_param().get('crop_to_base_class', False)
                         if crop_to_base_class:
                             fusedBbox = utils.extract_bboxes(fusedMask)
                             image = image[fusedBbox[0]:fusedBbox[2], fusedBbox[1]:fusedBbox[3], :]
@@ -343,7 +313,7 @@ class NephrologyInferenceModel:
 
                         # If RoI mode is 'centered', inference will be done on base-class masks
                         if roi_mode == 'centered':
-                            if parameters['fuse_base_class']:
+                            if self.__CONFIG.get_param()['fuse_base_class']:
                                 if crop_to_base_class:
                                     imageInfo['ROI_COORDINATES'] = fusedBbox - offset
                                 else:
@@ -358,7 +328,7 @@ class NephrologyInferenceModel:
                             imageInfo['NB_DIV'] = len(imageInfo['ROI_COORDINATES'])
 
                         # Getting count and area of base-class masks
-                        if parameters['fuse_base_class']:
+                        if self.__CONFIG.get_param()['fuse_base_class']:
                             imageInfo.update({'BASE_AREA': dD.getBWCount(fusedMask)[1], 'BASE_COUNT': 1})
                         else:
                             for idx in indices:
@@ -371,7 +341,7 @@ class NephrologyInferenceModel:
                                     else:
                                         mask = utils.expand_mask(bbox, mask, (imageInfo['HEIGHT'], imageInfo['WIDTH']))
                                 imageInfo['BASE_AREA'] += dD.getBWCount(mask)[1]
-                                if not parameters['fuse_base_class']:
+                                if not self.__CONFIG.get_param()['fuse_base_class']:
                                     imageInfo['BASE_COUNT'] += 1
                                 del mask
                         imageInfo['HEIGHT'] = int(height)
@@ -380,12 +350,13 @@ class NephrologyInferenceModel:
                 if not silent:
                     print(" - Annotation file found: creating dataset files and cleaning image if possible",
                           flush=True)
-                dW.createMasksOfImage(imageInfo['DIR_PATH'], imageInfo['NAME'], 'data', classesInfo=self.__CLASSES_INFO,
-                                      imageFormat=imageInfo['IMAGE_FORMAT'], resize=self.__RESIZE, config=self.__CONFIG)
+                dW.createMasksOfImage(imageInfo['DIR_PATH'], imageInfo['NAME'], 'data',
+                                      classesInfo=self.__CLASSES_INFO, imageFormat=imageInfo['IMAGE_FORMAT'],
+                                      resize=self.__RESIZE, config=self.__CONFIG)
                 maskDirs = os.listdir(os.path.join('data', imageInfo['NAME']))
                 if 'BASE_CLASS' in imageInfo and imageInfo['BASE_CLASS'] in maskDirs:
                     # Fusing masks of base class if needed, then cleaning image using it/them
-                    if parameters['fuse_base_class']:
+                    if self.__CONFIG.get_param()['fuse_base_class']:
                         dW.fuseClassMasks('data', imageInfo['NAME'], imageInfo['BASE_CLASS'],
                                           imageFormat=imageInfo['IMAGE_FORMAT'], deleteBaseMasks=True, silent=True)
                     dW.cleanImage('data', imageInfo['NAME'], cleaningClass=imageInfo['BASE_CLASS'],
@@ -451,7 +422,8 @@ class NephrologyInferenceModel:
 
         return image, fullImage, imageInfo, image_results_path
 
-    def __init_results_dir__(self, results_path, chainMode=False):
+    @staticmethod
+    def __init_results_dir__(results_path):
         if results_path is None or results_path in ['', '.', './', "/"]:
             lastDir = "results"
             remainingPath = ""
@@ -476,7 +448,7 @@ class NephrologyInferenceModel:
 
         # If results have to be saved, setting the results path and creating directory
         if save_results:
-            results_path, logsPath = self.__init_results_dir__(results_path, chainMode=chainMode)
+            results_path, logsPath = self.__init_results_dir__(results_path)
         else:
             print("No result will be saved")
             results_path = None
@@ -492,11 +464,11 @@ class NephrologyInferenceModel:
                 print(f"Using {IMAGE_PATH} image file {progressText(img_idx + 1, len(images))}")
                 image_name = os.path.splitext(os.path.basename(IMAGE_PATH))[0]
                 if chainMode:
-                    nextMode = self.__CONFIG_FILE['first_mode']
+                    nextMode = self.__CONFIG.get_first_mode()
                     while nextMode is not None:
                         print(f"[{nextMode} mode]")
                         self.load(nextMode, forceFullSizeMasks=chainModeForceFullSize)
-                        nextMode = self.__get_mode_config__().get("next", None)
+                        nextMode = self.__CONFIG.get_next_mode()
                         self.__process_image__(IMAGE_PATH, results_path, chainMode, saveDebugImages, save_results,
                                                displayOnlyAP, logsPath, verbose=verbose)
                 else:
@@ -546,7 +518,7 @@ class NephrologyInferenceModel:
     def __process_image__(self, image_path, results_path, chainMode=False, saveDebugImages=False, save_results=True,
                           displayOnlyAP=False, logsPath=None, verbose=0):
         cortex_mode = self.__MODE == "cortex"
-        allowSparse = self.__get_mode_config__()['parameters'].get('allow_sparse', True)
+        allowSparse = self.__CONFIG.get_param().get('allow_sparse', True)
         start_time = time()
         self.__STEP = "image preparation"
         image, fullImage, imageInfo, image_results_path = self.__prepare_image__(image_path, results_path, chainMode,
@@ -563,70 +535,33 @@ class NephrologyInferenceModel:
                     gc.collect()
                     fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
 
-        """##############
-        ### Inference ###
-        ##############"""
-        res = []
-        total_px = self.__CONFIG.IMAGE_SIDE ** 2
-        skipped = 0
         debugIterator = -1
-        skippedText = ""
-        inference_start_time = time()
-        if not displayOnlyAP:
-            progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference')
-        for divId in range(imageInfo["NB_DIV"]):
-            self.__STEP = f"{divId} div processing"
-            forceInference = False
-            if 'X_STARTS' in imageInfo and 'Y_STARTS' in imageInfo:
-                division = dD.getImageDivision(fullImage if image is None else image, imageInfo["X_STARTS"],
-                                               imageInfo["Y_STARTS"], divId, self.__DIVISION_SIZE)
-            elif 'ROI_COORDINATES' in imageInfo:
-                currentRoI = imageInfo['ROI_COORDINATES'][divId]
-                division = (fullImage if image is None else image)[currentRoI[0]:currentRoI[2],
-                                                                   currentRoI[1]:currentRoI[3], :]
-                forceInference = True
-            else:
-                raise ValueError('Cannot find image areas to use')
-
-            if not forceInference:
-                grayDivision = cv2.cvtColor(division, cv2.COLOR_RGB2GRAY)
-                colorPx = cv2.countNonZero(grayDivision)
-                del grayDivision
-            if forceInference or colorPx / total_px > 0.1:
-                self.__STEP = f"{divId} div inference"
-                results = self.__MODEL.process(division, normalizedCoordinates=False,
-                                               score_threshold=self.__CONFIG.DETECTION_MIN_CONFIDENCE)
-                results["div_id"] = divId
-                if self.__CONFIG.USE_MINI_MASK:
-                    res.append(utils.reduce_memory(results.copy(), config=self.__CONFIG,
-                                                   allow_sparse=allowSparse))
-                else:
-                    res.append(results.copy())
-                del results
-            elif not displayOnlyAP:
-                skipped += 1
-                skippedText = f"({skipped} empty division{'s' if skipped > 1 else ''} skipped) "
-            del division
-            gc.collect()
-
-            if not displayOnlyAP:
-                if divId + 1 == imageInfo["NB_DIV"]:
-                    inference_duration = round(time() - inference_start_time)
-                    skippedText += f"Duration = {formatTime(inference_duration)}"
-                progressBar(divId + 1, imageInfo["NB_DIV"], prefix=' - Inference', suffix=skippedText)
+        res = self.__inference__(image, fullImage, imageInfo, allowSparse, displayOnlyAP)
 
         """####################
         ### Post-Processing ###
         ####################"""
-        if not displayOnlyAP:
-            print(" - Fusing results of all divisions")
-        self.__STEP = "fusing results"
-        res = pp.fuse_results(res, imageInfo, division_size=self.__DIVISION_SIZE,
-                              cortex_size=self.__RESIZE, config=self.__CONFIG)
+
+        def gather_dynamic_args(method: DynamicMethod):
+            dynamic_args = {}
+            for dynamic_arg in method.dynargs():
+                if dynamic_arg == 'image':
+                    dynamic_args[dynamic_arg] = image
+                elif dynamic_arg == 'image_info':
+                    dynamic_args[dynamic_arg] = imageInfo
+                elif dynamic_arg == 'save':
+                    dynamic_args[dynamic_arg] = image_results_path
+                elif dynamic_arg == 'base_res' and chainMode:
+                    dynamic_args[dynamic_arg] = self.__PREVIOUS_RES
+                elif dynamic_arg == 'base_res':
+                    dynamic_args[dynamic_arg] = self.__get_ground_truth__(image_results_path, fullImage, imageInfo,
+                                                                          displayOnlyAP, False, base_gt=True)
+                else:
+                    raise NotImplementedError(f'Dynamic argument \'{dynamic_arg}\' is not implemented.')
+            return dynamic_args
 
         if len(res['class_ids']) > 0:
-            mode_config = self.__get_mode_config__()
-            for idx, methodInfo in enumerate(mode_config['post_processing']):
+            for methodInfo in self.__CONFIG.get_post_processing_method():
                 self.__STEP = f"post-processing ({methodInfo['method']})"
                 # if saveDebugImages and idx != 0:
                 if saveDebugImages:
@@ -637,23 +572,12 @@ class NephrologyInferenceModel:
                         del fullImage
                         gc.collect()
                         fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
+
                 ppMethod = pp.PostProcessingMethod(methodInfo['method'])
-                dynargs = {}
-                for dynarg in ppMethod.dynargs():
-                    if dynarg == 'image':
-                        dynargs[dynarg] = image
-                    elif dynarg == 'classes_info':
-                        dynargs[dynarg] = self.__CLASSES_INFO.copy()
-                    elif dynarg == 'image_info':
-                        dynargs[dynarg] = imageInfo.copy()
-                    else:
-                        raise NotImplementedError(f'Dynamic argument \'{dynarg}\' is not implemented.')
-                if methodInfo['method'] not in ['statistics', 'export_as_annotations']:
-                    res = ppMethod.method(results=res, args=methodInfo, config=self.__CONFIG,
-                                          display=not displayOnlyAP, verbose=verbose, dynargs=dynargs)
-                else:
-                    raise NotImplementedError(f"Dynamic post-processing method \'{methodInfo['method']}\' is not "
-                                              f"implemented.")
+                dynargs = gather_dynamic_args(ppMethod)
+
+                res = ppMethod.method(results=res, config=self.__CONFIG, args=methodInfo, dynargs=dynargs,
+                                      display=not displayOnlyAP, verbose=verbose)
 
         """#######################
         ### Stats & Evaluation ###
@@ -676,7 +600,23 @@ class NephrologyInferenceModel:
                                                          save_results, displayOnlyAP)
                 del ground_truth
             if not cortex_mode:
-                self.__compute_statistics__(image_results_path, imageInfo, res, save_results)
+                self.__compute_statistics__(image_results_path, imageInfo, res, save_results, displayOnlyAP)
+            if self.__MODE == "mest_glom" and (chainMode or (not chainMode and imageInfo['HAS_ANNOTATION'])):
+                if chainMode:
+                    base_results = self.__PREVIOUS_RES
+                else:
+                    base_results = self.__get_ground_truth__(image_results_path, fullImage, imageInfo,
+                                                             displayOnlyAP, False, base_gt=True)
+                stats.mask_histo_per_base_mask(
+                    base_results=base_results,
+                    results=res, image_info=imageInfo, classes={"nsg": "all"}, box_epsilon=0, config=self.__CONFIG,
+                    test_masks=True, mask_threshold=0.9, display_per_base_mask=False, display_global=True,
+                    save=image_results_path if save_results else None, verbose=verbose
+                )
+
+        """#################
+        ### Finalization ###
+        #################"""
         if save_results:
             if cortex_mode:
                 self.__finalize_cortex_mode__(image_results_path, imageInfo, res, displayOnlyAP)
@@ -684,12 +624,14 @@ class NephrologyInferenceModel:
                 if not displayOnlyAP:
                     print(" - Applying masks on image")
                 self.__STEP = "saving predicted image"
-                self.__draw_masks__(image_results_path, fullImage, imageInfo, res, title=f"{imageInfo['NAME']} Predicted")
+                self.__draw_masks__(image_results_path, fullImage, imageInfo, res,
+                                    title=f"{imageInfo['NAME']} Predicted")
             elif not displayOnlyAP:
                 print(" - No mask to apply on image")
 
             # Annotations Extraction
-            self.__export_annotations__(image_results_path, imageInfo, res, displayOnlyAP)
+            if self.__CONFIG.has_to_export():
+                self.__export_annotations__(image_results_path, imageInfo, res, displayOnlyAP)
 
         final_time = round(time() - start_time)
         print(f" Done in {formatTime(final_time)}\n")
@@ -699,9 +641,9 @@ class NephrologyInferenceModel:
         ########################################"""
         if chainMode:
             self.__PREVIOUS_RES = {}
-            if self.__get_mode_config__().get('return', None) is not None:
+            if self.__CONFIG.has_to_return():
                 indices = np.arange(len(res['class_ids']))
-                classIdsToGet = [self.__CLASS_2_ID[c] for c in self.__get_mode_config__()['return']]
+                classIdsToGet = [self.__CLASS_2_ID[c] for c in self.__CONFIG.get_return_param()]
                 indices = indices[np.isin(res['class_ids'], classIdsToGet)]
                 for key in res:
                     if key == 'masks':
@@ -715,12 +657,66 @@ class NephrologyInferenceModel:
         if save_results:
             with open(logsPath, 'a') as results_log:
                 apText = f"{AP:4.3f}".replace(".", ",")
-                results_log.write(f"{imageInfo['NAME']}; {final_time}; {apText}%; {self.__MODE};\n")
+                results_log.write(f"{imageInfo['NAME']}; {final_time}; {apText}%; {self.__MODEL_PATH};\n")
         del res, imageInfo, fullImage
         plt.clf()
         plt.close('all')
         gc.collect()
         return AP
+
+    def __inference__(self, image, fullImage, imageInfo, allowSparse, displayOnlyAP):
+        res = []
+        total_px = self.__CONFIG.get_param()['roi_size'] ** 2
+        skipped = 0
+        skippedText = ""
+        inference_start_time = time()
+        if not displayOnlyAP:
+            progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference')
+        for divId in range(imageInfo["NB_DIV"]):
+            self.__STEP = f"{divId} div processing"
+            forceInference = False
+            if 'X_STARTS' in imageInfo and 'Y_STARTS' in imageInfo:
+                division = dD.getImageDivision(fullImage if image is None else image, imageInfo["X_STARTS"],
+                                               imageInfo["Y_STARTS"], divId, self.__DIVISION_SIZE)
+            elif 'ROI_COORDINATES' in imageInfo:
+                currentRoI = imageInfo['ROI_COORDINATES'][divId]
+                division = (fullImage if image is None else image)[currentRoI[0]:currentRoI[2],
+                           currentRoI[1]:currentRoI[3], :]
+                forceInference = True
+            else:
+                raise ValueError('Cannot find image areas to use')
+
+            if not forceInference:
+                grayDivision = cv2.cvtColor(division, cv2.COLOR_RGB2GRAY)
+                colorPx = cv2.countNonZero(grayDivision)
+                del grayDivision
+            if forceInference or colorPx / total_px > 0.1:
+                self.__STEP = f"{divId} div inference"
+                results = self.__MODEL.process(division, normalizedCoordinates=False,
+                                               score_threshold=self.__CONFIG.get_param()['min_confidence'])
+                results["div_id"] = divId
+                if self.__CONFIG.is_using_mini_mask():
+                    res.append(utils.reduce_memory(results.copy(), config=self.__CONFIG, allow_sparse=allowSparse))
+                else:
+                    res.append(results.copy())
+                del results
+            elif not displayOnlyAP:
+                skipped += 1
+                skippedText = f"({skipped} empty division{'s' if skipped > 1 else ''} skipped) "
+            del division
+            gc.collect()
+
+            if not displayOnlyAP:
+                if divId + 1 == imageInfo["NB_DIV"]:
+                    inference_duration = round(time() - inference_start_time)
+                    skippedText += f"Duration = {formatTime(inference_duration)}"
+                progressBar(divId + 1, imageInfo["NB_DIV"], prefix=' - Inference', suffix=skippedText)
+        if not displayOnlyAP:
+            print(" - Fusing results of all divisions")
+        self.__STEP = "fusing results"
+        res = pp.fuse_results(res, imageInfo, division_size=self.__DIVISION_SIZE,
+                              cortex_size=self.__RESIZE, config=self.__CONFIG)
+        return res
 
     def __draw_masks__(self, image_results_path, img, image_info, masks_data, title=None, cleaned_image=True):
         if title is None:
@@ -736,7 +732,8 @@ class NephrologyInferenceModel:
             ), image_format=image_info['IMAGE_FORMAT'], config=self.__CONFIG
         )
 
-    def __get_ground_truth__(self, image_results_path, fullImage, image_info, displayOnlyAP, save_results):
+    def __get_ground_truth__(self, image_results_path, fullImage, image_info,
+                             displayOnlyAP, save_results, base_gt=False):
         """
         Get ground-truth annotations and applies masks on image if enabled
         :param image_results_path: the current image output folder
@@ -746,12 +743,17 @@ class NephrologyInferenceModel:
         :param save_results: if True, will apply masks
         :return: gt_bbox, gt_class_id, gt_mask
         """
-        self.__STEP = "dataset creation"
-        dataset_val = SkinetCustomDataset(self.__CUSTOM_CLASS_NAMES, self.__MODE, self.__RESIZE,
-                                          self.__CONFIG, image_info, enable_occlusion=False)
+        datasetType = "base" if base_gt else "current"
+        self.__STEP = f"{datasetType} dataset creation"
+        if base_gt:
+            config_ = self.__CONFIG.copy()
+            config_.set_current_mode(self.__CONFIG.get_previous_mode())
+        else:
+            config_ = self.__CONFIG
+        dataset_val = SkinetCustomDataset(image_info, config_, enable_occlusion=False)
         dataset_val.load_images()
         dataset_val.prepare()
-        self.__STEP = "loading annotated masks"
+        self.__STEP = f"loading {datasetType} annotated masks"
         image_id = dataset_val.image_ids[0]
         gt_mask, gt_class_id, gt_bbox = dataset_val.load_mask(image_id)
         gt = {'rois': gt_bbox, 'class_ids': gt_class_id, 'masks': gt_mask}
@@ -766,7 +768,7 @@ class NephrologyInferenceModel:
                 print(" - No mask expected, not saving expected image")
         return gt
 
-    def __compute_statistics__(self, image_results_path, image_info, predicted, save_results=True):
+    def __compute_statistics__(self, image_results_path, image_info, predicted, save_results=True, displayOnlyAP=False):
         """
         Computes area and counts masks of each class
         :param image_results_path: output folder of current image
@@ -776,22 +778,9 @@ class NephrologyInferenceModel:
         :return: None
         """
         self.__STEP = "computing statistics"
-        print(" - Computing statistics on predictions")
-        stats = pp.get_count_and_area(predicted, classes_info=self.__CLASSES_INFO,
-                                      selected_classes=self.__CUSTOM_CLASS_NAMES, config=self.__CONFIG)
-        if 'BASE_CLASS' in image_info:
-            if 'BASE_CLASS' in image_info:
-                stats[image_info['BASE_CLASS']] = {"count": image_info['BASE_COUNT'],
-                                                   "area": image_info["BASE_AREA"]}
-        for className in stats:
-            stat = stats[className]
-            print(f"    - {className} : count = {stat['count']}, area = {stat['area']} px")
-        if save_results:
-            with open(os.path.join(image_results_path, f"{image_info['NAME']}_stats.json"), "w") as saveFile:
-                try:
-                    json.dump(stats, saveFile, indent='\t')
-                except TypeError:
-                    print("    Failed to save statistics", flush=True)
+        _ = stats.get_count_and_area(predicted, image_info=image_info, selected_classes="all",
+                                     save=image_results_path if save_results else None, display=True,
+                                     config=self.__CONFIG)
 
     def __compute_ap_and_conf_matrix__(self, image_results_path, image_info, predicted, ground_truth,
                                        per_mask_conf_hierarchy, per_pixel_conf_hierarchy=None, save_results=True,
@@ -859,6 +848,7 @@ class NephrologyInferenceModel:
         return AP
 
     def __finalize_cortex_mode__(self, image_results_path, image_info, predicted, displayOnlyAP):
+        # TODO Generalize this step
         self.__STEP = "cleaning full resolution image"
         if not displayOnlyAP:
             print(" - Cleaning full resolution image and saving statistics")
@@ -873,9 +863,7 @@ class NephrologyInferenceModel:
         # To avoid cleaning an image without cortex
         if allCortices is not None:
             # Cleaning original image with cortex mask(s) and saving stats
-            allCorticesArea, allCorticesSmall = self.__keep_only_cortex__(
-                image_results_path, image_info, allCortices
-            )
+            self.__keep_only_cortex__(image_results_path, image_info, allCortices)
 
     def __keep_only_cortex__(self, image_results_path, image_info, allCortices):
         """
@@ -951,10 +939,22 @@ class NephrologyInferenceModel:
         self.__STEP = "saving annotations"
         if not silent:
             print(" - Saving predicted annotations files")
-        for adapter in AnnotationAdapter.ANNOTATION_ADAPTERS:
+        adapters = []
+        export_param = self.__CONFIG.get_export_param()
+        if type(export_param) is str:
+            if export_param.lower() == "all":
+                adapters = list(AnnotationAdapter.ANNOTATION_ADAPTERS.values())
+            else:
+                export_param = [export_param]
+        if type(export_param) is list:
+            for adapterName in export_param:
+                adapter = AnnotationAdapter.getAdapterFromName(adapterName)
+                if adapter is not None:
+                    adapters.append(adapter)
+        for adapter in adapters:
             try:
-                pp.export_annotations(image_info, predicted, self.__CLASSES_INFO,
-                                      adapter, save_path=image_results_path,
-                                      config=self.__CONFIG, verbose=verbose if silent else 1)
+                # TODO Fix export
+                export_annotations(image_info, predicted, adapter, save_path=image_results_path,
+                                   config=self.__CONFIG, verbose=verbose if silent else 1)
             except Exception:
-                print(f"Failed to export using {adapter.__qualname__} adapter")
+                print(f"Failed to export using {adapter.getName()} adapter")

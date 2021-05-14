@@ -8,7 +8,6 @@ Written by Waleed Abdulla
 """
 import json
 import logging
-import math
 import random
 import shutil
 import urllib.request
@@ -21,14 +20,10 @@ import scipy
 import skimage.color
 import skimage.io
 import skimage.transform
-# import tensorflow as tf
 
-# from mrcnn import compat
+from mrcnn.Config import Config
 from mrcnn.visualize import create_multiclass_mask
 from datasetTools import datasetDivider as dD
-
-# TODO Optimize Imports
-# from mrcnn.config import Config
 
 # URL from which to download the latest COCO trained weights
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
@@ -38,7 +33,7 @@ COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0
 #  Masks
 ############################################################
 
-def reduce_memory(results, config, allow_sparse=True):
+def reduce_memory(results, config: Config, allow_sparse=True):
     """
     Minimize all masks in the results dict from inference
     :param results: dict containing results of the inference
@@ -62,7 +57,7 @@ def reduce_memory(results, config, allow_sparse=True):
             results['masks'] = np.delete(results['masks'], emptyMasks, axis=2)
             results['rois'] = np.delete(results['rois'], emptyMasks, axis=0)
         results['rois'] = extract_bboxes(results['masks'])
-    results['masks'] = minimize_mask(results['rois'], results['masks'], config.MINI_MASK_SHAPE)
+    results['masks'] = minimize_mask(results['rois'], results['masks'], config.get_mini_mask_shape())
     return results
 
 
@@ -120,17 +115,18 @@ def unsparse_mask(base_mask):
 ############################################################
 #  Bounding Boxes
 ############################################################
-def in_roi(roi_to_test, roi):
+def in_roi(roi_to_test, roi, epsilon=0):
     """
     Tests if the RoI to test is included in the given RoI
     :param roi_to_test: the RoI/bbox to test
     :param roi: the RoI that should include the one to test
+    :param epsilon: margin of the RoI to allow boxes that are not exactly inside
     :return: True if roi_to_test is included in roi
     """
     res = True
     i = 0
     while i < 4 and res:
-        res = res and (roi[i % 2] <= roi_to_test[i] <= roi[i % 2 + 2])
+        res = res and (roi[i % 2] - epsilon <= roi_to_test[i] <= roi[i % 2 + 2] + epsilon)
         i += 1
     return res
 
@@ -916,6 +912,14 @@ def export_results(output_path: str, class_ids, boxes=None, masks=None, scores=N
     :param scores: value of the 'class_ids' key of results dictionary
     :return: None
     """
+    if type(class_ids) is dict:
+        if 'rois' in class_ids:
+            boxes = class_ids['rois']
+        if 'masks' in class_ids:
+            masks = class_ids['masks']
+        if 'scores' in class_ids:
+            scores = class_ids['scores']
+        class_ids = class_ids['class_ids']
     data = {"class_ids": [int(v) for v in class_ids]}
     if boxes is not None:
         data["rois"] = [[int(v) for v in bbox] for bbox in boxes]
@@ -993,7 +997,7 @@ def remove_redundant_classes(classes_lvl, keepFirst=True):
 
 
 def compute_confusion_matrix(image_shape: iter, expectedResults: dict, predictedResults: dict,
-                             classes_hierarchy, num_classes: int, config=None):
+                             classes_hierarchy, num_classes: int, config: Config = None):
     """
     Computes confusion matrix at pixel precision
     :param image_shape: the initial image shape
