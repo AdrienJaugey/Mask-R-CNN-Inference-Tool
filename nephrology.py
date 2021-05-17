@@ -448,6 +448,7 @@ class NephrologyInferenceModel:
                                     masks_dir_path = os.path.join(path, masks_dir)
                                     for mask_file in os.listdir(masks_dir_path):
                                         mask = imread(os.path.join(masks_dir_path, mask_file))
+                                        mask = np.where(mask > 128, 255, 0).astype(np.uint8)
                                         masks[:, :, iterator] = mask
                                         if self.__CONFIG.USE_MINI_MASK:
                                             bboxes[iterator] = dW.getBboxFromName(mask_file)
