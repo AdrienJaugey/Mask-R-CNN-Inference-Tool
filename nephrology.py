@@ -8,7 +8,7 @@ import gc
 from enum import Enum
 
 from datasetTools.AnnotationAdapter import export_annotations
-from datasetTools.CustomDataset import SkinetCustomDataset
+from datasetTools.CustomDataset import CustomDataset
 from mrcnn.Config import Config, DynamicMethod
 
 with warnings.catch_warnings():
@@ -750,7 +750,7 @@ class NephrologyInferenceModel:
             config_.set_current_mode(self.__CONFIG.get_previous_mode())
         else:
             config_ = self.__CONFIG
-        dataset_val = SkinetCustomDataset(image_info, config_, enable_occlusion=False)
+        dataset_val = CustomDataset("InferenceTool", image_info, config_, enable_occlusion=False)
         dataset_val.load_images()
         dataset_val.prepare()
         self.__STEP = f"loading {datasetType} annotated masks"
