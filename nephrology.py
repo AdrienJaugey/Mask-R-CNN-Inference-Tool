@@ -1,8 +1,9 @@
 import json
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = str(pow(2, 40))
-
+# Because OPENCV uses different variable name based on version
+os.environ['OPENCV_IO_MAX_IMAGE_PIXELS'] = str(pow(2, 40))
+os.environ['CV_IO_MAX_IMAGE_PIXELS'] = str(pow(2, 40))
 import re
 import traceback
 import shutil
@@ -15,7 +16,6 @@ from mrcnn.Config import Config, DynamicMethod
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
-    from abc import ABC, abstractmethod
     from common_utils import progressBar, formatTime, formatDate, progressText
     from datasetTools.datasetDivider import CV2_IMWRITE_PARAM
     import time
@@ -23,7 +23,7 @@ with warnings.catch_warnings():
     import cv2
     import matplotlib.pyplot as plt
     from time import time
-    from skimage.io import imread, imsave
+    from skimage.io import imsave
     from datasetTools import datasetDivider as dD, datasetWrapper as dW, AnnotationAdapter, datasetIsolator as dI
 
     from mrcnn import utils
