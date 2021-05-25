@@ -294,10 +294,12 @@ def compute_overlaps_masks(masks1, boxes1, masks2, boxes2):
 
 
 def non_max_suppression(boxes, scores, threshold):
-    """Performs non-maximum suppression and returns indices of kept boxes.
-    boxes: [N, (y1, x1, y2, x2)]. Notice that (y2, x2) lays outside the box.
-    scores: 1-D array of box scores.
-    threshold: Float. IoU threshold to use for filtering.
+    """
+    Performs non-maximum suppression
+    :param boxes: [N, (y1, x1, y2, x2)]. Notice that (y2, x2) lays outside the box.
+    :param scores: 1-D array of box scores.
+    :param threshold: Float. IoU threshold to use for filtering.
+    :return: indices of kept boxes
     """
     assert boxes.shape[0] > 0
     if boxes.dtype.kind != "f":
@@ -310,7 +312,7 @@ def non_max_suppression(boxes, scores, threshold):
     x2 = boxes[:, 3]
     area = (y2 - y1) * (x2 - x1)
 
-    # Get indicies of boxes sorted by scores (highest first)
+    # Get indices of boxes sorted by scores (highest first)
     ixs = scores.argsort()[::-1]
 
     pick = []
@@ -902,7 +904,7 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
 #  Miscellaneous
 ############################################################
 
-def export_results(output_path: str, class_ids, boxes=None, masks=None, scores=None):
+def export_results(output_path: str, class_ids, boxes=None, masks=None, scores=None, bbox_areas=None, mask_areas=None):
     """
     Exports result dictionary to a JSON file for debug
     :param output_path: path to the output JSON file
@@ -910,6 +912,8 @@ def export_results(output_path: str, class_ids, boxes=None, masks=None, scores=N
     :param boxes: value of the 'class_ids' key of results dictionary
     :param masks: value of the 'class_ids' key of results dictionary
     :param scores: value of the 'class_ids' key of results dictionary
+    :param bbox_areas: value of the 'bbox_areas' key of results dictionary
+    :param mask_areas: value of the 'masks_areas' key of results dictionary
     :return: None
     """
     if type(class_ids) is dict:
@@ -919,14 +923,22 @@ def export_results(output_path: str, class_ids, boxes=None, masks=None, scores=N
             masks = class_ids['masks']
         if 'scores' in class_ids:
             scores = class_ids['scores']
+        if 'bbox_areas' in class_ids:
+            bbox_areas = class_ids['bbox_areas']
+        if 'mask_areas' in class_ids:
+            mask_areas = class_ids['mask_areas']
         class_ids = class_ids['class_ids']
-    data = {"class_ids": [int(v) for v in class_ids]}
+    oneDArrays = [
+        (class_ids, "class_ids", int),
+        (scores, "scores", float),
+        (bbox_areas, "bbox_areas", float),
+        (mask_areas, "mask_areas", float),
+    ]
+    data = {key: [arrayType(v) for v in array] for array, key, arrayType in oneDArrays if array is not None}
     if boxes is not None:
         data["rois"] = [[int(v) for v in bbox] for bbox in boxes]
     if masks is not None:
         data["masks"] = [[[int(bool(v)) * 255 for v in row] for row in mask] for mask in masks]
-    if scores is not None:
-        data["scores"] = [float(v) for v in scores]
     with open(output_path, 'w') as output:
         json.dump(data, output)
 
@@ -939,8 +951,10 @@ def import_results(input_path: str):
     """
     with open(input_path, 'r') as inputFile:
         data = json.load(inputFile)
+    keyType = {'rois': np.int32, 'masks': np.uint8, 'class_ids': int,
+               'scores': float, 'bbox_areas': float, 'mask_areas': float}
     for key in data.keys():
-        data[key] = np.array(data[key]).astype(np.uint8 if key == "masks" else np.int32)
+        data[key] = np.array(data[key]).astype(keyType[key])
     return data
 
 

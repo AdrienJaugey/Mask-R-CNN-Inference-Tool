@@ -1,11 +1,13 @@
 import json
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = str(pow(2, 40))
+
 import re
 import traceback
 import shutil
 import warnings
 import gc
-from enum import Enum
 
 from datasetTools.AnnotationAdapter import export_annotations
 from datasetTools.CustomDataset import CustomDataset
@@ -13,7 +15,6 @@ from mrcnn.Config import Config, DynamicMethod
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     from abc import ABC, abstractmethod
     from common_utils import progressBar, formatTime, formatDate, progressText
     from datasetTools.datasetDivider import CV2_IMWRITE_PARAM

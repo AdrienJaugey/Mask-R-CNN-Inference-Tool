@@ -38,7 +38,8 @@ def get_count_and_area(results: dict, image_info: dict, selected_classes: [str],
     else:
         selectedClassesID = {config.get_class_id(name): name for name in selected_classes}
         indices = indices[np.isin(class_ids, list(selectedClassesID.keys()))]
-    res = {c: {"count": 0, "area": 0} for c in selectedClassesID.values()}
+    res = {c_name: {"display_name": config.get_class_name(c_id, display=True),"count": 0, "area": 0}
+           for c_id, c_name in selectedClassesID.items()}
 
     # For each predictions, if class ID matching with one we want
     for index in indices:
@@ -60,7 +61,13 @@ def get_count_and_area(results: dict, image_info: dict, selected_classes: [str],
         res[className]["area"] += area  # Cast to int to avoid "json 'int64' not serializable"
 
     if 'BASE_CLASS' in image_info:
-        res[image_info['BASE_CLASS']] = {"count": image_info['BASE_COUNT'], "area": image_info["BASE_AREA"]}
+        res[image_info['BASE_CLASS']] = {
+            "display_name": config.get_class_name(
+                config.get_class_id(image_info['BASE_CLASS'], "previous"), "previous", display=True
+            ),
+            "count": image_info['BASE_COUNT'],
+            "area": image_info["BASE_AREA"]
+        }
     if save is not None:
         with open(os.path.join(save, f"{image_info['NAME']}_stats.json"), "w") as saveFile:
             try:
@@ -70,8 +77,9 @@ def get_count_and_area(results: dict, image_info: dict, selected_classes: [str],
                     print("    Failed to save statistics", flush=True)
     if display:
         for className in res:
+            displayName = config.get_class_name(config.get_class_id(className), display=True)
             stat = res[className]
-            print(f"    - {className} : count = {stat['count']}, area = {stat['area']} px")
+            print(f"    - {displayName} : count = {stat['count']}, area = {stat['area']} px")
 
     return res
 

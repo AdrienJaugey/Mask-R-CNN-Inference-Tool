@@ -234,7 +234,7 @@
                 }
             ],
             "parameters": {
-                "weight_file": "skinet_mest_main_v1",
+                "weight_file": "skinet_mest_main_v3",
                 "base_class": "cortex",
                 "fuse_base_class": true,
                 "crop_to_base_class": true,
@@ -256,6 +256,18 @@
                     "method": "border_filter",
                     "on_border_threshold": 0.25,
                     "classes": [5, 6]
+                },
+                {
+                    "method": "class_fusion",
+                    "bb_threshold": 0.2,
+                    "mask_threshold": 0.2,
+                    "classes_compatibility": [[1, 2]]
+                },
+                {
+                    "method": "keep_biggest_mask",
+                    "bb_threshold": 0.3,
+                    "mask_threshold": 0.3,
+                    "classes": {"nsg": ["vaisseau"]}
                 },
                 {
                     "method": "filter",
