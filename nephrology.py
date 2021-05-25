@@ -1,9 +1,5 @@
 import json
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-# Because OPENCV uses different variable name based on version
-os.environ['OPENCV_IO_MAX_IMAGE_PIXELS'] = str(pow(2, 40))
-os.environ['CV_IO_MAX_IMAGE_PIXELS'] = str(pow(2, 40))
 import re
 import traceback
 import shutil
