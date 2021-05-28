@@ -46,7 +46,7 @@ LABELME_SCHEMA = {
                                     ]
                                 }
                             },
-                            "group_id": {"type": "integer"},
+                            "group_id": {"type": ["null", "integer"]},
                             "flags": {"type": "object"},
                             "shape_type": {"type": "string"},
                             "label": {"type": "string"}

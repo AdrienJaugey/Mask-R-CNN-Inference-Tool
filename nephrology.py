@@ -850,6 +850,9 @@ class NephrologyInferenceModel:
         if not displayOnlyAP:
             print(" - Cleaning full resolution image and saving statistics")
         allCortices = None
+        exclude_medulla = self.__CONFIG.get_param().get('exclude_medulla', False)
+        allExcluded = None
+        exclude_capsule = self.__CONFIG.get_param().get('exclude_capsule', False)
         # Gathering every cortex masks into one
         for idxMask, classMask in enumerate(predicted['class_ids']):
             if classMask == 1:
@@ -857,6 +860,14 @@ class NephrologyInferenceModel:
                     allCortices = predicted['masks'][:, :, idxMask].copy() * 255
                 else:  # Additional masks found
                     allCortices = cv2.bitwise_or(allCortices, predicted['masks'][:, :, idxMask] * 255)
+            elif (exclude_medulla and classMask == 2) or (exclude_capsule and classMask == 3):
+                if allExcluded is None:  # First mask found
+                    allExcluded = predicted['masks'][:, :, idxMask].copy() * 255
+                else:  # Additional masks found
+                    allExcluded = cv2.bitwise_or(allExcluded, predicted['masks'][:, :, idxMask] * 255)
+        if allExcluded is not None:
+            allExcluded = cv2.bitwise_not(allExcluded)
+            allCortices = cv2.bitwise_and(allCortices, allExcluded)
         # To avoid cleaning an image without cortex
         if allCortices is not None:
             # Cleaning original image with cortex mask(s) and saving stats

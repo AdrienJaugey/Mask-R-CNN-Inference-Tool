@@ -501,7 +501,7 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
         createMasksOfImage(rawDatasetPath, file, datasetName, adapter, classesInfo=classesInfo,
                            resize=resize, imageFormat=imageFormat)
         if mode == "main":
-            fuseClassMasks(datasetName, file, cortex, deleteBaseMasks=deleteBaseCortexMasks, silent=True)
+            fuseClassMasks(datasetName, file, "cortex", deleteBaseMasks=deleteBaseCortexMasks, silent=True)
             cleanImage(datasetName, file, cleaningClass='cortex')
         elif mode == "mest_glom":
             cleanImage(datasetName, file, cleaningClass='nsg', cleanMasks=True)
