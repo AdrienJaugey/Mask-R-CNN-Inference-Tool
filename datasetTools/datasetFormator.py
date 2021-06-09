@@ -352,7 +352,7 @@ def generateDataset(rawDataset='raw_dataset', tempDataset='temp_dataset', unused
                 shutil.rmtree(directory, ignore_errors=True)
 
     # Creating masks and making per image directories
-    dW.startWrapper(rawDataset, tempDataset, deleteBaseCortexMasks=deleteBaseCortexMasks,
+    dW.startWrapper(rawDataset, tempDataset, deleteBaseMasks=deleteBaseCortexMasks,
                     adapter=adapter, imageFormat=imageFormat, mode="main")
     infoNephrologyDataset(tempDataset, baseClass='cortex')
     checkNSG(tempDataset)

@@ -470,13 +470,13 @@ def getInfoRawDataset(rawDatasetPath: str, verbose=False, adapter: AnnotationAda
     return names, images, missingImages, missingAnnotations
 
 
-def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', deleteBaseCortexMasks=False,
+def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', deleteBaseMasks=False,
                  adapter: AnnotationAdapter = None, resize=None, mode="main", classesInfo=None, imageFormat="jpg"):
     """
     Start wrapping the raw dataset into the wanted format
     :param rawDatasetPath: path to the folder containing images and associated annotations
     :param datasetName: name of the output dataset
-    :param deleteBaseCortexMasks: delete the base masks images after fusion
+    :param deleteBaseMasks: delete the base masks images after fusion
     :param adapter: Adapter to use to read annotations, if None compatible adapter will be searched
     :param resize: If tuple given, the images and their masks will be resized to the tuple value
     :param mode: Mode to use, will not clean the image nor fuse cortex masks
@@ -501,7 +501,7 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
         createMasksOfImage(rawDatasetPath, file, datasetName, adapter, classesInfo=classesInfo,
                            resize=resize, imageFormat=imageFormat)
         if mode == "main":
-            fuseClassMasks(datasetName, file, "cortex", deleteBaseMasks=deleteBaseCortexMasks, silent=True)
+            fuseClassMasks(datasetName, file, "cortex", deleteBaseMasks=deleteBaseMasks, silent=True)
             cleanImage(datasetName, file, cleaningClass='cortex')
         elif mode == "mest_glom":
             cleanImage(datasetName, file, cleaningClass='nsg', cleanMasks=True)
