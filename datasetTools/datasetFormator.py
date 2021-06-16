@@ -178,6 +178,10 @@ def sortImages(datasetPath: str, unusedDirPath: str = None, mode: str = "main"):
         NOT_TO_COUNT.extend(["nsg_complet", "nsg_partiel", "tubule_sain", "tubule_atrophique", "vaisseau",
                              "intima", "media", "pac", "artefact", "veine", "medullaire", "capsule"])
         baseClass = "nsg"
+    elif mode == "inflammation":
+        NOT_TO_COUNT.extend(["cortex", "tubule_sain", "tubule_atrophique", "pac", "vaisseau",
+                             "artefact", "veine", "nsg", "intima", "media"])
+        baseClass = "cortex"
     else:
         print(f"Mode {mode} is not yet supported")
         return
@@ -479,7 +483,7 @@ def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_
     Generates datasets folder from a base directory, all paths are customizable, and it can also remove previous
     directories
     :param rawDataset: path to the base directory
-    :param outputDataset: path to the output cortex dataset
+    :param outputDataset: path to the output dataset
     :param cleanBeforeStart: if True, will delete previous directories that could still exist
     :param mode: the mode to use : glom or main
     :param imageFormat: the image format to look for and to use
@@ -562,6 +566,92 @@ def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_
     print("\nDataset made, nothing left to do")
 
 
+def generateInflammationDataset(rawDataset: str, outputDataset="nephrology_inflammation_dataset", cleanBeforeStart=True,
+                                imageFormat='jpg', divisionSize=1024, overlap=0.33, separate="images",
+                                recreateValList=None, adapter: AnnotationAdapter = None):
+    """
+    Generates datasets folder from a base directory, all paths are customizable, and it can also remove previous
+    directories
+    :param rawDataset: path to the base directory
+    :param outputDataset: path to the output dataset
+    :param cleanBeforeStart: if True, will delete previous directories that could still exist
+    :param imageFormat: the image format to look for and to use
+    :param divisionSize: size of the output images
+    :param overlap: the least overlap between two divisions
+    :param separate: if True, divisions of same image can be separated into training and val directories
+    :param recreateValList: list of the images to use to recreate cortex dataset
+    :param adapter: the adapter to use if given, else it will be chosen depending on the annotations found
+    :return: None
+    """
+    base_class = "cortex"
+    if cleanBeforeStart:
+        # Removing temp directories
+        import shutil
+        dirToDel = ["temp_" + outputDataset, "temp_" + outputDataset + '_val', outputDataset,
+                    outputDataset + '_train', outputDataset + '_val', outputDataset + '_unused']
+        for directory in dirToDel:
+            if os.path.exists(directory):
+                shutil.rmtree(directory, ignore_errors=True)
+
+    # Creating masks and making per image directories
+    dW.startWrapper(rawDataset, "temp_" + outputDataset, deleteBaseMasks=True,
+                    adapter=adapter, imageFormat=imageFormat, mode="inflammation")
+    infoNephrologyDataset("temp_" + outputDataset, baseClass=base_class)
+
+    # Sorting images to keep those that can be used to train cortex
+    sortImages(datasetPath="temp_" + outputDataset, unusedDirPath=outputDataset + '_unused', mode="main")
+
+    recreateInfo = {"mode": "inflammation", "output_dataset": outputDataset,
+                    "clean_before_start": cleanBeforeStart, "image_format": imageFormat,
+                    "division_size": divisionSize, "min_overlap_part": separate, "val_dataset": []}
+    if separate == "div":
+        # Dividing dataset
+        dD.divideDataset("temp_" + outputDataset, outputDataset, squareSideLength=divisionSize,
+                         min_overlap_part=overlap, verbose=1)
+        infoNephrologyDataset(outputDataset, baseClass=base_class)
+
+        # # If you want to keep all cortex files comment dW.cleanCortexDir() lines
+        # # If you want to check them and then delete them, comment these lines too and after checking use them
+        # # dW.cleanCortexDir(tempDataset)
+        # # dW.cleanCortexDir(mainDataset)
+
+        # Removing unusable images by moving them into a specific directory
+        sortImages(outputDataset, unusedDirPath=outputDataset + '_unused')
+        # Taking some images from the main dataset to make the validation dataset
+        recreateInfo["val_dataset"] = createValDataset(outputDataset, rename=True, recreateInfo=recreateValList)
+    else:  # To avoid having divisions of same image to be dispatched in main and validation dataset
+        # Removing unusable images by moving them into a specific directory
+        if separate == "patient":
+            recreateInfo["val_dataset"] = createValDatasetByPeople(rawDataset=rawDataset,
+                                                                   datasetPath="temp_" + outputDataset,
+                                                                   valDatasetPath='temp_' + outputDataset + '_val',
+                                                                   nbPatientBiopsie=7, nbPatientNephrectomy=3,
+                                                                   recreateInfo=recreateValList)
+        else:
+            # Taking some images from the main dataset to make the validation dataset
+            recreateInfo["val_dataset"] = createValDataset("temp_" + outputDataset,
+                                                           valDatasetPath='temp_' + outputDataset + '_val',
+                                                           rename=False, recreateInfo=recreateValList)
+
+        # Dividing the main dataset after having separated images for the validation dataset
+        # then removing unusable divisions
+        dD.divideDataset("temp_" + outputDataset, outputDataset + '_train', squareSideLength=divisionSize,
+                         min_overlap_part=overlap, verbose=1)
+        sortImages(outputDataset + '_train', unusedDirPath=outputDataset + '_unused')
+
+        # Same thing with the validation dataset directly
+        dD.divideDataset('temp_' + outputDataset + '_val', outputDataset + '_val', squareSideLength=divisionSize,
+                         min_overlap_part=overlap, verbose=1)
+        sortImages(outputDataset + '_val', unusedDirPath=outputDataset + '_unused')
+
+    infoNephrologyDataset(outputDataset + '_train', baseClass=base_class)
+    infoNephrologyDataset(outputDataset + '_val', baseClass=base_class)
+    if recreateValList is None or len(recreateValList) == 0:
+        with open(f"dataset_{formatDate()}.json", 'w') as recreateFile:
+            json.dump(recreateInfo, recreateFile, indent="\t")
+    print("\nDataset made, nothing left to do")
+
+
 def regenerateDataset(rawDataset, recreateFilePath, adapter: AnnotationAdapter = None):
     with open(recreateFilePath, 'r') as recreateFile:
         recreateInfo = json.load(recreateFile)
@@ -588,5 +678,12 @@ def regenerateDataset(rawDataset, recreateFilePath, adapter: AnnotationAdapter =
                              imageFormat=recreateInfo["image_format"], divisionSize=recreateInfo["division_size"],
                              overlap=recreateInfo["min_overlap_part"], separate=recreateInfo["separate"],
                              recreateValList=recreateInfo["val_dataset"], adapter=adapter)
+    elif recreateInfo["mode"] == "inflammation":
+        generateInflammationDataset(rawDataset=rawDataset, outputDataset=recreateInfo["output_dataset"],
+                                    cleanBeforeStart=recreateInfo["clean_before_start"],
+                                    imageFormat=recreateInfo["image_format"],
+                                    divisionSize=recreateInfo["division_size"],
+                                    overlap=recreateInfo["min_overlap_part"], separate=recreateInfo["separate"],
+                                    recreateValList=recreateInfo["val_dataset"], adapter=adapter)
     else:
         raise NotImplementedError(f"{recreateInfo['mode']} dataset mode not available")

@@ -46,6 +46,12 @@ MESTC_GLOM_CLASSES = [
     {"id": 7, "name": "artefact", "color": "#ffaa7f", "ignore": False}
 ]
 
+INFLAMMATION_CLASSES = [
+    {"id": 0, "name": "Background", "color": "", "ignore": True},
+    {"id": 1, "name": "inflammation", "color": "#ffff00", "ignore": False},
+    {"id": 2, "name": "cpt", "color": "#64FE2E", "ignore": False}
+]
+
 
 def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 'dataset_train',
                maskClass: str = 'masks', imageFormat="jpg", config: Config = None):
@@ -62,7 +68,7 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
     :return: None
     """
     # Defining path where the result image will be stored and creating dir if not exists
-    maskClass = maskClass.replace(" ", "_")
+    maskClass = maskClass.lower().strip(' ').replace(" ", "_")
     output_directory = os.path.join(datasetName, imgName, maskClass)
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
@@ -201,8 +207,8 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
             maskClass = datasetClass
             if maskClass == "None":
                 print(f" /!\\ {imgName} : None class present /!\\ ")
-            if resize is not None:
-                resizedMasks = resizeMasks(maskPoints, xRatio, yRatio)
+        if resize is not None:
+            resizedMasks = resizeMasks(maskPoints, xRatio, yRatio)
         createMask(imgName, shape, noMask, maskPoints if resize is None else resizedMasks, datasetName, maskClass,
                    imageFormat, config=config)
 
@@ -266,20 +272,25 @@ def cleanCortexDir(datasetPath: str):
                             os.remove(maskPath)
 
 
-def cleanImage(datasetPath: str, imageName: str, cleaningClass: str, imageFormat="jpg", cleanMasks=False,
-               minAreaThreshold=300, config: Config = None):
+def cleanImage(datasetPath: str, imageName: str, cleaningClasses: str, excludeClasses=None, imageFormat="jpg",
+               cleanMasks=False, minAreaThreshold=300, config: Config = None):
     """
     Creating the full_images directory and cleaning the base image by removing non-cleaning-class areas
+    :param excludeClasses:
     :param datasetPath: the dataset that have been wrapped
     :param imageName: the image you want its cortex to be fused
-    :param cleaningClass: the class to use to clean the image
+    :param cleaningClasses: the class to use to clean the image
     :param cleanMasks: if true, will clean masks based on the cleaning-class-mask
     :param imageFormat: the image format to use to save the image
     :param minAreaThreshold: remove mask if its area is smaller than this threshold
     :param config: config object
     :return: None
     """
-    assert cleaningClass is not None and cleaningClass != "", "Cleaning class is required."
+    assert cleaningClasses is not None and cleaningClasses != "", "Cleaning class is required."
+    if type(cleaningClasses) is str:
+        cleaningClasses = [cleaningClasses]
+    if type(excludeClasses) is str:
+        excludeClasses = [excludeClasses]
 
     # Getting the base image
     path = os.path.join(datasetPath, imageName, '{folder}', f"{imageName}.{imageFormat}")
@@ -288,20 +299,15 @@ def cleanImage(datasetPath: str, imageName: str, cleaningClass: str, imageFormat
     image = cv2.imread(imagePath)
 
     # Fusing all the cleaning-class masks and then cleaning the image and if needed the masks
-    cleaningClassDirPath = os.path.join(datasetPath, imageName, cleaningClass)
-    cleaningClassExists = os.path.exists(cleaningClassDirPath)
-    if cleaningClassExists and len(os.listdir(cleaningClassDirPath)) > 0:
-        first = True
-        for cleaningClassMaskName in os.listdir(cleaningClassDirPath):
-            cleaningClassMaskPath = os.path.join(cleaningClassDirPath, cleaningClassMaskName)
-            if first:
-                cleaningClassMasks = loadSameResImage(cleaningClassMaskPath, image.shape)
-                first = False
-            else:  # Adding additional masks
-                temp = loadSameResImage(cleaningClassMaskPath, image.shape)
-                cleaningClassMasks = cv2.bitwise_or(cleaningClassMasks, temp)
-                del temp
+    cleaningClassMasks = gatherClassesMasks(datasetPath, imageName, image.shape, cleaningClasses)
+    excludedClassMasks = gatherClassesMasks(datasetPath, imageName, image.shape, excludeClasses)
 
+    if cleaningClassMasks is not None or excludedClassMasks is not None:
+        if cleaningClassMasks is None:
+            cleaningClassMasks = np.ones_like(image)[..., 0] * 255
+        if excludedClassMasks is not None:
+            excludedClassMasks = cv2.bitwise_not(excludedClassMasks)
+            cleaningClassMasks = cv2.bitwise_and(cleaningClassMasks, excludedClassMasks)
         # Copying the full image into the correct directory
         os.makedirs(os.path.dirname(fullImagePath), exist_ok=True)
         shutil.copy2(imagePath, fullImagePath)
@@ -316,7 +322,10 @@ def cleanImage(datasetPath: str, imageName: str, cleaningClass: str, imageFormat
             for folder in os.listdir(os.path.join(datasetPath, imageName)):
                 folderPath = os.path.join(datasetPath, imageName, folder)
                 # Checking only for the other classes folder
-                if os.path.isdir(folderPath) and folder not in [cleaningClass, "images", "full_images"]:
+                skipClasses = ["images", "full_images"]
+                skipClasses.extend(cleaningClasses)
+                skipClasses.extend(excludeClasses)
+                if os.path.isdir(folderPath) and folder not in skipClasses:
                     # For each mask of the folder
                     for maskImageFileName in os.listdir(folderPath):
                         maskImagePath = os.path.join(folderPath, maskImageFileName)
@@ -365,6 +374,27 @@ def cleanImage(datasetPath: str, imageName: str, cleaningClass: str, imageFormat
             for folderPath in folderToRemove:
                 shutil.rmtree(folderPath, ignore_errors=True)
             pass
+
+
+def gatherClassesMasks(datasetPath, imageName, img_shape, gatheredClasses):
+    if type(gatheredClasses) is str:
+        gatheredClasses = [gatheredClasses]
+    gatheredMaskFound = False
+    gatheredClassMasks = None
+    for gatheredClass_ in gatheredClasses:
+        gatheredClassDirPath = os.path.join(datasetPath, imageName, gatheredClass_)
+        gatheredClassExists = os.path.exists(gatheredClassDirPath)
+        if gatheredClassExists and len(os.listdir(gatheredClassDirPath)) > 0:
+            for gatheredClassMaskName in os.listdir(gatheredClassDirPath):
+                gatheredClassMaskPath = os.path.join(gatheredClassDirPath, gatheredClassMaskName)
+                if not gatheredMaskFound:
+                    gatheredClassMasks = loadSameResImage(gatheredClassMaskPath, img_shape)
+                    gatheredMaskFound = True
+                else:  # Adding additional masks
+                    temp = loadSameResImage(gatheredClassMaskPath, img_shape)
+                    gatheredClassMasks = cv2.bitwise_or(gatheredClassMasks, temp)
+                    del temp
+    return gatheredClassMasks
 
 
 def loadSameResImage(imagePath, imageShape):
@@ -491,8 +521,10 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
             classesInfo = NEPHRO_CLASSES
         elif mode == "cortex":
             classesInfo = CORTICES_CLASSES
-        elif mode == "mestc_glom":
+        elif mode == "mest_glom":
             classesInfo = MESTC_GLOM_CLASSES
+        elif mode == "inflammation":
+            classesInfo = INFLAMMATION_CLASSES
     # Creating masks for any image which has all required files and displaying progress
     start_time = time()
     for index, file in enumerate(images):
@@ -502,7 +534,10 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
                            resize=resize, imageFormat=imageFormat)
         if mode == "main":
             fuseClassMasks(datasetName, file, "cortex", deleteBaseMasks=deleteBaseMasks, silent=True)
-            cleanImage(datasetName, file, cleaningClass='cortex')
+            cleanImage(datasetName, file, cleaningClasses='cortex')
         elif mode == "mest_glom":
-            cleanImage(datasetName, file, cleaningClass='nsg', cleanMasks=True)
+            cleanImage(datasetName, file, cleaningClasses='nsg', cleanMasks=True)
+        elif mode == "inflammation":
+            cleanImage(datasetName, file, cleaningClasses='cortex', cleanMasks=True,
+                       excludeClasses=[c["name"] for c in NEPHRO_CLASSES if not c["ignore"]])
     progressBar(1, 1, prefix='Creating masks', suffix=f"{formatTime(round(time() - start_time))}" + " " * 25)
