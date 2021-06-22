@@ -601,9 +601,9 @@ def generateInflammationDataset(rawDataset: str, outputDataset="nephrology_infla
     # Sorting images to keep those that can be used to train cortex
     sortImages(datasetPath="temp_" + outputDataset, unusedDirPath=outputDataset + '_unused', mode="main")
 
-    recreateInfo = {"mode": "inflammation", "output_dataset": outputDataset,
-                    "clean_before_start": cleanBeforeStart, "image_format": imageFormat,
-                    "division_size": divisionSize, "min_overlap_part": separate, "val_dataset": []}
+    recreateInfo = {"mode": "inflammation", "output_dataset": outputDataset, "clean_before_start": cleanBeforeStart,
+                    "image_format": imageFormat, "division_size": divisionSize, "min_overlap_part": overlap,
+                    "separate": separate, "val_dataset": []}
     if separate == "div":
         # Dividing dataset
         dD.divideDataset("temp_" + outputDataset, outputDataset, squareSideLength=divisionSize,
