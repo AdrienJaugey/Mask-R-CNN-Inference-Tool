@@ -123,6 +123,21 @@ def format_number(num, maxLength=None):
 
 def sort_dict(data: dict, key_type=None, reverse=False):
     """
+    Returns a sorted dictionary by keys
+    :param data: the input dictionary
+    :param key_type: type of key (if keys are not str for example)
+    :param reverse: sort in reverse order
+    :return: sorted dictionary
+    """
+    res = {}
+    og_type = type(list(data.keys())[0])
+    keys = [key if key_type is None else key_type(key) for key in data.keys()]
+    keys.sort(reverse=reverse)
+    for key in keys:
+        res[key] = data[og_type(key)]
+    return res
+
+
 def combination(setSize, combinationSize):
     """
     Computes the number of k-combinations in a set
