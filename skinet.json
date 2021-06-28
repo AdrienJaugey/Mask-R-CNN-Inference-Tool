@@ -10,6 +10,7 @@
                     "name": "cortex",
                     "display_name": "Cortex",
                     "asap_color": "#ffaa00",
+                    "priority_level": 1,
                     "color": [255, 0, 0]
                 },
                 {
@@ -71,6 +72,7 @@
                     "name": "nsg",
                     "display_name": "NSG",
                     "asap_color": "#55007f",
+                    "contains": ["nsg_complet", "nsg_partiel"],
                     "color": [204, 255, 0]
                 },
                 {
@@ -101,12 +103,14 @@
                     "name": "vaisseau",
                     "display_name": "Artery",
                     "asap_color": "#55ff7f",
+                    "contains": ["media", "intima"],
                     "color": [51, 0, 255]
                 },
                 {
                     "name": "media",
                     "display_name": "External Elastic Lamina",
                     "asap_color": "#aa5500",
+                    "contains": ["intima"],
                     "color": [108, 10, 195]
                 },
                 {

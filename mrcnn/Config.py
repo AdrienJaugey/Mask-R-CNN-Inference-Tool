@@ -1,3 +1,10 @@
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
 import json
 from abc import abstractmethod
 from enum import Enum
@@ -23,6 +30,7 @@ class Config:
             self.__CONFIG_DICT__ = config.copy()
         self.__init_modes__()
         self.__init_classes_info__()
+        self.__init_classes_hierarchy__()
         self.__CURRENT_MODE__ = mode
         self.__FORCE_FULL_MASKS = forceFullSizeMasks
 
@@ -116,7 +124,7 @@ class Config:
             "previous": self.get_previous_mode,
             "next": self.get_next_mode
         }
-        mode_ = self.__CURRENT_MODE__ if mode is None else mode
+        mode_ = self.__CURRENT_MODE__ if mode is None or mode == "current" else mode
         if mode_ in special_modes:
             mode_ = special_modes[mode_]()
         return self.__CONFIG_DICT__['modes'].get(mode_, None)
@@ -134,6 +142,15 @@ class Config:
         :return: name of the first mode as str
         """
         return self.__CONFIG_DICT__.get('first_mode', self.get_mode_list()[0])
+
+    def get_mode_name(self, mode=None):
+        """
+        Returns the name of the given/current mode if it exists
+        :return: name of the given/current mode or None
+        """
+        mode_config = self.get_mode_config(mode)
+        if mode_config is not None:
+            return mode_config['name']
 
     def __init_classes_info__(self):
         """
@@ -189,6 +206,81 @@ class Config:
             if display and 'display_name' in selected_class:
                 return selected_class['display_name']
             return selected_class['name']
+
+    def __init_classes_hierarchy__(self):
+        """
+        Initializes classes hierarchy of each mode
+        :return: None
+        """
+        for mode in self.get_mode_list():
+            isTherePriority = max([c.get('priority_level', 0) for c in self.get_classes_info(mode)]) > 0
+            isThereContains = any(['contains' in c for c in self.get_classes_info(mode)])
+            hierarchy = None
+            if isThereContains and not isTherePriority:
+                hierarchy = [
+                    ({c['id']: [self.get_class_id(c2, mode) for c2 in c['contains']]} if 'contains' in c else c['id'])
+                    for c in self.get_classes_info(mode)
+                ]
+                if not hierarchy:
+                    hierarchy = None
+            elif isTherePriority and not isThereContains:
+                lvl = {}
+                for c in self.get_classes_info(mode):
+                    priority = c.get('priority_level', 0)
+                    if priority not in lvl:
+                        lvl[priority] = []
+                    lvl[priority].append(c['id'])
+                keys = list(lvl.keys())
+                keys.sort(reverse=True)
+                first = True
+                for key in keys:
+                    if first:
+                        first = False
+                        hierarchy = lvl[key]
+                    else:
+                        if len(lvl[key]) == 1:
+                            hierarchy = {lvl[key][0]: hierarchy}
+                        else:
+                            lvl[key][-1] = {lvl[key][-1]: hierarchy}
+                            hierarchy = lvl[key]
+            mode_config = self.get_mode_config(mode)
+            mode_config['classes_hierarchy'] = hierarchy
+
+    def get_classes_hierarchy(self, mode: str = None):
+        """
+        Returns class_hierarchy of the given/current mode
+        :param mode: If given, specifies the mode for which you want the info. Special modes: first, previous, next
+        :return: classes hierarchy of the given/current mode
+        """
+        mode_config = self.get_mode_config(mode)
+        if mode_config is not None:
+            return mode_config.get('classes_hierarchy', None)
+
+    def has_class_name(self, class_name: str, mode: str = None):
+        """
+        Returns True if given/current mode has a class named class_name
+        :param class_name: name of the class
+        :param mode: If given, specifies the mode for which you want the info. Special modes: first, previous, next
+        :return: True if class is from this mode
+        """
+        return self.get_class_id(class_name, mode) != -1
+
+    def get_class_mode(self, class_name: str, only_in_previous: str = None):
+        """
+        Returns the modes containing this class
+        :param class_name: name of the class
+        :param only_in_previous: If given, specifies the mode for which you want the info. Special modes: first,
+                                 previous, current, next
+        :return: list of modes containing the class
+        """
+        if only_in_previous is not None:
+            res = []
+            while only_in_previous is not None:
+                if self.has_class_name(class_name, only_in_previous):
+                    res.append(self.get_mode_name(only_in_previous))
+                only_in_previous = self.get_previous_mode(only_in_previous)
+            return res
+        return [mode for mode in self.get_mode_list() if self.has_class_name(class_name, mode)]
 
     def get_param(self, mode: str = None):
         """
@@ -306,4 +398,3 @@ class DynamicMethod(Enum):
     def method(self, results=None, config: Config = None, args=None,
                dynargs=None, display=True, verbose=0):
         pass
-

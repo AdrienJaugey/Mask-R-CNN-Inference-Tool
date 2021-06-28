@@ -1,3 +1,11 @@
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+Dataset tools
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
 import os
 import numpy as np
 from skimage.io import imread
@@ -9,11 +17,11 @@ from mrcnn.Config import Config
 
 class CustomDataset(utils.Dataset):
 
-    def __init__(self, dataset_id, image_info, config: Config, enable_occlusion=False):
+    def __init__(self, dataset_id, image_info, config: Config, previous_mode=False, enable_occlusion=False):
         super().__init__()
         self.__ID = dataset_id
         self.__CONFIG = config
-        self.__CUSTOM_CLASS_NAMES = [c['name'] for c in config.get_classes_info()]
+        self.__CUSTOM_CLASS_NAMES = [c['name'] for c in config.get_classes_info("previous" if previous_mode else None)]
         self.__IMAGE_INFO = image_info
         self.__ENABLE_OCCLUSION = enable_occlusion
 

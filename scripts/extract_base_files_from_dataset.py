@@ -1,5 +1,12 @@
 import os
 import shutil
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
 import argparse
 
 

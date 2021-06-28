@@ -1,5 +1,13 @@
-import json
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
+import sys
 import os
+import json
 import re
 import traceback
 import shutil
@@ -99,7 +107,7 @@ def listAvailableImage(dirPath: str):
     return image
 
 
-class NephrologyInferenceModel:
+class InferenceTool:
 
     def __init__(self, configPath: str, low_memory=False):
         self.__STEP = "init"
@@ -124,8 +132,8 @@ class NephrologyInferenceModel:
         self.__RESIZE = None
 
         self.__CONFUSION_MATRIX = None
-        self.__APs = None
 
+        self.__BASE = None
         self.__PREVIOUS_RES = None
 
     def load(self, mode: str, forceFullSizeMasks=False, forceModelPath=None):
@@ -174,10 +182,8 @@ class NephrologyInferenceModel:
 
         # Configurations
         self.__CONFUSION_MATRIX = {'pixel': np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64),
-                                   'mask': np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64)}
-        self.__APs = []
-
-        mode_config = self.__CONFIG.get_mode_config()
+                                   'mask': np.zeros((self.__NB_CLASS + 1, self.__NB_CLASS + 1), dtype=np.int64),
+                                   'count': 0}
         print()
 
     def __prepare_image__(self, imagePath, results_path, chainMode=False, silent=False):
@@ -229,7 +235,8 @@ class NephrologyInferenceModel:
             imageInfo['HEIGHT'] = int(height)
             imageInfo['WIDTH'] = int(width)
 
-            if self.__CONFIG.get_param().get('base_class', None) is not None:
+            if self.__CONFIG.get_param().get('base_class', None) is not None \
+                    and self.__CONFIG.get_previous_mode() is not None:
                 imageInfo['BASE_CLASS'] = self.__CONFIG.get_param()['base_class']
 
             if 'BASE_CLASS' in imageInfo:
@@ -272,77 +279,116 @@ class NephrologyInferenceModel:
                 for ext in AnnotationAdapter.ANNOTATION_FORMAT:
                     annotationExists = annotationExists or os.path.exists(os.path.join(imageInfo['DIR_PATH'],
                                                                                        imageInfo['NAME'] + '.' + ext))
-            if self.__CONFIG.get_param()['allow_empty_annotations']:
+            if self.__CONFIG.get_param().get('allow_empty_annotations', False):
                 imageInfo['HAS_ANNOTATION'] = annotationExists
 
-            if chainMode and 'BASE_CLASS' in imageInfo and self.__CONFIG.get_previous_mode() is not None:
-                baseClassId = self.__CONFIG.get_class_id(imageInfo['BASE_CLASS'], 'previous')
-                if self.__PREVIOUS_RES is not None and baseClassId in self.__PREVIOUS_RES['class_ids']:
-                    indices = np.arange(len(self.__PREVIOUS_RES['class_ids']))
-                    indices = indices[np.isin(self.__PREVIOUS_RES['class_ids'], [baseClassId])]
-                    if len(indices) > 0:
-                        temp = self.__CONFIG.get_mini_mask_shape('previous')
-                        previousModeUsedMiniMask = temp is not None and self.__PREVIOUS_RES['masks'].shape[:2] == temp
-                        previousResize = self.__CONFIG.get_param('previous').get('resize', None)
-                        fusedMask = np.zeros((height, width), dtype=np.uint8)
-                        for idx in indices:
-                            mask = self.__PREVIOUS_RES['masks'][:, :, idx].astype(np.uint8) * 255
-                            if previousModeUsedMiniMask:
-                                bbox = self.__PREVIOUS_RES['rois'][idx]
-                                if previousResize is not None:
-                                    mask = utils.expand_mask(bbox, mask, tuple(previousResize)).astype(np.uint8) * 255
-                                    mask = cv2.resize(mask, (width, height))
-                                else:
-                                    mask = utils.expand_mask(bbox, mask, (height, width)).astype(np.uint8) * 255
-                            elif previousResize:
-                                mask = cv2.resize(mask, (width, height))
-                            fusedMask = np.bitwise_or(fusedMask, mask)
-                        image = cv2.bitwise_and(fullImage, np.repeat(fusedMask[..., np.newaxis], 3, axis=2))
+            hasToExclude = self.__CONFIG.get_param().get('exclude_class', None) is not None
+            hasBase = hasExcluded = usingPreviousBase = False
+            fusedMask = fusedExcludedMask = None
+            if chainMode and ('BASE_CLASS' in imageInfo or hasToExclude):
+                if 'BASE_CLASS' in imageInfo:
+                    if self.__CONFIG.get_param().get('base_class', None) == \
+                            self.__CONFIG.get_param("previous").get('base_class', None):
+                        # If base class is the same as previous mode (no test on base_class is None, made previously)
+                        # TODO support previous BASE masks with centered mode (i.e. storing each individual masks)
+                        usingPreviousBase = True
+                        fusedMask = self.__BASE['masks']
+                        hasBase = True
+                    else:
+                        baseClassId = self.__CONFIG.get_class_id(imageInfo['BASE_CLASS'], 'previous')
+                        if self.__PREVIOUS_RES is not None and baseClassId in self.__PREVIOUS_RES['class_ids']:
+                            fusedMask, hasBase = self.__gather_masks__(baseClassId, height, width)
 
-                        crop_to_base_class = self.__CONFIG.get_param().get('crop_to_base_class', False)
-                        if crop_to_base_class:
-                            fusedBbox = utils.extract_bboxes(fusedMask)
-                            image = image[fusedBbox[0]:fusedBbox[2], fusedBbox[1]:fusedBbox[3], :]
-                            fullImage = fullImage[fusedBbox[0]:fusedBbox[2], fusedBbox[1]:fusedBbox[3], :]
-                            imsave(imageInfo['PATH'], fullImage)
-                            height, width = image.shape[:2]
-                            offset = np.array([fusedBbox[0], fusedBbox[1]] * 2)
+                if hasToExclude:
+                    classesToExclude = self.__CONFIG.get_param()['exclude_class']
+                    if classesToExclude == "all":
+                        classesToExclude = [c["id"] for c in self.__CONFIG.get_classes_info("previous")]
+                    else:
+                        if type(classesToExclude) in [str, int]:
+                            classesToExclude = [classesToExclude]
+                        classesToExclude = [self.__CONFIG.get_class_id('previous', c) for c in classesToExclude
+                                            if self.__CONFIG.get_class_id('previous', c) != -1]
+                    fusedExcludedMask, hasExcluded = self.__gather_masks__(classesToExclude, height, width)
+                    if hasExcluded:
+                        fusedExcludedMask = cv2.bitwise_not(fusedExcludedMask)
 
-                        # If RoI mode is 'centered', inference will be done on base-class masks
-                        if roi_mode == 'centered':
-                            if self.__CONFIG.get_param()['fuse_base_class']:
-                                if crop_to_base_class:
-                                    imageInfo['ROI_COORDINATES'] = fusedBbox - offset
-                                else:
-                                    imageInfo['ROI_COORDINATES'] = utils.extract_bboxes(fusedMask)
-                            else:
-                                imageInfo['ROI_COORDINATES'] = self.__PREVIOUS_RES['rois'][indices]
-                                if crop_to_base_class:
-                                    imageInfo['ROI_COORDINATES'] -= offset
-                            for idx, bbox in enumerate(imageInfo['ROI_COORDINATES']):
-                                imageInfo['ROI_COORDINATES'][idx] = dI.center_mask(bbox, (height, width),
-                                                                                   self.__DIVISION_SIZE, verbose=0)
-                            imageInfo['NB_DIV'] = len(imageInfo['ROI_COORDINATES'])
+                if hasBase or hasExcluded:
+                    if hasBase and hasExcluded:
+                        fusedMask = cv2.bitwise_and(fusedMask, fusedExcludedMask)
+                    elif hasExcluded:
+                        fusedMask = fusedExcludedMask
+                    image = cv2.bitwise_and(fullImage, np.repeat(fusedMask[..., np.newaxis], 3, axis=2))
+                else:
+                    if results_path is not None:
+                        shutil.rmtree(image_results_path, ignore_errors=True)
+                    return (None,) * 4
 
-                        # Getting count and area of base-class masks
+                if hasBase:
+                    crop_to_base_class = self.__CONFIG.get_param().get('crop_to_base_class', False)
+                    if crop_to_base_class:
+                        fusedBbox = utils.extract_bboxes(fusedMask)
+                        image = image[fusedBbox[0]:fusedBbox[2], fusedBbox[1]:fusedBbox[3], :]
+                        fullImage = fullImage[fusedBbox[0]:fusedBbox[2], fusedBbox[1]:fusedBbox[3], :]
+                        imsave(imageInfo['PATH'], fullImage)
+                        height, width = image.shape[:2]
+                        offset = np.array([fusedBbox[0], fusedBbox[1]] * 2)
+                        if self.__CONFIG.has_to_return() and "base" in self.__CONFIG.get_return_param():
+                            # Save base mask for next mode if needed
+                            self.__BASE = {
+                                'rois': np.array([0, 0, height, width], dtype=np.int32),
+                                'masks': fusedMask[fusedBbox[0]:fusedBbox[2], fusedBbox[1]:fusedBbox[3]]
+                            }
+                    elif self.__CONFIG.has_to_return() and "base" in self.__CONFIG.get_return_param():
+                        self.__BASE = {
+                            'rois': utils.extract_bboxes(fusedMask),
+                            'masks': fusedMask
+                        }
+
+                    # If RoI mode is 'centered', inference will be done on base-class masks
+                    if roi_mode == 'centered':
+                        if usingPreviousBase:
+                            raise NotImplementedError('Centered mode and same base as previous '
+                                                      'mode is not currently supported')
                         if self.__CONFIG.get_param()['fuse_base_class']:
-                            imageInfo.update({'BASE_AREA': dD.getBWCount(fusedMask)[1], 'BASE_COUNT': 1})
+                            if crop_to_base_class:
+                                imageInfo['ROI_COORDINATES'] = fusedBbox - offset
+                            else:
+                                imageInfo['ROI_COORDINATES'] = utils.extract_bboxes(fusedMask)
                         else:
-                            for idx in indices:
-                                mask = self.__PREVIOUS_RES['masks'][..., idx]
-                                if previousModeUsedMiniMask:
-                                    bbox = self.__PREVIOUS_RES['rois'][idx]
-                                    if previousResize is not None:
-                                        mask = utils.expand_mask(bbox, mask, tuple(previousResize))
-                                        mask = cv2.resize(mask, (imageInfo['HEIGHT'], imageInfo['WIDTH']))
-                                    else:
-                                        mask = utils.expand_mask(bbox, mask, (imageInfo['HEIGHT'], imageInfo['WIDTH']))
-                                imageInfo['BASE_AREA'] += dD.getBWCount(mask)[1]
-                                if not self.__CONFIG.get_param()['fuse_base_class']:
-                                    imageInfo['BASE_COUNT'] += 1
-                                del mask
-                        imageInfo['HEIGHT'] = int(height)
-                        imageInfo['WIDTH'] = int(width)
+                            indices = np.arange(len(self.__PREVIOUS_RES['class_ids']))
+                            indices = indices[np.isin(self.__PREVIOUS_RES['class_ids'], [baseClassId])]
+                            imageInfo['ROI_COORDINATES'] = self.__PREVIOUS_RES['rois'][indices]
+                            if crop_to_base_class:
+                                imageInfo['ROI_COORDINATES'] -= offset
+                        for idx, bbox in enumerate(imageInfo['ROI_COORDINATES']):
+                            imageInfo['ROI_COORDINATES'][idx] = dI.center_mask(bbox, (height, width),
+                                                                               self.__DIVISION_SIZE, verbose=0)
+                        imageInfo['NB_DIV'] = len(imageInfo['ROI_COORDINATES'])
+
+                    # Getting count and area of base-class masks
+                    if self.__CONFIG.get_param()['fuse_base_class'] or usingPreviousBase:
+                        imageInfo.update({'BASE_AREA': dD.getBWCount(fusedMask)[1], 'BASE_COUNT': 1})
+                    else:
+                        indices = np.arange(len(self.__PREVIOUS_RES['class_ids']))
+                        indices = indices[np.isin(self.__PREVIOUS_RES['class_ids'], [baseClassId])]
+                        for idx in indices:
+                            mask = self.__PREVIOUS_RES['masks'][..., idx]
+                            if self.__CONFIG.get_mini_mask_shape('previous') is not None and \
+                                    self.__PREVIOUS_RES['masks'].shape[:2] == \
+                                    self.__CONFIG.get_mini_mask_shape('previous'):
+                                bbox = self.__PREVIOUS_RES['rois'][idx]
+                                if self.__CONFIG.get_param('previous').get('resize', None) is not None:
+                                    mask = utils.expand_mask(
+                                        bbox, mask, tuple(self.__CONFIG.get_param('previous')['resize'])
+                                    )
+                                    mask = cv2.resize(mask, (imageInfo['HEIGHT'], imageInfo['WIDTH']))
+                                else:
+                                    mask = utils.expand_mask(bbox, mask, (imageInfo['HEIGHT'], imageInfo['WIDTH']))
+                            imageInfo['BASE_AREA'] += dD.getBWCount(mask)[1]
+                            imageInfo['BASE_COUNT'] += 1
+                            del mask
+                    imageInfo['HEIGHT'] = int(height)
+                    imageInfo['WIDTH'] = int(width)
             elif annotationExists:
                 if not silent:
                     print(" - Annotation file found: creating dataset files and cleaning image if possible",
@@ -356,8 +402,17 @@ class NephrologyInferenceModel:
                     if self.__CONFIG.get_param()['fuse_base_class']:
                         dW.fuseClassMasks('data', imageInfo['NAME'], imageInfo['BASE_CLASS'],
                                           imageFormat=imageInfo['IMAGE_FORMAT'], deleteBaseMasks=True, silent=True)
-                    dW.cleanImage('data', imageInfo['NAME'], cleaningClass=imageInfo['BASE_CLASS'],
-                                  cleanMasks=False, imageFormat=imageInfo['IMAGE_FORMAT'])
+                    if hasToExclude:
+                        classesToExclude = self.__CONFIG.get_param()['exclude_class']
+                        if classesToExclude == "all":
+                            classesToExclude = [c["name"] for c in self.__CONFIG.get_classes_info("previous")]
+                        elif type(classesToExclude) is str:
+                            classesToExclude = [classesToExclude]
+                    else:
+                        classesToExclude = None
+                    dW.cleanImage('data', imageInfo['NAME'], cleaningClasses=imageInfo['BASE_CLASS'],
+                                  excludeClasses=classesToExclude, imageFormat=imageInfo['IMAGE_FORMAT'],
+                                  cleanMasks=False)
                     maskDirs = os.listdir(os.path.join('data', imageInfo['NAME']))
                     # If RoI mode is 'centered', inference will be done on base-class masks
                     if roi_mode == 'centered':
@@ -397,7 +452,7 @@ class NephrologyInferenceModel:
                     imageInfo['HAS_ANNOTATION'] = any([d in self.__CUSTOM_CLASS_NAMES for d in maskDirs])
 
                 if imageInfo['HAS_ANNOTATION'] and not silent:
-                    print("    - AP and confusion matrix will be computed")
+                    print("    - Confusion matrix will be computed")
 
             if roi_mode == "divided" or (roi_mode == 'centered' and 'ROI_COORDINATES' not in imageInfo):
                 imageInfo['X_STARTS'] = dD.computeStartsOfInterval(
@@ -419,6 +474,33 @@ class NephrologyInferenceModel:
 
         return image, fullImage, imageInfo, image_results_path
 
+    def __gather_masks__(self, baseClassId, height, width):
+        if type(baseClassId) is list:
+            baseClassId_ = baseClassId
+        else:
+            baseClassId_ = [baseClassId]
+        indices = np.arange(len(self.__PREVIOUS_RES['class_ids']))
+        indices = indices[np.isin(self.__PREVIOUS_RES['class_ids'], baseClassId_)]
+        fusedMask = None
+        if len(indices) > 0:
+            temp = self.__CONFIG.get_mini_mask_shape('previous')
+            previousModeUsedMiniMask = temp is not None and self.__PREVIOUS_RES['masks'].shape[:2] == temp
+            previousResize = self.__CONFIG.get_param('previous').get('resize', None)
+            fusedMask = np.zeros((height, width), dtype=np.uint8)
+            for idx in indices:
+                mask = self.__PREVIOUS_RES['masks'][:, :, idx].astype(np.uint8) * 255
+                if previousModeUsedMiniMask:
+                    bbox = self.__PREVIOUS_RES['rois'][idx]
+                    if previousResize is not None:
+                        mask = utils.expand_mask(bbox, mask, tuple(previousResize)).astype(np.uint8) * 255
+                        mask = cv2.resize(mask, (width, height))
+                    else:
+                        mask = utils.expand_mask(bbox, mask, (height, width)).astype(np.uint8) * 255
+                elif previousResize:
+                    mask = cv2.resize(mask, (width, height))
+                fusedMask = np.bitwise_or(fusedMask, mask)
+        return fusedMask, len(indices) > 0
+
     @staticmethod
     def __init_results_dir__(results_path):
         if results_path is None or results_path in ['', '.', './', "/"]:
@@ -433,11 +515,11 @@ class NephrologyInferenceModel:
         print(f"Results will be saved to {results_path}")
         logsPath = os.path.join(results_path, 'inference_data.csv')
         with open(logsPath, 'w') as results_log:
-            results_log.write(f"Image; Duration (s); Precision; Inference Mode\n")
+            results_log.write(f"Image; Duration (s); Inference Mode\n")
         return results_path, logsPath
 
-    def inference(self, images: list, results_path=None, chainMode=False, save_results=True, displayOnlyAP=False,
-                  saveDebugImages=False, chainModeForceFullSize=False, verbose=0):
+    def inference(self, images: list, results_path=None, chainMode=False, save_results=True, displayOnlyStats=False,
+                  saveDebugImages=False, chainModeForceFullSize=False, verbose=0, debugMode=False):
 
         if len(images) == 0:
             print("Images list is empty, no inference to perform.")
@@ -453,7 +535,7 @@ class NephrologyInferenceModel:
         if not chainMode:
             self.__CONFUSION_MATRIX['mask'].fill(0)
             self.__CONFUSION_MATRIX['pixel'].fill(0)
-            self.__APs.clear()
+            self.__CONFUSION_MATRIX['count'] = 0
         total_start_time = time()
         failedImages = []
         for img_idx, IMAGE_PATH in enumerate(images):
@@ -462,35 +544,37 @@ class NephrologyInferenceModel:
                 image_name = os.path.splitext(os.path.basename(IMAGE_PATH))[0]
                 if chainMode:
                     nextMode = self.__CONFIG.get_first_mode()
-                    while nextMode is not None:
+                    stay = True
+                    while nextMode is not None and stay:
                         print(f"[{nextMode} mode]")
                         self.load(nextMode, forceFullSizeMasks=chainModeForceFullSize)
                         nextMode = self.__CONFIG.get_next_mode()
-                        self.__process_image__(IMAGE_PATH, results_path, chainMode, saveDebugImages, save_results,
-                                               displayOnlyAP, logsPath, verbose=verbose)
+                        stay = self.__process_image__(IMAGE_PATH, results_path, chainMode, saveDebugImages,
+                                                      save_results, displayOnlyStats, logsPath, verbose=verbose)
+                        if not stay:
+                            print(f"{image_name} does not have required data (ex : needed class from previous mode is "
+                                  f"missing) to continue current and/or next inference modes processing.")
                 else:
                     self.__process_image__(IMAGE_PATH, results_path, chainMode, saveDebugImages, save_results,
-                                           displayOnlyAP, logsPath, verbose=verbose)
+                                           displayOnlyStats, logsPath, verbose=verbose)
             except Exception as e:
-                traceback.print_exception(type(e), e, e.__traceback__)
                 failedImages.append(os.path.basename(IMAGE_PATH))
-                print(f"\n/!\\ Failed {IMAGE_PATH} at \"{self.__STEP}\"\n")
+                try:
+                    with open(os.path.join(results_path, "failed.json"), 'w') as failedJsonFile:
+                        json.dump(failedImages, failedJsonFile, indent="\t")
+                except Exception as e:
+                    traceback.print_exception(type(e), e, e.__traceback__)
+                print(f"\n/!\\ Failed {IMAGE_PATH} at \"{self.__STEP}\"\n", flush=True)
+                if debugMode:
+                    raise e
+                else:
+                    traceback.print_exception(type(e), e, e.__traceback__)
+                    sys.stderr.flush()
                 if save_results and self.__STEP not in ["image preparation", "finalizing"]:
                     with open(logsPath, 'a') as results_log:
-                        results_log.write(f"{image_name}; -1; -1;FAILED ({self.__STEP});\n")
-        # Saving failed images list if not empty
-        if len(failedImages) > 0:
-            try:
-                with open(os.path.join(results_path, "failed.json"), 'w') as failedJsonFile:
-                    json.dump(failedImages, failedJsonFile, indent="\t")
-            except Exception as e:
-                traceback.print_exception(type(e), e, e.__traceback__)
-                print("Failed to save failed image(s) list. Following is the list itself :")
-                print(failedImages)
+                        results_log.write(f"{image_name}; -1;FAILED ({self.__STEP});\n")
 
-        if len(self.__APs) > 1:
-            mAP = np.mean(self.__APs)
-            print(f"Mean Average Precision is about {mAP:06.2%}")
+        if not chainMode and self.__CONFUSION_MATRIX['count'] > 1:
             cmap = plt.cm.get_cmap('hot')
             for mat_type in ['mask', 'pixel']:
                 for normalized in [False, True]:
@@ -503,29 +587,33 @@ class NephrologyInferenceModel:
                                                        show=False, normalize=normalized,
                                                        fileName=confusionMatrixFileName)
             plt.close('all')
-        else:
-            mAP = -1
         total_time = round(time() - total_start_time)
         print(f"All inferences done in {formatTime(total_time)}")
         if save_results:
             with open(logsPath, 'a') as results_log:
-                mapText = f"{mAP:4.3f}".replace(".", ",")
-                results_log.write(f"GLOBAL; {total_time}; {mapText}%;\n")
+                results_log.write(f"GLOBAL; {total_time};\n")
+
+        # Displaying failed images list if not empty
+        if len(failedImages) > 0:
+            print(f"\n{len(failedImages)} image{'s' if len(failedImages) > 1 else ''} failed :")
+            print("\n".join(failedImages))
 
     def __process_image__(self, image_path, results_path, chainMode=False, saveDebugImages=False, save_results=True,
-                          displayOnlyAP=False, logsPath=None, verbose=0):
+                          displayOnlyStats=False, logsPath=None, verbose=0):
         cortex_mode = self.__MODE == "cortex"
         allowSparse = self.__CONFIG.get_param().get('allow_sparse', True)
         start_time = time()
         self.__STEP = "image preparation"
         image, fullImage, imageInfo, image_results_path = self.__prepare_image__(image_path, results_path, chainMode,
-                                                                                 silent=displayOnlyAP)
+                                                                                 silent=displayOnlyStats)
+        if fullImage is None and imageInfo is None:
+            return False
 
         if imageInfo["HAS_ANNOTATION"]:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 ground_truth = self.__get_ground_truth__(image_results_path, fullImage,
-                                                         imageInfo, displayOnlyAP, save_results)
+                                                         imageInfo, displayOnlyStats, save_results)
             if save_results:
                 if self.__LOW_MEMORY:
                     del fullImage
@@ -533,7 +621,7 @@ class NephrologyInferenceModel:
                     fullImage = cv2.cvtColor(cv2.imread(imageInfo['PATH']), cv2.COLOR_BGR2RGB)
 
         debugIterator = -1
-        res = self.__inference__(image, fullImage, imageInfo, allowSparse, displayOnlyAP)
+        res = self.__inference__(image, fullImage, imageInfo, allowSparse, displayOnlyStats)
 
         """####################
         ### Post-Processing ###
@@ -552,7 +640,7 @@ class NephrologyInferenceModel:
                     dynamic_args[dynamic_arg] = self.__PREVIOUS_RES
                 elif dynamic_arg == 'base_res':
                     dynamic_args[dynamic_arg] = self.__get_ground_truth__(image_results_path, fullImage, imageInfo,
-                                                                          displayOnlyAP, False, base_gt=True)
+                                                                          displayOnlyStats, False, base_gt=True)
                 else:
                     raise NotImplementedError(f'Dynamic argument \'{dynamic_arg}\' is not implemented.')
             return dynamic_args
@@ -564,7 +652,7 @@ class NephrologyInferenceModel:
                 if saveDebugImages:
                     debugIterator += 1
                     self.__save_debug_image__(f"pre_{methodInfo['method']}", debugIterator, fullImage,
-                                              imageInfo, res, image_results_path, silent=displayOnlyAP)
+                                              imageInfo, res, image_results_path, silent=displayOnlyStats)
                     if self.__LOW_MEMORY:
                         del fullImage
                         gc.collect()
@@ -574,41 +662,29 @@ class NephrologyInferenceModel:
                 dynargs = gather_dynamic_args(ppMethod)
 
                 res = ppMethod.method(results=res, config=self.__CONFIG, args=methodInfo, dynargs=dynargs,
-                                      display=not displayOnlyAP, verbose=verbose)
+                                      display=not displayOnlyStats, verbose=verbose)
 
-        """#######################
-        ### Stats & Evaluation ###
-        #######################"""
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            if imageInfo["HAS_ANNOTATION"]:
-                # TODO : Build automatically per_mask_conf_hierarchy
-                per_mask_conf_hierarchy = None
-                per_pixel_conf_hierarchy = None
-                if self.__MODE == 'cortex':
-                    per_pixel_conf_hierarchy = [2, {3: 1}]  # Ensures that cortex overrides other classes
-                elif self.__MODE == 'main':
-                    if len(self.__CUSTOM_CLASS_NAMES) == 10:
-                        per_mask_conf_hierarchy = {3: [4, 5], 8: [9, 10], 10: [9]}
-                    per_pixel_conf_hierarchy = [1, 2, {3: [4, 5]}, 6, 7, {8: [{10: 9}, 9]}]
+        """###############
+        ### Evaluation ###
+        ###############"""
+        if imageInfo["HAS_ANNOTATION"]:
+            self.__compute_confusion_matrices__(image_results_path, imageInfo, res, ground_truth,
+                                                save_results, displayOnlyStats)
+            del ground_truth
 
-                AP = self.__compute_ap_and_conf_matrix__(image_results_path, imageInfo, res, ground_truth,
-                                                         per_mask_conf_hierarchy, per_pixel_conf_hierarchy,
-                                                         save_results, displayOnlyAP)
-                del ground_truth
-            if not cortex_mode:
-                self.__compute_statistics__(image_results_path, imageInfo, res, save_results, displayOnlyAP)
-            if self.__MODE == "mest_glom" and (chainMode or (not chainMode and imageInfo['HAS_ANNOTATION'])):
-                if chainMode:
-                    base_results = self.__PREVIOUS_RES
-                else:
-                    base_results = self.__get_ground_truth__(image_results_path, fullImage, imageInfo,
-                                                             displayOnlyAP, False, base_gt=True)
-                stats.mask_histo_per_base_mask(
-                    base_results=base_results,
-                    results=res, image_info=imageInfo, classes={"nsg": "all"}, box_epsilon=0, config=self.__CONFIG,
-                    test_masks=True, mask_threshold=0.9, display_per_base_mask=False, display_global=True,
-                    save=image_results_path if save_results else None, verbose=verbose
+        """###############
+        ### Statistics ###
+        ###############"""
+        res_stats = {}
+        if len(res['class_ids']) > 0:
+            for methodInfo in self.__CONFIG.get_statistics_method():
+                self.__STEP = f"statistics ({methodInfo['method']})"
+                ppMethod = stats.StatisticsMethod(methodInfo['method'])
+                dynargs = gather_dynamic_args(ppMethod)
+
+                res_stats[methodInfo['method']] = ppMethod.method(
+                    results=res, config=self.__CONFIG, args=methodInfo, dynargs=dynargs,
+                    display=not displayOnlyStats, verbose=verbose
                 )
 
         """#################
@@ -616,58 +692,68 @@ class NephrologyInferenceModel:
         #################"""
         if save_results:
             if cortex_mode:
-                self.__finalize_cortex_mode__(image_results_path, imageInfo, res, displayOnlyAP)
+                self.__finalize_cortex_mode__(image_results_path, imageInfo, res, displayOnlyStats)
             if len(res['class_ids']) > 0:
-                if not displayOnlyAP:
+                if not displayOnlyStats:
                     print(" - Applying masks on image")
                 self.__STEP = "saving predicted image"
                 self.__draw_masks__(image_results_path, fullImage, imageInfo, res,
                                     title=f"{imageInfo['NAME']} Predicted")
-            elif not displayOnlyAP:
+            elif not displayOnlyStats:
                 print(" - No mask to apply on image")
 
             # Annotations Extraction
             if self.__CONFIG.has_to_export():
-                self.__export_annotations__(image_results_path, imageInfo, res, displayOnlyAP)
+                self.__export_annotations__(image_results_path, imageInfo, res, displayOnlyStats)
 
         final_time = round(time() - start_time)
         print(f" Done in {formatTime(final_time)}\n")
+        plt.clf()
+        plt.close('all')
 
         """########################################
         ### Extraction of needed classes' masks ###
         ########################################"""
+        continueChain = True
         if chainMode:
             self.__PREVIOUS_RES = {}
             if self.__CONFIG.has_to_return():
-                indices = np.arange(len(res['class_ids']))
-                classIdsToGet = [self.__CLASS_2_ID[c] for c in self.__CONFIG.get_return_param()]
-                indices = indices[np.isin(res['class_ids'], classIdsToGet)]
-                for key in res:
-                    if key == 'masks':
-                        self.__PREVIOUS_RES[key] = res[key][..., indices]
+                return_param = self.__CONFIG.get_return_param()
+                if type(return_param) is str:
+                    return_param = [return_param]
+                if "base" in return_param:
+                    return_param.remove("base")
+                if len(return_param) > 0:
+                    if "all" in return_param:
+                        classIdsToGet = [c['id'] for c in self.__CLASSES_INFO]
                     else:
-                        self.__PREVIOUS_RES[key] = res[key][indices, ...]
+                        classIdsToGet = [self.__CLASS_2_ID[c] for c in return_param]
+                    indices = np.arange(len(res['class_ids']))
+                    indices = indices[np.isin(res['class_ids'], classIdsToGet)]
+                    if len(indices) == 0:
+                        continueChain = False
+                    else:
+                        for key in res:
+                            if key == 'masks':
+                                self.__PREVIOUS_RES[key] = res[key][..., indices]
+                            else:
+                                self.__PREVIOUS_RES[key] = res[key][indices, ...]
 
-        if not imageInfo['HAS_ANNOTATION']:
-            AP = -1
         self.__STEP = "finalizing"
         if save_results:
             with open(logsPath, 'a') as results_log:
-                apText = f"{AP:4.3f}".replace(".", ",")
-                results_log.write(f"{imageInfo['NAME']}; {final_time}; {apText}%; {self.__MODEL_PATH};\n")
+                results_log.write(f"{imageInfo['NAME']}; {final_time}; {self.__MODEL_PATH};\n")
         del res, imageInfo, fullImage
-        plt.clf()
-        plt.close('all')
         gc.collect()
-        return AP
+        return continueChain
 
-    def __inference__(self, image, fullImage, imageInfo, allowSparse, displayOnlyAP):
+    def __inference__(self, image, fullImage, imageInfo, allowSparse, displayOnlyStats):
         res = []
         total_px = self.__CONFIG.get_param()['roi_size'] ** 2
         skipped = 0
         skippedText = ""
         inference_start_time = time()
-        if not displayOnlyAP:
+        if not displayOnlyStats:
             progressBar(0, imageInfo["NB_DIV"], prefix=' - Inference')
         for divId in range(imageInfo["NB_DIV"]):
             self.__STEP = f"{divId} div processing"
@@ -697,18 +783,18 @@ class NephrologyInferenceModel:
                 else:
                     res.append(results.copy())
                 del results
-            elif not displayOnlyAP:
+            elif not displayOnlyStats:
                 skipped += 1
                 skippedText = f"({skipped} empty division{'s' if skipped > 1 else ''} skipped) "
             del division
             gc.collect()
 
-            if not displayOnlyAP:
+            if not displayOnlyStats:
                 if divId + 1 == imageInfo["NB_DIV"]:
                     inference_duration = round(time() - inference_start_time)
                     skippedText += f"Duration = {formatTime(inference_duration)}"
                 progressBar(divId + 1, imageInfo["NB_DIV"], prefix=' - Inference', suffix=skippedText)
-        if not displayOnlyAP:
+        if not displayOnlyStats:
             print(" - Fusing results of all divisions")
         self.__STEP = "fusing results"
         res = pp.fuse_results(res, imageInfo, division_size=self.__DIVISION_SIZE,
@@ -730,24 +816,20 @@ class NephrologyInferenceModel:
         )
 
     def __get_ground_truth__(self, image_results_path, fullImage, image_info,
-                             displayOnlyAP, save_results, base_gt=False):
+                             displayOnlyStats, save_results, base_gt=False):
         """
         Get ground-truth annotations and applies masks on image if enabled
         :param image_results_path: the current image output folder
         :param fullImage: the original image
         :param image_info: info about the current image
-        :param displayOnlyAP: if True, will not print anything
+        :param displayOnlyStats: if True, will not print anything
         :param save_results: if True, will apply masks
         :return: gt_bbox, gt_class_id, gt_mask
         """
         datasetType = "base" if base_gt else "current"
         self.__STEP = f"{datasetType} dataset creation"
-        if base_gt:
-            config_ = self.__CONFIG.copy()
-            config_.set_current_mode(self.__CONFIG.get_previous_mode())
-        else:
-            config_ = self.__CONFIG
-        dataset_val = CustomDataset("InferenceTool", image_info, config_, enable_occlusion=False)
+        dataset_val = CustomDataset("InferenceTool", image_info, self.__CONFIG,
+                                    previous_mode=base_gt, enable_occlusion=False)
         dataset_val.load_images()
         dataset_val.prepare()
         self.__STEP = f"loading {datasetType} annotated masks"
@@ -756,16 +838,16 @@ class NephrologyInferenceModel:
         gt = {'rois': gt_bbox, 'class_ids': gt_class_id, 'masks': gt_mask}
         if save_results:
             if len(gt_class_id) > 0:
-                if not displayOnlyAP:
+                if not displayOnlyStats:
                     print(" - Applying annotations on file to get expected results")
                 self.__STEP = "applying expected masks"
                 self.__draw_masks__(image_results_path, fullImage if self.__LOW_MEMORY else fullImage.copy(),
                                     image_info, gt, title=f"{image_info['NAME']}_Expected", cleaned_image=False)
-            elif not displayOnlyAP:
+            elif not displayOnlyStats:
                 print(" - No mask expected, not saving expected image")
         return gt
 
-    def __compute_statistics__(self, image_results_path, image_info, predicted, save_results=True, displayOnlyAP=False):
+    def __compute_statistics__(self, image_results_path, image_info, predicted, save_results=True):
         """
         Computes area and counts masks of each class
         :param image_results_path: output folder of current image
@@ -779,75 +861,63 @@ class NephrologyInferenceModel:
                                      save=image_results_path if save_results else None, display=True,
                                      config=self.__CONFIG)
 
-    def __compute_ap_and_conf_matrix__(self, image_results_path, image_info, predicted, ground_truth,
-                                       per_mask_conf_hierarchy, per_pixel_conf_hierarchy=None, save_results=True,
-                                       displayOnlyAP=False):
+    def __compute_confusion_matrices__(self, image_results_path, image_info, predicted, ground_truth,
+                                       save_results=True, displayOnlyStats=False):
         """
-        Computes AP and confusion matrix
+        Computes confusion matrix
         :param image_results_path: output folder of current image
         :param image_info: info about current image
         :param predicted: the predicted results dictionary
         :param ground_truth: the ground truth results dictionary
-        :param per_mask_conf_hierarchy: classes hierarchy for per mask confusion matrix
-        :param per_pixel_conf_hierarchy: classes hierarchy for per pixel confusion matrix
         :param save_results: Whether to save files or not
-        :param displayOnlyAP: Whether to display only AP or also current steps
+        :param displayOnlyStats: Whether to display only stats or also current steps
         :return:
         """
-        if not displayOnlyAP:
-            print(" - Computing Average Precision and Confusion Matrix")
+        if not displayOnlyStats:
+            print(" - Computing Confusion Matrices")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            self.__STEP = "computing confusion matrix"
-            conf_matrix = {}
-            AP, _, _, _, conf_matrix['mask'] = utils.compute_ap(gt_boxes=ground_truth['rois'],
-                                                                gt_class_ids=ground_truth['class_ids'],
-                                                                gt_masks=ground_truth['masks'],
-                                                                pred_boxes=predicted["rois"],
-                                                                pred_class_ids=predicted["class_ids"],
-                                                                pred_masks=predicted['masks'],
-                                                                pred_scores=predicted["scores"],
-                                                                nb_class=self.__NB_CLASS,
-                                                                score_threshold=0.3,
-                                                                iou_threshold=0.5,
-                                                                confusion_iou_threshold=0.5,
-                                                                classes_hierarchy=per_mask_conf_hierarchy,
-                                                                confusion_background_class=True,
-                                                                confusion_only_best_match=False)
-            self.__APs.append(AP)
+            self.__STEP = "computing mask confusion matrix"
+            conf_matrix = {
+                'mask': utils.compute_matches(
+                    gt_boxes=ground_truth['rois'], gt_class_ids=ground_truth['class_ids'],
+                    gt_masks=ground_truth['masks'], pred_boxes=predicted["rois"],
+                    pred_class_ids=predicted["class_ids"], pred_masks=predicted['masks'],
+                    pred_scores=predicted["scores"], nb_class=self.__NB_CLASS,
+                    min_iou_to_count=0.3, ap_iou_threshold=0.5, confusion_iou_threshold=0.5,
+                    classes_hierarchy=self.__CONFIG.get_classes_hierarchy(),
+                    confusion_background_class=True, confusion_only_best_match=False)[-1]
+            }
             self.__CONFUSION_MATRIX['mask'] = np.add(self.__CONFUSION_MATRIX['mask'], conf_matrix['mask'])
-            if per_pixel_conf_hierarchy is None:
-                per_pixel_conf_hierarchy = [i + 1 for i in range(self.__NB_CLASS)]
-            if self.__RESIZE is not None:
-                image_shape = self.__RESIZE
-            else:
-                image_shape = (image_info['HEIGHT'], image_info['WIDTH'])
+
+            self.__STEP = "computing pixel confusion matrix"
             conf_matrix['pixel'] = utils.compute_confusion_matrix(
-                image_shape=image_shape, config=self.__CONFIG,
+                image_shape=self.__RESIZE if self.__RESIZE is not None else (image_info['HEIGHT'], image_info['WIDTH']),
                 expectedResults=ground_truth, predictedResults=predicted,
-                classes_hierarchy=per_pixel_conf_hierarchy, num_classes=self.__NB_CLASS
+                num_classes=self.__NB_CLASS, config=self.__CONFIG
             )
             self.__CONFUSION_MATRIX['pixel'] = np.add(self.__CONFUSION_MATRIX['pixel'], conf_matrix['pixel'])
-            print(f"{'' if displayOnlyAP else '   '} - Average Precision is about {AP:06.2%}")
+
+            self.__CONFUSION_MATRIX['count'] += 1
             cmap = plt.cm.get_cmap('hot')
             if save_results:
-                self.__STEP = "saving confusion matrix"
+                self.__STEP = "saving confusion matrices"
                 for mat_type in ['mask', 'pixel']:
                     for normalized in [False, True]:
                         name = (f"{image_info['NAME']} Confusion Matrix ({mat_type.capitalize()})"
                                 f"{' (Normalized)' if normalized else ''}")
-                        confusionMatrixFileName = os.path.join(image_results_path, name.replace('(', '')
-                                                               .replace(')', '')
-                                                               .replace(' ', '_'))
-                        visualize.display_confusion_matrix(conf_matrix[mat_type], self.__VISUALIZE_NAMES,
-                                                           title=name, cmap=cmap, show=False, normalize=normalized,
-                                                           fileName=confusionMatrixFileName)
-        return AP
+                        confusionMatrixFileName = os.path.join(
+                            image_results_path, name.replace('(', '') .replace(')', '') .replace(' ', '_')
+                        )
+                        visualize.display_confusion_matrix(
+                            conf_matrix[mat_type], self.__VISUALIZE_NAMES, title=name, cmap=cmap,
+                            show=False, normalize=normalized, fileName=confusionMatrixFileName
+                        )
 
-    def __finalize_cortex_mode__(self, image_results_path, image_info, predicted, displayOnlyAP):
+    def __finalize_cortex_mode__(self, image_results_path, image_info, predicted, displayOnlyStats):
         # TODO Generalize this step
         self.__STEP = "cleaning full resolution image"
-        if not displayOnlyAP:
+        if not displayOnlyStats:
             print(" - Cleaning full resolution image and saving statistics")
         allCortices = None
         exclude_medulla = self.__CONFIG.get_param().get('exclude_medulla', False)
@@ -881,15 +951,10 @@ class NephrologyInferenceModel:
         :param allCortices: fused-cortices mask
         :return: allCorticesArea, allCorticesSmall
         """
-        self.__STEP = "init fusion dir"
-        fusion_dir = os.path.join(image_results_path, f"cortex")
-        os.makedirs(fusion_dir, exist_ok=True)
-
         # Saving useful part of fused-cortices mask
         self.__STEP = "crop & save fused-cortices mask"
         allCorticesROI = utils.extract_bboxes(allCortices)
         allCorticesSmall = allCortices[allCorticesROI[0]:allCorticesROI[2], allCorticesROI[1]:allCorticesROI[3]]
-        cv2.imwrite(os.path.join(fusion_dir, f"{image_info['NAME']}_cortex.jpg"), allCorticesSmall, CV2_IMWRITE_PARAM)
 
         # Computing coordinates at full resolution
         yRatio = image_info['HEIGHT'] / self.__RESIZE[0]
@@ -902,20 +967,6 @@ class NephrologyInferenceModel:
         # Resizing fused-cortices mask and computing its area
         allCortices = cv2.resize(np.uint8(allCortices), (image_info['WIDTH'], image_info['HEIGHT']),
                                  interpolation=cv2.INTER_CUBIC)
-        allCorticesArea = dD.getBWCount(allCortices)[1]
-        stats = {
-            "cortex": {
-                "count": 1,
-                "area": allCorticesArea,
-                "x_offset": int(allCorticesROI[1]),
-                "y_offset": int(allCorticesROI[0])
-            }
-        }
-        with open(os.path.join(image_results_path, f"{image_info['NAME']}_stats.json"), "w") as saveFile:
-            try:
-                json.dump(stats, saveFile, indent='\t')
-            except TypeError:
-                print("    Failed to save statistics", flush=True)
 
         # Masking the image and saving it
         temp = np.repeat(allCortices[:, :, np.newaxis], 3, axis=2)
@@ -923,10 +974,9 @@ class NephrologyInferenceModel:
             image_info['ORIGINAL_IMAGE'][allCorticesROI[0]: allCorticesROI[2], allCorticesROI[1]:allCorticesROI[3], :],
             temp[allCorticesROI[0]: allCorticesROI[2], allCorticesROI[1]:allCorticesROI[3], :]
         )
-        cv2.imwrite(os.path.join(fusion_dir, f"{image_info['NAME']}_cleaned.jpg"),
+        cv2.imwrite(os.path.join(image_results_path, f"{image_info['NAME']}_cleaned.jpg"),
                     cv2.cvtColor(image_info['ORIGINAL_IMAGE'], cv2.COLOR_RGB2BGR),
                     CV2_IMWRITE_PARAM)
-        return allCorticesArea, allCorticesSmall
 
     def __save_debug_image__(self, step, debugIterator, fullImage, image_info, res, image_results_path, silent=True):
         if not silent:
@@ -961,7 +1011,6 @@ class NephrologyInferenceModel:
                     adapters.append(adapter)
         for adapter in adapters:
             try:
-                # TODO Fix export
                 export_annotations(image_info, predicted, adapter, save_path=image_results_path,
                                    config=self.__CONFIG, verbose=verbose if silent else 1)
             except Exception:

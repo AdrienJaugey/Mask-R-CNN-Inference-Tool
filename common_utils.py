@@ -1,3 +1,11 @@
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+Common display/math methods
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
 from datetime import datetime
 import numpy as np
 
@@ -113,6 +121,8 @@ def format_number(num, maxLength=None):
     return f"{num:.1f}{suffixes[magnitude]}"
 
 
+def sort_dict(data: dict, key_type=None, reverse=False):
+    """
 def combination(setSize, combinationSize):
     """
     Computes the number of k-combinations in a set
