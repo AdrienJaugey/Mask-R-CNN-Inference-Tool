@@ -1,3 +1,11 @@
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+Dataset tools
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
 import os
 import shutil
 from time import time
@@ -300,7 +308,10 @@ def cleanImage(datasetPath: str, imageName: str, cleaningClasses: str, excludeCl
 
     # Fusing all the cleaning-class masks and then cleaning the image and if needed the masks
     cleaningClassMasks = gatherClassesMasks(datasetPath, imageName, image.shape, cleaningClasses)
-    excludedClassMasks = gatherClassesMasks(datasetPath, imageName, image.shape, excludeClasses)
+    if excludeClasses is None:
+        excludedClassMasks = None
+    else:
+        excludedClassMasks = gatherClassesMasks(datasetPath, imageName, image.shape, excludeClasses)
 
     if cleaningClassMasks is not None or excludedClassMasks is not None:
         if cleaningClassMasks is None:
