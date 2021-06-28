@@ -20,14 +20,10 @@ import scipy
 import skimage.color
 import skimage.io
 import skimage.transform
-# import tensorflow as tf
 
-# from mrcnn import compat
+from mrcnn.Config import Config
 from mrcnn.visualize import create_multiclass_mask
 from datasetTools import datasetDivider as dD
-
-# TODO Optimize Imports
-# from mrcnn.config import Config
 
 # URL from which to download the latest COCO trained weights
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
@@ -37,7 +33,7 @@ COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0
 #  Masks
 ############################################################
 
-def reduce_memory(results, config, allow_sparse=True):
+def reduce_memory(results, config: Config, allow_sparse=True):
     """
     Minimize all masks in the results dict from inference
     :param results: dict containing results of the inference
@@ -61,7 +57,7 @@ def reduce_memory(results, config, allow_sparse=True):
             results['masks'] = np.delete(results['masks'], emptyMasks, axis=2)
             results['rois'] = np.delete(results['rois'], emptyMasks, axis=0)
         results['rois'] = extract_bboxes(results['masks'])
-    results['masks'] = minimize_mask(results['rois'], results['masks'], config.MINI_MASK_SHAPE)
+    results['masks'] = minimize_mask(results['rois'], results['masks'], config.get_mini_mask_shape())
     return results
 
 
@@ -119,17 +115,18 @@ def unsparse_mask(base_mask):
 ############################################################
 #  Bounding Boxes
 ############################################################
-def in_roi(roi_to_test, roi):
+def in_roi(roi_to_test, roi, epsilon=0):
     """
     Tests if the RoI to test is included in the given RoI
     :param roi_to_test: the RoI/bbox to test
     :param roi: the RoI that should include the one to test
+    :param epsilon: margin of the RoI to allow boxes that are not exactly inside
     :return: True if roi_to_test is included in roi
     """
     res = True
     i = 0
     while i < 4 and res:
-        res = res and (roi[i % 2] <= roi_to_test[i] <= roi[i % 2 + 2])
+        res = res and (roi[i % 2] - epsilon <= roi_to_test[i] <= roi[i % 2 + 2] + epsilon)
         i += 1
     return res
 
@@ -297,10 +294,12 @@ def compute_overlaps_masks(masks1, boxes1, masks2, boxes2):
 
 
 def non_max_suppression(boxes, scores, threshold):
-    """Performs non-maximum suppression and returns indices of kept boxes.
-    boxes: [N, (y1, x1, y2, x2)]. Notice that (y2, x2) lays outside the box.
-    scores: 1-D array of box scores.
-    threshold: Float. IoU threshold to use for filtering.
+    """
+    Performs non-maximum suppression
+    :param boxes: [N, (y1, x1, y2, x2)]. Notice that (y2, x2) lays outside the box.
+    :param scores: 1-D array of box scores.
+    :param threshold: Float. IoU threshold to use for filtering.
+    :return: indices of kept boxes
     """
     assert boxes.shape[0] > 0
     if boxes.dtype.kind != "f":
@@ -313,7 +312,7 @@ def non_max_suppression(boxes, scores, threshold):
     x2 = boxes[:, 3]
     area = (y2 - y1) * (x2 - x1)
 
-    # Get indicies of boxes sorted by scores (highest first)
+    # Get indices of boxes sorted by scores (highest first)
     ixs = scores.argsort()[::-1]
 
     pick = []
@@ -905,7 +904,7 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
 #  Miscellaneous
 ############################################################
 
-def export_results(output_path: str, class_ids, boxes=None, masks=None, scores=None):
+def export_results(output_path: str, class_ids, boxes=None, masks=None, scores=None, bbox_areas=None, mask_areas=None):
     """
     Exports result dictionary to a JSON file for debug
     :param output_path: path to the output JSON file
@@ -913,15 +912,33 @@ def export_results(output_path: str, class_ids, boxes=None, masks=None, scores=N
     :param boxes: value of the 'class_ids' key of results dictionary
     :param masks: value of the 'class_ids' key of results dictionary
     :param scores: value of the 'class_ids' key of results dictionary
+    :param bbox_areas: value of the 'bbox_areas' key of results dictionary
+    :param mask_areas: value of the 'masks_areas' key of results dictionary
     :return: None
     """
-    data = {"class_ids": [int(v) for v in class_ids]}
+    if type(class_ids) is dict:
+        if 'rois' in class_ids:
+            boxes = class_ids['rois']
+        if 'masks' in class_ids:
+            masks = class_ids['masks']
+        if 'scores' in class_ids:
+            scores = class_ids['scores']
+        if 'bbox_areas' in class_ids:
+            bbox_areas = class_ids['bbox_areas']
+        if 'mask_areas' in class_ids:
+            mask_areas = class_ids['mask_areas']
+        class_ids = class_ids['class_ids']
+    oneDArrays = [
+        (class_ids, "class_ids", int),
+        (scores, "scores", float),
+        (bbox_areas, "bbox_areas", float),
+        (mask_areas, "mask_areas", float),
+    ]
+    data = {key: [arrayType(v) for v in array] for array, key, arrayType in oneDArrays if array is not None}
     if boxes is not None:
         data["rois"] = [[int(v) for v in bbox] for bbox in boxes]
     if masks is not None:
         data["masks"] = [[[int(bool(v)) * 255 for v in row] for row in mask] for mask in masks]
-    if scores is not None:
-        data["scores"] = [float(v) for v in scores]
     with open(output_path, 'w') as output:
         json.dump(data, output)
 
@@ -934,8 +951,10 @@ def import_results(input_path: str):
     """
     with open(input_path, 'r') as inputFile:
         data = json.load(inputFile)
+    keyType = {'rois': np.int32, 'masks': np.uint8, 'class_ids': int,
+               'scores': float, 'bbox_areas': float, 'mask_areas': float}
     for key in data.keys():
-        data[key] = np.array(data[key]).astype(np.uint8 if key == "masks" else np.int32)
+        data[key] = np.array(data[key]).astype(keyType[key])
     return data
 
 
@@ -992,7 +1011,7 @@ def remove_redundant_classes(classes_lvl, keepFirst=True):
 
 
 def compute_confusion_matrix(image_shape: iter, expectedResults: dict, predictedResults: dict,
-                             classes_hierarchy, num_classes: int, config=None):
+                             classes_hierarchy, num_classes: int, config: Config = None):
     """
     Computes confusion matrix at pixel precision
     :param image_shape: the initial image shape
@@ -1199,8 +1218,7 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
         gt_boxes=gt_boxes, gt_class_ids=gt_class_ids, gt_masks=gt_masks, min_iou_to_count=score_threshold,
         pred_boxes=pred_boxes, pred_class_ids=pred_class_ids, pred_masks=pred_masks, pred_scores=pred_scores,
         nb_class=nb_class, ap_iou_threshold=iou_threshold, confusion_iou_threshold=confusion_iou_threshold,
-        classes_hierarchy=classes_hierarchy,
-        confusion_background_class=confusion_background_class,
+        classes_hierarchy=classes_hierarchy, confusion_background_class=confusion_background_class,
         confusion_only_best_match=confusion_only_best_match
     )
     if len(gt_class_ids) == len(pred_class_ids) == 0:
@@ -1208,7 +1226,9 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
     # Compute precision and recall at each prediction box step
     precisions = np.cumsum(pred_match > -1) / (np.arange(len(pred_match)) + 1)
     recalls = np.cumsum(pred_match > -1).astype(np.float32) / len(gt_match)
-
+    for i in range(len(recalls)):
+        if np.isnan(recalls[i]):
+            recalls[i] = 0.
     # Pad with start and end values to simplify the math
     precisions = np.concatenate([[0], precisions, [0]])
     recalls = np.concatenate([[0], recalls, [1]])

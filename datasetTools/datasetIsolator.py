@@ -7,6 +7,7 @@ from common_utils import progressBar
 from datasetTools.datasetDivider import CV2_IMWRITE_PARAM
 from datasetTools.datasetWrapper import loadSameResImage, getBboxFromName
 from mrcnn import utils
+from mrcnn.Config import Config
 from mrcnn.utils import in_roi, extract_bboxes
 
 
@@ -86,7 +87,7 @@ def center_mask(mask_bbox, image_shape, min_output_shape=1024, verbose=0):
 
 
 def getCenteredClassBboxes(datasetPath: str, imageName: str, classToCenter: str, image_size=1024,
-                           imageFormat="jpg", allow_oversized=True, config=None, verbose=0):
+                           imageFormat="jpg", allow_oversized=True, config: Config = None, verbose=0):
     """
     Computes and returns bboxes of all masks of the given image and class
     :param datasetPath: path to the dataset containing the image folder
@@ -108,7 +109,7 @@ def getCenteredClassBboxes(datasetPath: str, imageName: str, classToCenter: str,
     toDelete = []
     for idx, mask in enumerate(maskList):
         maskPath = os.path.join(classDirPath, mask)
-        if config is not None and config.USE_MINI_MASK:
+        if config is not None and config.is_using_mini_mask():
             bbox = getBboxFromName(mask)
         else:
             maskImage = cv2.imread(maskPath, cv2.IMREAD_GRAYSCALE)

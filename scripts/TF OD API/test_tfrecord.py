@@ -4,8 +4,8 @@ import argparse
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("label_map_proto_file", help="path to the label map file", type=str)
-    parser.add_argument("tfrecord_path", type=str,
-                        help="path to the TFRecord files. You can use *.*-?????-of-00000 format to loop through each shard")
+    parser.add_argument("tfrecord_path", type=str, help="path to the TFRecord files. You can use *.*-?????-of-00000 "
+                                                        "format to loop through each shard")
     parser.add_argument("sleep_time", help="time before reading the next TFExample in ms", type=int, default=250,
                         nargs='?')
     args = parser.parse_args()
@@ -70,4 +70,5 @@ if __name__ == '__main__':
                 if key == ord('q'):
                     cv2.destroyAllWindows()
                     exit(0)
-
+    cv2.destroyAllWindows()
+    exit(0)

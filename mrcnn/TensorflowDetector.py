@@ -3,6 +3,9 @@ import json
 import warnings
 import cv2
 import numpy as np
+from time import time
+
+from common_utils import formatTime
 
 warnings.filterwarnings('ignore')
 os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices'
@@ -18,7 +21,8 @@ for gpu in gpus:
 
 
 def load_image_into_numpy_array(path):
-    return cv2.cvtColor(cv2.imread(path, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+    image = cv2.imread(path, cv2.IMREAD_COLOR)
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
 def reframe_box_masks_to_image_masks(box_masks, boxes, image_height, image_width, resize_method='bilinear'):
@@ -90,12 +94,12 @@ class TensorflowDetector:
     Based on : https://bit.ly/3p2iPDc
     """
 
-    def __init__(self, savedModelPath: str = None, labelMapPath: str = None):
+    def __init__(self, savedModelPath: str = None, labelMap: [str, dict] = None):
         self.__CATEGORY_INDEX__ = None
         self.__MODEL__ = None
         self.__MODEL_PATH__ = None
         if savedModelPath is not None and os.path.exists(savedModelPath):
-            self.load(savedModelPath, labelMapPath)
+            self.load(savedModelPath, labelMap)
 
     def isLoaded(self):
         return self.__MODEL__ is not None
@@ -106,24 +110,33 @@ class TensorflowDetector:
     def getConfig(self):
         return self.__CATEGORY_INDEX__
 
-    def load(self, modelPath: str, labelMapPath: str = None):
+    def load(self, modelPath: str, labelMap: [str, dict] = None, verbose=0):
+        modelPath = os.path.normpath(modelPath)
         isExportedModelDir = os.path.exists(os.path.join(modelPath, 'saved_model'))
         isSavedModelDir = (os.path.exists(os.path.join(modelPath, 'saved_model.pb'))
                            and os.path.exists(os.path.join(modelPath, 'variables')))
         if not (isExportedModelDir or isSavedModelDir):
             raise ValueError("Provided model path is not a TF exported model or TF SavedModel folder.")
-        if labelMapPath is None:
+        if labelMap is None:
             if isExportedModelDir:
-                labelMapPath = os.path.join(modelPath, "label_map.json")
+                labelMap = os.path.join(modelPath, "label_map.json")
             else:
-                labelMapPath = os.path.join(modelPath, "assets", "label_map.json")
+                labelMap = os.path.join(modelPath, "assets", "label_map.json")
 
-        with open(labelMapPath, 'r') as file:
-            self.__CATEGORY_INDEX__ = {int(key): value for key, value in json.load(file).items()}
-        print("Loading... ", end="")
+        if type(labelMap) is str:
+            with open(labelMap, 'r') as file:
+                self.__CATEGORY_INDEX__ = {int(key): value for key, value in json.load(file).items()}
+        else:
+            self.__CATEGORY_INDEX__ = labelMap
+        if verbose > 0:
+            print(f"Loading {modelPath} ... ", end="")
+        else:
+            print(f"Loading ... ", end="")
+        start_time = time()
         self.__MODEL__ = tf.saved_model.load(modelPath if isSavedModelDir else os.path.join(modelPath, 'saved_model'))
         self.__MODEL_PATH__ = modelPath
-        print("Done !")
+        total_time = round(time() - start_time)
+        print(f"Done ! ({formatTime(total_time)})")
 
     def process(self, image, computeMaskBbox=False, normalizedCoordinates=True, score_threshold=None):
         """
@@ -196,7 +209,7 @@ class TensorflowDetector:
         return results
 
     '''def applyResults(self, image, results: dict, maxObjectToDraw=200, minScoreThreshold=0.3, drawImage=True,
-                     mapText=False, low_memory=False):
+                        low_memory=False):
         """
         Draw results on the image
         :param image: the image to draw the results on
@@ -204,43 +217,37 @@ class TensorflowDetector:
         :param maxObjectToDraw: maximum number of object to draw on the image
         :param minScoreThreshold: minimum score of the boxes to draw
         :param drawImage: if True, will draw predictions on the image
-        :param mapText: if True, will return the content of the map txt file as a string
         :param low_memory: if True, will replace the input image
-        :return: The image with results if enabled else None, the map file as string if enabled
+        :return: The image with results if enabled else None
         """
         image_with_detections = None
         if drawImage:
             image_with_detections = image if low_memory else image.copy()
-        resMapText = "" if mapText else None
 
-        if drawImage and 'detection_masks' in results:
+        if drawImage and 'masks' in results:
             for idx in range(min(results['num_detections'], maxObjectToDraw)):
-                if results['detection_scores'][idx] < minScoreThreshold:
+                if results['scores'][idx] < minScoreThreshold:
                     break
                 image_with_detections = apply_mask(
                     image=image_with_detections,
-                    mask=results['detection_masks'][:, :, idx],
-                    color=self.__CATEGORY_INDEX__[results['detection_classes'][idx]]["color"],
-                    bbox=results['detection_boxes'][idx, :]
+                    mask=results['masks'][:, :, idx],
+                    color=self.__CATEGORY_INDEX__[results['class_ids'][idx]]["color"],
+                    bbox=results['boxes'][idx, :]
                 )
             image_with_detections = cv2.cvtColor(image_with_detections, cv2.COLOR_RGB2BGR)
         for idx in range(min(results['num_detections'], maxObjectToDraw)):
-            score = results['detection_scores'][idx]
-            if results['detection_scores'][idx] < minScoreThreshold:
+            score = results['scores'][idx]
+            if results['scores'][idx] < minScoreThreshold:
                 break
             height, width, _ = image.shape
-            yMin, xMin, yMax, xMax = tuple(results['detection_boxes'][idx, :])
+            yMin, xMin, yMax, xMax = tuple(results['rois'][idx, :])
             if type(yMin) is float:
                 yMin = int(yMin * height)
                 xMin = int(xMin * width)
                 yMax = int(yMax * height)
                 xMax = int(xMax * width)
-            classId = results['detection_classes'][idx]
+            classId = results['class_ids'][idx]
             className = self.__CATEGORY_INDEX__[classId]["name"]
-            if mapText:
-                # <class_name> <confidence> <left> <top> <right> <bottom>
-                resMapText += "{}{} {:.6f} {} {} {} {}".format("" if resMapText == "" else "\n", className, score,
-                                                               xMin, yMin, xMax, yMax)
             if drawImage:
                 # Convert color from RGB to BGR
                 color = tuple(self.__CATEGORY_INDEX__[classId]["color"][::-1])
@@ -250,4 +257,4 @@ class TensorflowDetector:
                 image_with_detections = cv2.putText(image_with_detections, scoreText, (xMin, yMin),
                                                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
         image_with_detections = cv2.cvtColor(image_with_detections, cv2.COLOR_BGR2RGB)
-        return image_with_detections, resMapText'''
+        return image_with_detections'''

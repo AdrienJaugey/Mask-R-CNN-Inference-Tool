@@ -18,8 +18,8 @@ flags = tf.app.flags
 flags.DEFINE_string('data_dir', '', 'Root directory to raw pet dataset.')
 flags.DEFINE_string('output_path', '', 'Path to directory to output TFRecords.')
 flags.DEFINE_string('label_map_path', 'data/pet_label_map.pbtxt', 'Path to label map proto')
-flags.DEFINE_integer('make_shards', None, 'Number of TFRecord shards')
-flags.DEFINE_integer('log_path', None, 'Path used to save log file')
+flags.DEFINE_bool('no_shard', False, 'Number of TFRecord shards')
+flags.DEFINE_string('log_path', None, 'Path used to save log file')
 
 FLAGS = flags.FLAGS
 
@@ -185,7 +185,12 @@ def main(_):
     DATASET_PATH = os.path.normpath(FLAGS.data_dir)
     imageDirList = os.listdir(DATASET_PATH)
     nbImage = len(imageDirList)
+    record_dir = os.path.dirname(FLAGS.output_path)
+    if not os.path.exists(record_dir):
+        os.makedirs(record_dir, exist_ok=True)
     num_shards = max(1, nbImage // IMG_PER_SHARD + (0 if nbImage % IMG_PER_SHARD < IMG_PER_SHARD * 0.2 else 1))
+    if FLAGS.no_shard:
+        num_shards = 1
     with contextlib2.ExitStack() as tf_record_close_stack:
         output_tfrecords = tf_record_creation_util.open_sharded_output_tfrecords(tf_record_close_stack,
                                                                                  FLAGS.output_path, num_shards)

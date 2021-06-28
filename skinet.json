@@ -1,0 +1,394 @@
+{
+    "first_mode": "cortex",
+    "modes": [
+        {
+            "name": "cortex",
+            "previous": null,
+            "next": "mest_main",
+            "classes": [
+                {
+                    "name": "cortex",
+                    "display_name": "Cortex",
+                    "asap_color": "#ffaa00",
+                    "color": [255, 0, 0]
+                },
+                {
+                    "name": "medulla",
+                    "display_name": "Medulla",
+                    "asap_color": "#ff0000",
+                    "color": [0, 255, 0]
+                },
+                {
+                    "name": "capsule",
+                    "display_name": "Fibrous Capsule",
+                    "asap_color": "#ffffff",
+                    "color": [0, 0, 255]
+                }
+            ],
+            "parameters": {
+                "weight_file": "skinet_cortex_v2",
+                "base_class": null,
+                "crop_to_base_class": false,
+                "allow_empty_annotations": false,
+                "roi_mode": "divided",
+                "resize": [2048, 2048],
+                "roi_size": 1024,
+                "min_overlap_part": 0.5,
+                "mini_mask": null,
+                "min_confidence": 0.7,
+                "allow_sparse": true,
+                "exclude_medulla": false,
+                "exclude_capsule": false
+            },
+            "post_processing": [
+                {"method": "fusion", "bb_threshold": 0.1, "mask_threshold": 0.1},
+                {"method": "small_filter", "min_size": 300}
+            ],
+            "statistics": [
+                {"method": "count_and_area", "selected_classes": "all"}
+            ],
+            "export": "all",
+            "return": ["cortex"]
+        },
+        {
+            "name": "main",
+            "previous": "cortex",
+            "next": null,
+            "classes": [
+                {
+                    "name": "tubule_sain",
+                    "display_name": "Non Atrophic Tubule",
+                    "asap_color": "#ff007f",
+                    "color": [255, 0, 0]
+                },
+                {
+                    "name": "tubule_atrophique",
+                    "display_name": "Atrophic Tubule",
+                    "asap_color": "#55557f",
+                    "color": [255, 153, 0]
+                },
+                {
+                    "name": "nsg",
+                    "display_name": "NSG",
+                    "asap_color": "#55007f",
+                    "color": [204, 255, 0]
+                },
+                {
+                    "name": "nsg_complet",
+                    "display_name": "Complete Glomeruli",
+                    "asap_color": "#ff557f",
+                    "color": [0, 120, 60]
+                },
+                {
+                    "name": "nsg_partiel",
+                    "display_name": "Partial Glomeruli",
+                    "asap_color": "#55aa7f",
+                    "color": [120, 30, 15]
+                },
+                {
+                    "name": "pac",
+                    "display_name": "Globally Sclerosis Glomeruli",
+                    "asap_color": "#ffaa7f",
+                    "color": [0, 255, 255]
+                },
+                {
+                    "name": "veine",
+                    "display_name": "Vein",
+                    "asap_color": "#0000ff",
+                    "color": [0, 102, 255]
+                },
+                {
+                    "name": "vaisseau",
+                    "display_name": "Artery",
+                    "asap_color": "#55ff7f",
+                    "color": [51, 0, 255]
+                },
+                {
+                    "name": "media",
+                    "display_name": "External Elastic Lamina",
+                    "asap_color": "#aa5500",
+                    "color": [108, 10, 195]
+                },
+                {
+                    "name": "intima",
+                    "display_name": "Internal Elastic Lamina",
+                    "asap_color": "#aa0000",
+                    "color": [255, 35, 235]
+                }
+            ],
+            "parameters": {
+                "weight_file": "skinet_main_v1",
+                "base_class": "cortex",
+                "fuse_base_class": true,
+                "crop_to_base_class": true,
+                "allow_empty_annotations": false,
+                "roi_mode": "divided",
+                "resize": null,
+                "roi_size": 1024,
+                "min_overlap_part": 0.33,
+                "mini_mask": 128,
+                "min_confidence": 0.5,
+                "allow_sparse": false
+            },
+            "post_processing": [
+                {
+                    "method": "fusion",
+                    "bb_threshold": 0.1,
+                    "mask_threshold": 0.1
+                },
+                {
+                    "method": "border_filter",
+                    "on_border_threshold": 0.25,
+                    "classes": [7, 8, 9, 10]
+                },
+                {
+                    "method": "orphan_filter",
+                    "bb_threshold": 0.3,
+                    "mask_threshold": 0.3,
+                    "classes_hierarchy": {
+                        "3": {"contains": [4, 5], "keep_if_no_child": false},
+                        "8": {"contains": [9, 10], "keep_if_no_child": true}
+                    }
+                },
+                {
+                    "method": "filter",
+                    "bb_threshold": 0.3,
+                    "mask_threshold": 0.3,
+                    "priority_table": [
+                        [false, true,  false, false, false, true,  true,  false, false, false],
+                        [false, false, false, false, false, true,  true,  false, false, false],
+                        [true,  true,  false, false, false, true,  true,  true,  false, false],
+                        [false, false, false, false, false, false, false, false, false, false],
+                        [false, false, false, false, false, false, false, false, false, false],
+                        [true,  true,  false, false, false, false, false, false, false, false],
+                        [false, false, false, false, false, false, false, false, false, false],
+                        [true,  true,  false, false, false, true,  true,  false, false, false],
+                        [false, false, false, false, false, false, false, false, false, false],
+                        [false, false, false, false, false, false, false, false, false, false]
+                    ]
+                },
+                {
+                    "method": "orphan_filter",
+                    "bb_threshold": 0.3,
+                    "mask_threshold": 0.3,
+                    "classes_hierarchy": {
+                        "3": {"contains": [4, 5], "keep_if_no_child": false},
+                        "8": {"contains": [9, 10], "keep_if_no_child": true}
+                    }
+                },
+                {
+                    "method": "class_fusion",
+                    "bb_threshold": 0.1,
+                    "mask_threshold": 0.1,
+                    "classes_compatibility": [[4, 5]]
+                },
+                {
+                    "method": "small_filter",
+                    "min_size": 50
+                }
+            ],
+            "statistics": [
+                {"method": "count_and_area", "selected_classes": "all"}
+            ],
+            "export": "all",
+            "return": null
+        },
+        {
+            "name": "mest_main",
+            "previous": "cortex",
+            "next": "mest_glom",
+            "classes": [
+                {
+                    "name": "tubule_sain",
+                    "display_name": "Non Atrophic Tubule",
+                    "asap_color": "#ff007f",
+                    "color": [255, 0, 0]
+                },
+                {
+                    "name": "tubule_atrophique",
+                    "display_name": "Atrophic Tubule",
+                    "asap_color": "#55557f",
+                    "color": [255, 153, 0]
+                },
+                {
+                    "name": "nsg",
+                    "display_name": "NSG",
+                    "asap_color": "#55007f",
+                    "color": [204, 255, 0]
+                },
+                {
+                    "name": "pac",
+                    "display_name": "Globally Sclerosis Glomeruli",
+                    "asap_color": "#ffaa7f",
+                    "color": [0, 255, 255]
+                },
+                {
+                    "name": "veine",
+                    "display_name": "Vein",
+                    "asap_color": "#0000ff",
+                    "color": [0, 102, 255]
+                },
+                {
+                    "name": "vaisseau",
+                    "display_name": "Artery",
+                    "asap_color": "#55ff7f",
+                    "color": [51, 0, 255]
+                }
+            ],
+            "parameters": {
+                "weight_file": "skinet_mest_main_v3",
+                "base_class": "cortex",
+                "fuse_base_class": true,
+                "crop_to_base_class": true,
+                "allow_empty_annotations": false,
+                "roi_mode": "divided",
+                "resize": null,
+                "roi_size": 1024,
+                "min_overlap_part": 0.33,
+                "mini_mask": 128,
+                "min_confidence": 0.5,
+                "allow_sparse": false
+            },
+            "post_processing": [
+                {
+                    "method": "fusion",
+                    "bb_threshold": 0.1,
+                    "mask_threshold": 0.1
+                },{
+                    "method": "border_filter",
+                    "on_border_threshold": 0.25,
+                    "classes": [5, 6]
+                },
+                {
+                    "method": "class_fusion",
+                    "bb_threshold": 0.2,
+                    "mask_threshold": 0.2,
+                    "classes_compatibility": [[1, 2]]
+                },
+                {
+                    "method": "keep_biggest_mask",
+                    "bb_threshold": 0.3,
+                    "mask_threshold": 0.3,
+                    "classes": {"nsg": ["vaisseau"]}
+                },
+                {
+                    "method": "filter",
+                    "bb_threshold": 0.3,
+                    "mask_threshold": 0.3,
+                    "priority_table": [
+                        [false, true,  false, true,  true,  false],
+                        [false, false, false, true,  true,  false],
+                        [true,  true,  false, true,  true,  true ],
+                        [true,  true,  false, false, false, false],
+                        [false, false, false, false, false, false],
+                        [true,  true,  false, true,  true,  false]
+                    ]
+                },
+                {
+                    "method": "small_filter",
+                    "min_size": 50
+                }
+            ],
+            "statistics": [
+                {"method": "count_and_area", "selected_classes": "all"}
+            ],
+            "export": "all",
+            "return": ["nsg"]
+        },
+        {
+            "name": "mest_glom",
+            "previous": "mest_main",
+            "next": null,
+            "classes": [
+                {
+                    "name": "hile",
+                    "display_name": "Hilum",
+                    "asap_color": "#64fE2E",
+                    "color": [255, 255, 0]
+                },
+                {
+                    "name": "M",
+                    "display_name": "M",
+                    "asap_color": "#55007f",
+                    "color": [255, 85, 0]
+                },
+                {
+                    "name": "E",
+                    "display_name": "E",
+                    "asap_color": "#ff007f",
+                    "color": [148,0,255]
+                },
+                {
+                    "name": "S",
+                    "display_name": "S",
+                    "asap_color": "#55557f",
+                    "color": [0, 255, 0]
+                },
+                {
+                    "name": "C",
+                    "display_name": "C",
+                    "asap_color": "#ff557f",
+                    "color": [255, 0, 0]
+                },
+                {
+                    "name": "necrose_fib",
+                    "display_name": "Necrose Fib",
+                    "asap_color": "#55aa7f",
+                    "color": [0, 0, 0]
+                }
+            ],
+            "parameters": {
+                "weight_file": "skinet_mest_glom_v3",
+                "base_class": "nsg",
+                "fuse_base_class": false,
+                "crop_to_base_class": false,
+                "allow_empty_annotations": true,
+                "roi_mode": "centered",
+                "resize": null,
+                "roi_size": 1024,
+                "min_overlap_part": null,
+                "mini_mask": 128,
+                "min_confidence": 0.7,
+                "allow_sparse": false
+            },
+            "post_processing": [
+                {
+                    "method": "fusion",
+                    "bb_threshold": 0.1,
+                    "mask_threshold": 0.1
+                },
+                {
+                    "method": "filter",
+                    "bb_threshold": 0.3,
+                    "mask_threshold": 0.3,
+                    "priority_table": [
+                        [true,  true,  true,  true,  true,  false],
+                        [false, false, true,  false, false, false],
+                        [false, false, false, false, false, false],
+                        [false, false, false, false, false, false],
+                        [false, false, false, false, false, false],
+                        [false, false, false, false, false, false]
+                    ]
+                },
+                {
+                    "method": "small_filter",
+                    "min_size": 50
+                }
+            ],
+            "statistics": [
+                {"method": "count_and_area", "selected_classes": "all"},
+                {
+                    "method": "base_mask_histo",
+                    "classes": {"nsg": "all"},
+                    "box_epsilon": 0,
+                    "test_masks": true,
+                    "mask_threshold": 0.9,
+                    "display_per_base_mask": false,
+                    "display_global": true
+                }
+            ],
+            "export": "all",
+            "return": null
+        }
+    ]
+}

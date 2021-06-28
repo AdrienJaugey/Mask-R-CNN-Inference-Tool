@@ -1,108 +1,16 @@
-import os
 from enum import Enum
 from time import time
-import numpy as np
+
 import cv2
-from mrcnn.utils import get_bbox_area, get_bboxes_intersection, global_bbox, shift_bbox
-from mrcnn.utils import minimize_mask, expand_mask, expand_masks, get_mask_area
-from datasetTools import datasetDivider as dD
-from datasetTools.AnnotationAdapter import AnnotationAdapter
-from datasetTools.ASAPAdapter import ASAPAdapter
-from datasetTools.LabelMeAdapter import LabelMeAdapter
+import numpy as np
+
 from common_utils import combination, formatTime, progressBar, progressText
+from datasetTools import datasetDivider as dD
+from mrcnn import utils
+from mrcnn.Config import Config, DynamicMethod
 
 
-def fuse_results(results, image_shape, division_size=1024, min_overlap_part=0.33):
-    """
-    Fuse results of multiple predictions (divisions for example)
-    :param results: list of the results of the predictions
-    :param image_shape: the input image shape
-    :param division_size: Size of a division
-    :param min_overlap_part: Minimum overlap of divisions
-    :return: same structure contained in results
-    """
-    # Getting base input image information
-    div_side_length = results[0]['masks'].shape[0]
-    use_mini_mask = division_size != "noDiv" and division_size != div_side_length
-    height, width, _ = image_shape
-    xStarts = [0] if division_size == "noDiv" else dD.computeStartsOfInterval(width, division_size,
-                                                                              min_overlap_part=min_overlap_part)
-    yStarts = [0] if division_size == "noDiv" else dD.computeStartsOfInterval(height, division_size,
-                                                                              min_overlap_part=min_overlap_part)
-    widthRatio = width / div_side_length
-    heightRatio = height / div_side_length
-    # Counting total sum of predicted masks
-    size = 0
-    for res in results:
-        size += len(res['scores'])
-
-    # Initialisation of arrays
-    if use_mini_mask:
-        masks = np.zeros((div_side_length, div_side_length, size), dtype=bool)
-    else:
-        masks = np.zeros((height, width, size), dtype=bool)
-    scores = np.zeros(size)
-    rois = np.zeros((size, 4), dtype=int)
-    class_ids = np.zeros(size, dtype=int)
-
-    # Iterating through divisions results
-    lastIndex = 0
-    for res in results:
-        # Getting the division ID based on iterator or given ids and getting its coordinates
-        divId = res["div_id"]
-        xStart, xEnd, yStart, yEnd = dD.getDivisionByID(xStarts, yStarts, divId,
-                                                        division_size if division_size != "noDiv" else 1024)
-
-        # Formatting and adding all the division's predictions to global ones
-        for prediction_index in range(len(res['scores'])):
-            scores[lastIndex] = res['scores'][prediction_index]
-            class_ids[lastIndex] = res['class_ids'][prediction_index]
-
-            if use_mini_mask:
-                masks[:, :, lastIndex] = res['masks'][:, :, prediction_index]
-            elif division_size != "noDiv":
-                mask = res['masks'][:, :, prediction_index]
-                if mask.shape[0] != division_size or mask.shape[1] != division_size:
-                    tempWidthRatio = division_size / mask.shape[1]
-                    tempHeightRatio = division_size / mask.shape[0]
-                    roi = res['rois'][prediction_index]
-                    roi[0] *= tempHeightRatio
-                    roi[1] *= tempWidthRatio
-                    roi[2] *= tempHeightRatio
-                    roi[3] *= tempWidthRatio
-                    mask = cv2.resize(np.uint8(mask), (division_size, division_size))
-                masks[yStart:yEnd, xStart:xEnd, lastIndex] = mask
-            else:
-                mask = np.uint8(res['masks'][:, :, prediction_index])
-                masks[:, :, lastIndex] = cv2.resize(mask, (width, height), interpolation=cv2.INTER_CUBIC)
-
-            roi = res['rois'][prediction_index].copy()
-            # y1, x1, y2, x2
-            if division_size != "noDiv":
-                roi[0] += yStart
-                roi[1] += xStart
-                roi[2] += yStart
-                roi[3] += xStart
-            else:
-                roi[0] *= heightRatio
-                roi[1] *= widthRatio
-                roi[2] *= heightRatio
-                roi[3] *= widthRatio
-            rois[lastIndex] = roi
-
-            lastIndex += 1
-
-    # Formatting returned result
-    fused_results = {
-        "rois": rois,
-        "class_ids": class_ids,
-        "scores": scores,
-        "masks": masks
-    }
-    return fused_results
-
-
-def fuse_results(results, image_info: dict, division_size: int = 1024, cortex_size=None, config=None):
+def fuse_results(results, image_info: dict, division_size: int = 1024, cortex_size=None, config: Config = None):
     """
         Fuse results of multiple predictions (divisions for example)
         :param results: list of the results of the predictions
@@ -128,7 +36,7 @@ def fuse_results(results, image_info: dict, division_size: int = 1024, cortex_si
         raise ValueError('Cannot fuse results without division X & Y coordinates or RoI coordinates')
 
     div_side_length = results[0]['masks'].shape[0]
-    use_mini_mask = config is not None and config.USE_MINI_MASK
+    use_mini_mask = config is not None and config.is_using_mini_mask()
     height = image_info['HEIGHT'] if cortex_size is None else cortex_size[0]
     width = image_info['WIDTH'] if cortex_size is None else cortex_size[1]
 
@@ -175,14 +83,6 @@ def fuse_results(results, image_info: dict, division_size: int = 1024, cortex_si
                     masks[:, :, iterator + idx] = cv2.resize(mask, (width, height), interpolation=cv2.INTER_CUBIC)
                 else:
                     mask = res['masks'][:, :, idx]
-                    # if mask.shape[0] != division_size or mask.shape[1] != division_size:
-                    #     tempWidthRatio = division_size / mask.shape[1]
-                    #     tempHeightRatio = division_size / mask.shape[0]
-                    #     rois[iterator + idx] = (np.around(res['rois'][idx]
-                    #                                       * ([tempHeightRatio, tempWidthRatio] * 2)).astype(int)
-                    #                             + (tuple(offset_roi[:2]) * 2))
-                    #     mask = cv2.resize(np.uint8(mask), (division_size, division_size))
-                    # TODO Check why cortex mask is 17k*30k instead of 2048² => fuse_results refactoring ?
                     masks[offset_roi[0]:offset_roi[2], offset_roi[1]:offset_roi[3], iterator + idx] = mask
 
         iterator += resSize
@@ -190,7 +90,7 @@ def fuse_results(results, image_info: dict, division_size: int = 1024, cortex_si
     return {"rois": rois, "class_ids": class_ids, "scores": scores, "masks": masks}
 
 
-def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None, displayProgress: str = None,
+def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config: Config = None, displayProgress: str = None,
                verbose=0):
     """
     Fuses overlapping masks of the same class
@@ -206,15 +106,8 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
     masks = fused_results['masks']
     scores = fused_results['scores']
     class_ids = fused_results['class_ids']
-
-    if 'bbox_areas' in fused_results:
-        bbAreas = fused_results['bbox_areas']
-    else:
-        bbAreas = np.ones(len(class_ids), dtype=int) * -1
-    if 'mask_areas' in fused_results:
-        maskAreas = fused_results['mask_areas']
-    else:
-        maskAreas = np.ones(len(class_ids), dtype=int) * -1
+    bbAreas = fused_results.get('bbox_areas', np.ones(len(class_ids), dtype=int) * -1)
+    maskAreas = fused_results.get('mask_areas', np.ones(len(class_ids), dtype=int) * -1)
     fusedWith = np.ones(len(class_ids), dtype=int) * -1
     maskCount = np.ones(len(class_ids), dtype=int)
 
@@ -229,7 +122,7 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
     for idxI, roi1 in enumerate(rois):
         # Computation of the bounding box area if not done yet
         if bbAreas[idxI] == -1:
-            bbAreas[idxI] = get_bbox_area(roi1)
+            bbAreas[idxI] = utils.get_bbox_area(roi1)
 
         for idxJ in range(idxI + 1, len(rois)):
             if displayProgress is not None:
@@ -251,10 +144,10 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
 
             # Computation of the bounding box area if not done yet
             if bbAreas[idxJ] == -1:
-                bbAreas[idxJ] = get_bbox_area(roi2)
+                bbAreas[idxJ] = utils.get_bbox_area(roi2)
 
             # Computation of the bb intersection
-            bbIntersection = get_bboxes_intersection(roi1, roi2)
+            bbIntersection = utils.get_bboxes_intersection(roi1, roi2)
 
             # We skip next part if bb intersection not representative enough
             partOfRoI1 = bbIntersection / bbAreas[idxI]
@@ -271,24 +164,24 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
                 mask1 = masks[:, :, idxI]
                 mask2 = masks[:, :, idxJ]
 
-                if config is not None and config.USE_MINI_MASK:
-                    mask1, mask2 = expand_masks(mask1, roi1, mask2, roi2)
+                if config is not None and config.is_using_mini_mask():
+                    mask1, mask2 = utils.expand_masks(mask1, roi1, mask2, roi2)
 
                 if maskAreas[idxI] == -1:
-                    maskAreas[idxI], verbose_output = get_mask_area(mask1, verbose=verbose)
+                    maskAreas[idxI], verbose_output = utils.get_mask_area(mask1, verbose=verbose)
                     if verbose_output is not None:
                         hadPrinted = True
                         print("[{:03d}] {}".format(idxI, verbose_output))
 
                 if maskAreas[idxJ] == -1:
-                    maskAreas[idxJ], verbose_output = get_mask_area(mask2, verbose=verbose)
+                    maskAreas[idxJ], verbose_output = utils.get_mask_area(mask2, verbose=verbose)
                     if verbose_output is not None:
                         hadPrinted = True
                         print("[{:03d}] {}".format(idxJ, verbose_output))
 
                 # Computing intersection of mask 1 and 2 and computing its area
                 mask1AND2 = np.logical_and(mask1, mask2)
-                mask1AND2Area, _ = get_mask_area(mask1AND2, verbose=verbose)
+                mask1AND2Area, _ = utils.get_mask_area(mask1AND2, verbose=verbose)
                 partOfMask1 = mask1AND2Area / maskAreas[idxI]
                 partOfMask2 = mask1AND2Area / maskAreas[idxJ]
 
@@ -336,10 +229,10 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
 
                     receiverMask = masks[:, :, receiver]
                     giverMask = masks[:, :, giver]
-                    if config is not None and config.USE_MINI_MASK:
+                    if config is not None and config.is_using_mini_mask():
                         receiverRoI = rois[receiver]
                         giverRoI = rois[giver]
-                        receiverMask, giverMask = expand_masks(receiverMask, receiverRoI, giverMask, giverRoI)
+                        receiverMask, giverMask = utils.expand_masks(receiverMask, receiverRoI, giverMask, giverRoI)
                     fusedMask = np.logical_or(receiverMask, giverMask)
 
                     if verbose > 1:
@@ -354,14 +247,15 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
                                                     score=scores[receiver], count=maskCount[receiver]))
 
                     # Updating the receiver mask's infos
-                    rois[receiver] = global_bbox(rois[receiver], rois[giver])
-                    if config is not None and config.USE_MINI_MASK:
-                        shifted_fusedRoI = shift_bbox(rois[receiver])
-                        masks[:, :, receiver] = minimize_mask(shifted_fusedRoI, fusedMask, config.MINI_MASK_SHAPE)
+                    rois[receiver] = utils.global_bbox(rois[receiver], rois[giver])
+                    if config is not None and config.is_using_mini_mask():
+                        shifted_fusedRoI = utils.shift_bbox(rois[receiver])
+                        masks[:, :, receiver] = utils.minimize_mask(shifted_fusedRoI, fusedMask, 
+                                                                    config.get_mini_mask_shape())
                     else:
                         masks[:, :, receiver] = fusedMask
-                    bbAreas[receiver] = get_bbox_area(rois[receiver])
-                    maskAreas[receiver], _ = get_mask_area(fusedMask)
+                    bbAreas[receiver] = utils.get_bbox_area(rois[receiver])
+                    maskAreas[receiver], _ = utils.get_mask_area(fusedMask)
                     scores[receiver] = (scores[receiver] * maskCount[receiver] + scores[idxJ])
                     maskCount[receiver] += 1
                     scores[receiver] /= maskCount[receiver]
@@ -387,7 +281,13 @@ def fuse_masks(fused_results, bb_threshold=0.1, mask_threshold=0.1, config=None,
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
-def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_compatibility=None, config=None,
+def __fuse_masks__(results, args: dict, config: Config = None, display=True, verbose=0, dynargs=None):
+    return fuse_masks(fused_results=results, bb_threshold=args.get('bb_threshold', 0.1),
+                      mask_threshold=args.get('mask_threshold', 0.1), config=config,
+                      displayProgress=' - Fusing overlapping masks' if display else None, verbose=verbose)
+
+
+def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_compatibility=None, config: Config = None,
                displayProgress: str = None, verbose=0):
     """
     Fuses overlapping masks of the different classes
@@ -408,16 +308,10 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
     masks = fused_results['masks']
     scores = fused_results['scores']
     class_ids = fused_results['class_ids']
+    bbAreas = fused_results.get('bbox_areas', np.ones(len(class_ids), dtype=int) * -1)
+    maskAreas = fused_results.get('mask_areas', np.ones(len(class_ids), dtype=int) * -1)
     indices = np.arange(len(class_ids))
 
-    if 'bbox_areas' in fused_results:
-        bbAreas = fused_results['bbox_areas']
-    else:
-        bbAreas = np.ones(len(class_ids), dtype=int) * -1
-    if 'mask_areas' in fused_results:
-        maskAreas = fused_results['mask_areas']
-    else:
-        maskAreas = np.ones(len(class_ids), dtype=int) * -1
     fusedWith = np.ones(len(class_ids), dtype=int) * -1
     maskCount = np.ones(len(class_ids), dtype=int)
 
@@ -436,14 +330,14 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
         current_indices = indices[np.isin(class_ids, _current_classes)]
         if displayProgress is not None:
             stepTotal = combination(len(current_indices), 2)
-            displayStep = max(round(total / 200), 1)
+            displayStep = max(round(stepTotal / 200), 1)
             current = 1
             progressBar(progressOffset, total, prefix=displayProgress)
         for current_idx, idxI in enumerate(current_indices):
             roi1 = rois[idxI]
             # Computation of the bounding box area if not done yet
             if bbAreas[idxI] == -1:
-                bbAreas[idxI] = get_bbox_area(roi1)
+                bbAreas[idxI] = utils.get_bbox_area(roi1)
 
             for idxJ in current_indices[current_idx + 1:]:
                 if displayProgress is not None:
@@ -465,10 +359,10 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
 
                 # Computation of the bounding box area if not done yet
                 if bbAreas[idxJ] == -1:
-                    bbAreas[idxJ] = get_bbox_area(roi2)
+                    bbAreas[idxJ] = utils.get_bbox_area(roi2)
 
                 # Computation of the bb intersection
-                bbIntersection = get_bboxes_intersection(roi1, roi2)
+                bbIntersection = utils.get_bboxes_intersection(roi1, roi2)
 
                 # We skip next part if bb intersection not representative enough
                 partOfRoI1 = bbIntersection / bbAreas[idxI]
@@ -485,24 +379,24 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
                     mask1 = masks[:, :, idxI]
                     mask2 = masks[:, :, idxJ]
 
-                    if config is not None and config.USE_MINI_MASK:
-                        mask1, mask2 = expand_masks(mask1, roi1, mask2, roi2)
+                    if config is not None and config.is_using_mini_mask():
+                        mask1, mask2 = utils.expand_masks(mask1, roi1, mask2, roi2)
 
                     if maskAreas[idxI] == -1:
-                        maskAreas[idxI], verbose_output = get_mask_area(mask1, verbose=verbose)
+                        maskAreas[idxI], verbose_output = utils.get_mask_area(mask1, verbose=verbose)
                         if verbose_output is not None:
                             hadPrinted = True
                             print("[{:03d}] {}".format(idxI, verbose_output))
 
                     if maskAreas[idxJ] == -1:
-                        maskAreas[idxJ], verbose_output = get_mask_area(mask2, verbose=verbose)
+                        maskAreas[idxJ], verbose_output = utils.get_mask_area(mask2, verbose=verbose)
                         if verbose_output is not None:
                             hadPrinted = True
                             print("[{:03d}] {}".format(idxJ, verbose_output))
 
                     # Computing intersection of mask 1 and 2 and computing its area
                     mask1AND2 = np.logical_and(mask1, mask2)
-                    mask1AND2Area, _ = get_mask_area(mask1AND2, verbose=verbose)
+                    mask1AND2Area, _ = utils.get_mask_area(mask1AND2, verbose=verbose)
                     partOfMask1 = mask1AND2Area / maskAreas[idxI]
                     partOfMask2 = mask1AND2Area / maskAreas[idxJ]
 
@@ -551,10 +445,10 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
 
                         receiverMask = masks[:, :, receiver]
                         giverMask = masks[:, :, giver]
-                        if config is not None and config.USE_MINI_MASK:
+                        if config is not None and config.is_using_mini_mask():
                             receiverRoI = rois[receiver]
                             giverRoI = rois[giver]
-                            receiverMask, giverMask = expand_masks(receiverMask, receiverRoI, giverMask, giverRoI)
+                            receiverMask, giverMask = utils.expand_masks(receiverMask, receiverRoI, giverMask, giverRoI)
                         fusedMask = np.logical_or(receiverMask, giverMask)
 
                         if verbose > 1:
@@ -574,14 +468,15 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
                         # If we are fusing masks from different classes, we use the one with best score
                         if class_ids[giver] != class_ids[receiver] and scores[receiver] < scores[giver]:
                             class_ids[receiver] = class_ids[giver]
-                        rois[receiver] = global_bbox(rois[receiver], rois[giver])
-                        if config is not None and config.USE_MINI_MASK:
-                            shifted_fusedRoI = shift_bbox(rois[receiver])
-                            masks[:, :, receiver] = minimize_mask(shifted_fusedRoI, fusedMask, config.MINI_MASK_SHAPE)
+                        rois[receiver] = utils.global_bbox(rois[receiver], rois[giver])
+                        if config is not None and config.is_using_mini_mask():
+                            shifted_fusedRoI = utils.shift_bbox(rois[receiver])
+                            masks[:, :, receiver] = utils.minimize_mask(shifted_fusedRoI, fusedMask,
+                                                                        config.get_mini_mask_shape())
                         else:
                             masks[:, :, receiver] = fusedMask
-                        bbAreas[receiver] = get_bbox_area(rois[receiver])
-                        maskAreas[receiver], _ = get_mask_area(fusedMask)
+                        bbAreas[receiver] = utils.get_bbox_area(rois[receiver])
+                        maskAreas[receiver], _ = utils.get_mask_area(fusedMask)
                         scores[receiver] = (scores[receiver] * maskCount[receiver] + scores[idxJ])
                         maskCount[receiver] += 1
                         scores[receiver] /= maskCount[receiver]
@@ -606,6 +501,14 @@ def fuse_class(fused_results, bb_threshold=0.1, mask_threshold=0.1, classes_comp
     rois = np.delete(rois, toDelete, axis=0)
     return {"rois": rois, "bbox_areas": bbAreas, "class_ids": class_ids,
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
+
+
+def __fuse_class__(results, args: dict, config: Config = None, display=True, verbose=0, dynargs=None):
+    return fuse_class(
+        fused_results=results, bb_threshold=args.get('bb_threshold', 0.1), config=config,
+        mask_threshold=args.get('mask_threshold', 0.1), classes_compatibility=args.get('classes_compatibility', None),
+        displayProgress=' - Fusing overlapping equivalent masks' if display else None, verbose=verbose
+    )
 
 
 class FilterBehavior(Enum):
@@ -651,17 +554,14 @@ def comparePriority(class_id1, class_id2, priority_table=None, default: FilterBe
         return default
 
 
-def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_table=None,
-                 included_threshold=0.9, including_threshold=0.6,
-                 config=None, displayProgress: str = None, verbose=0):
+def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_table=None, config: Config = None,
+                 displayProgress: str = None, verbose=0):
     """
     Post-prediction filtering to remove non-sense predictions
     :param fused_results: the results after fusion
     :param bb_threshold: the least part of overlapping bounding boxes to continue checking
     :param mask_threshold: the least part of a mask contained in another for it to be deleted
     :param priority_table: the priority table used to compare classes
-    :param included_threshold: the least part of a mask contained in another for it to be deleted
-    :param including_threshold: the least part of a mask containing another for it to be deleted
     :param config: the config to get mini_mask informations
     :param displayProgress: if string given, prints a progress bar using this as prefix
     :param verbose: 0 : nothing, 1+ : errors/problems, 2 : general information
@@ -671,15 +571,8 @@ def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_t
     masks = fused_results['masks']
     scores = fused_results['scores']
     class_ids = fused_results['class_ids']
-
-    if 'bbox_areas' in fused_results:
-        bbAreas = fused_results['bbox_areas']
-    else:
-        bbAreas = np.ones(len(class_ids), dtype=int) * -1
-    if 'mask_areas' in fused_results:
-        maskAreas = fused_results['mask_areas']
-    else:
-        maskAreas = np.ones(len(class_ids), dtype=int) * -1
+    bbAreas = fused_results.get('bbox_areas', np.ones(len(class_ids), dtype=int) * -1)
+    maskAreas = fused_results.get('mask_areas', np.ones(len(class_ids), dtype=int) * -1)
 
     toDelete = []
     if displayProgress is not None:
@@ -696,7 +589,7 @@ def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_t
 
         # If the area of this RoI has not been computed
         if bbAreas[i] == -1:
-            bbAreas[i] = get_bbox_area(roi1)
+            bbAreas[i] = utils.get_bbox_area(roi1)
 
         # Then we check for each RoI that has not already been checked
         for j in range(i + 1, len(rois)):
@@ -717,10 +610,10 @@ def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_t
 
             # If the area of the 2nd RoI has not been computed
             if bbAreas[j] == -1:
-                bbAreas[j] = get_bbox_area(roi2)
+                bbAreas[j] = utils.get_bbox_area(roi2)
 
             # Computation of the bb intersection
-            intersection = get_bboxes_intersection(roi1, roi2)
+            intersection = utils.get_bboxes_intersection(roi1, roi2)
 
             # We skip next part if bb intersection not representative enough
             partOfR1 = intersection / bbAreas[i]
@@ -730,23 +623,23 @@ def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_t
                 mask1 = masks[:, :, i]
                 mask2 = masks[:, :, j]
 
-                if config is not None and config.USE_MINI_MASK:
-                    mask1, mask2 = expand_masks(mask1, roi1, mask2, roi2)
+                if config is not None and config.is_using_mini_mask():
+                    mask1, mask2 = utils.expand_masks(mask1, roi1, mask2, roi2)
 
                 if maskAreas[i] == -1:
-                    maskAreas[i], _ = get_mask_area(mask1, verbose=verbose)
+                    maskAreas[i], _ = utils.get_mask_area(mask1, verbose=verbose)
                     if maskAreas[i] == 0:
                         print(i, maskAreas[i])
 
                 # Getting second mask and computing its area if not done yet
                 if maskAreas[j] == -1:
-                    maskAreas[j], _ = get_mask_area(mask2, verbose=verbose)
+                    maskAreas[j], _ = utils.get_mask_area(mask2, verbose=verbose)
                     if maskAreas[j] == 0:
                         print(j, maskAreas[j])
 
                 # Computing intersection of mask 1 and 2 and computing its area
                 mask1AND2 = np.logical_and(mask1, mask2)
-                mask1AND2Area, _ = get_mask_area(mask1AND2, verbose=verbose)
+                mask1AND2Area, _ = utils.get_mask_area(mask1AND2, verbose=verbose)
                 partOfMask1 = mask1AND2Area / maskAreas[i]
                 partOfMask2 = mask1AND2Area / maskAreas[j]
 
@@ -793,8 +686,16 @@ def filter_masks(fused_results, bb_threshold=0.5, mask_threshold=0.2, priority_t
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
+def __filter_masks__(results, args: dict, config: Config = None, display=True, verbose=0, dynargs=None):
+    return filter_masks(
+        fused_results=results, bb_threshold=args.get("bb_threshold", 0.5), verbose=verbose,
+        mask_threshold=args.get("mask_threshold", 0.2), priority_table=args.get('priority_table', None),
+        config=config, displayProgress=" - Removing non-sense masks" if display else None
+    )
+
+
 def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_hierarchy=None,
-                        config=None, displayProgress: str = None, verbose=0):
+                        config: Config = None, displayProgress: str = None, verbose=0):
     """
     Post-prediction filtering to remove non-sense predictions
     :param results: the results after fusion
@@ -813,8 +714,8 @@ def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_h
     masks = results['masks']
     scores = results['scores']
     class_ids = results['class_ids']
-    bbAreas = results['bbox_areas']
-    maskAreas = results['mask_areas']
+    bbAreas = results.get('bbox_areas', np.ones(len(class_ids), dtype=int) * -1)
+    maskAreas = results.get('mask_areas', np.ones(len(class_ids), dtype=int) * -1)
     indices = np.arange(len(class_ids))
     if displayProgress is not None:
         total = len(classes_hierarchy)
@@ -849,7 +750,7 @@ def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_h
                 roi1 = rois[parentId]
                 # If the area of this RoI has not been computed
                 if bbAreas[parentId] == -1:
-                    bbAreas[parentId] = get_bbox_area(roi1)
+                    bbAreas[parentId] = utils.get_bbox_area(roi1)
                 # Then we check for each RoI that has not already been checked
                 parentMaskHasChild = classes_hierarchy[parentClass]["keep_if_no_child"]
                 for childId in childClassIds:
@@ -865,10 +766,10 @@ def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_h
 
                     # If the area of the 2nd RoI has not been computed
                     if bbAreas[childId] == -1:
-                        bbAreas[childId] = get_bbox_area(roi2)
+                        bbAreas[childId] = utils.get_bbox_area(roi2)
 
                     # Computation of the bb intersection
-                    intersection = get_bboxes_intersection(roi1, roi2)
+                    intersection = utils.get_bboxes_intersection(roi1, roi2)
 
                     # We skip next part if bb intersection not representative enough
                     partOfR1 = intersection / bbAreas[parentId]
@@ -878,18 +779,18 @@ def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_h
                         mask1 = masks[:, :, parentId]
                         mask2 = masks[:, :, childId]
 
-                        if config is not None and config.USE_MINI_MASK:
-                            mask1, mask2 = expand_masks(mask1, roi1, mask2, roi2)
+                        if config is not None and config.is_using_mini_mask():
+                            mask1, mask2 = utils.expand_masks(mask1, roi1, mask2, roi2)
 
                         # Getting second mask and computing its area if not done yet
                         if maskAreas[childId] == -1:
-                            maskAreas[childId], _ = get_mask_area(mask2, verbose=verbose)
+                            maskAreas[childId], _ = utils.get_mask_area(mask2, verbose=verbose)
                             if maskAreas[childId] == 0:
                                 print(childId, maskAreas[childId])
 
                         # Computing intersection of mask 1 and 2 and computing its area
                         mask1AND2 = np.logical_and(mask1, mask2)
-                        mask1AND2Area, _ = get_mask_area(mask1AND2, verbose=verbose)
+                        mask1AND2Area, _ = utils.get_mask_area(mask1AND2, verbose=verbose)
                         partOfMask2 = mask1AND2Area / maskAreas[childId]
 
                         # We check if the common area represents more than the vessel_threshold of the non-vessel mask
@@ -931,7 +832,18 @@ def filter_orphan_masks(results, bb_threshold=0.5, mask_threshold=0.5, classes_h
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
-def filter_small_masks(fused_results, min_size=300, classes=None, config=None, displayProgress: str = None, verbose=0):
+def __filter_orphans_masks__(results, args: dict, config: Config = None, display=True, verbose=0, dynargs=None):
+    if 'classes_hierarchy' in args and type(list(args['classes_hierarchy'].keys())[0]) is str:
+        args['classes_hierarchy'] = {int(key): value for key, value in args['classes_hierarchy'].items()}
+    return filter_orphan_masks(
+        results=results, bb_threshold=args.get("bb_threshold", 0.5), verbose=verbose,
+        mask_threshold=args.get("mask_threshold", 0.5), classes_hierarchy=args.get('classes_hierarchy', None),
+        config=config, displayProgress=" - Removing orphan masks" if display else None
+    )
+
+
+def filter_small_masks(fused_results, min_size=300, classes=None, config: Config = None, displayProgress: str = None,
+                       verbose=0):
     """
     Post-prediction filtering to remove masks that are too small
     :param fused_results: the results after fusion
@@ -946,15 +858,8 @@ def filter_small_masks(fused_results, min_size=300, classes=None, config=None, d
     masks = fused_results['masks']
     scores = fused_results['scores']
     class_ids = fused_results['class_ids']
-
-    if 'bbox_areas' in fused_results:
-        bbAreas = fused_results['bbox_areas']
-    else:
-        bbAreas = np.ones(len(class_ids), dtype=int) * -1
-    if 'mask_areas' in fused_results:
-        maskAreas = fused_results['mask_areas']
-    else:
-        maskAreas = np.ones(len(class_ids), dtype=int) * -1
+    bbAreas = fused_results.get('bbox_areas', np.ones(len(class_ids), dtype=int) * -1)
+    maskAreas = fused_results.get('mask_areas', np.ones(len(class_ids), dtype=int) * -1)
 
     toDelete = []
     if displayProgress is not None:
@@ -969,17 +874,17 @@ def filter_small_masks(fused_results, min_size=300, classes=None, config=None, d
         if classes is None or class_ids[idx] in classes:
             # If the area of this RoI has not been computed
             if bbAreas[idx] == -1:
-                bbAreas[idx] = get_bbox_area(roi)
+                bbAreas[idx] = utils.get_bbox_area(roi)
 
             if bbAreas[idx] >= min_size:
                 mask = masks[:, :, idx]
 
-                if config is not None and config.USE_MINI_MASK:
-                    shifted_roi = shift_bbox(rois[idx])
-                    mask = expand_mask(shifted_roi, masks[:, :, idx], shifted_roi[2:])
+                if config is not None and config.is_using_mini_mask():
+                    shifted_roi = utils.shift_bbox(rois[idx])
+                    mask = utils.expand_mask(shifted_roi, masks[:, :, idx], shifted_roi[2:])
 
                 if maskAreas[idx] == -1:
-                    maskAreas[idx], _ = get_mask_area(mask, verbose=verbose)
+                    maskAreas[idx], _ = utils.get_mask_area(mask, verbose=verbose)
 
                 if maskAreas[idx] < min_size:
                     toDelete.append(idx)
@@ -1004,6 +909,12 @@ def filter_small_masks(fused_results, min_size=300, classes=None, config=None, d
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
+def __filter_small_masks__(results, args: dict, config: Config = None, display=True, verbose=0, dynargs=None):
+    return filter_small_masks(fused_results=results, min_size=args.get('min_size', 300),
+                              classes=args.get('classes', None), config=config,
+                              displayProgress=" - Removing small masks" if display else None, verbose=verbose)
+
+
 def compute_on_border_part(image, mask):
     """
     Return part of mask not being on image as a float
@@ -1022,7 +933,7 @@ def compute_on_border_part(image, mask):
     return round(1. - on_image_area / maskArea, 2)
 
 
-def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes=None, config=None,
+def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes=None, config: Config = None,
                            displayProgress: str = None, verbose=0):
     """
     Post-prediction filtering to remove masks that are too small
@@ -1040,16 +951,9 @@ def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes
     masks = fused_results['masks']
     scores = fused_results['scores']
     class_ids = fused_results['class_ids']
+    bbAreas = fused_results.get('bbox_areas', np.ones(len(class_ids), dtype=int) * -1)
+    maskAreas = fused_results.get('mask_areas', np.ones(len(class_ids), dtype=int) * -1)
     indices = np.arange(len(class_ids))
-
-    if 'bbox_areas' in fused_results:
-        bbAreas = fused_results['bbox_areas']
-    else:
-        bbAreas = np.ones(len(class_ids), dtype=int) * -1
-    if 'mask_areas' in fused_results:
-        maskAreas = fused_results['mask_areas']
-    else:
-        maskAreas = np.ones(len(class_ids), dtype=int) * -1
 
     if classes is not None:
         if type(classes) is int:
@@ -1069,16 +973,16 @@ def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes
     for iterator, idx in enumerate(indices):
         roi = rois[idx]
 
-        if config is not None and config.USE_MINI_MASK:
-            shifted_roi = shift_bbox(roi)
-            mask = expand_mask(shifted_roi, masks[:, :, idx], shifted_roi[2:])
+        if config is not None and config.is_using_mini_mask():
+            shifted_roi = utils.shift_bbox(roi)
+            mask = utils.expand_mask(shifted_roi, masks[:, :, idx], shifted_roi[2:])
         else:
             mask = masks[roi[0]:roi[2], roi[1]:roi[3], idx]
 
         imagePart = image[roi[0]:roi[2], roi[1]:roi[3], :]
 
         if maskAreas[idx] == -1:
-            maskAreas[idx], _ = get_mask_area(mask, verbose=verbose)
+            maskAreas[idx], _ = utils.get_mask_area(mask, verbose=verbose)
 
         if compute_on_border_part(imagePart, mask) > onBorderThreshold:
             toDelete.append(idx)
@@ -1101,201 +1005,312 @@ def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes
             "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
-def getCountAndArea(results: dict, classesInfo: dict, selectedClasses: [str], config=None):
+def __filter_on_border_masks__(results, args: dict, config: Config = None, display=True, verbose=0, dynargs=None):
+    return filter_on_border_masks(
+        fused_results=results, image=dynargs['image'], onBorderThreshold=args.get('on_border_threshold', 0.25),
+        classes=args.get('classes', None), config=config, verbose=verbose,
+        displayProgress=" - Removing border masks" if display else None
+    )
+
+
+def exclude_masks_part(fused_results, bb_threshold=0.5, mask_threshold=0.2, confidence_threshold=0.7, classes=None,
+                       config: Config = None, displayProgress: str = None, verbose=0):
     """
-    Computing count and area of classes from results
-    :param results: the results
-    :param classesInfo: the dict with information about name, inference id, id... parameters of each class
-    :param selectedClasses: list of classes' names that you want to get statistics on
+    Post-prediction filtering to exclude parts of masks of selected classes that are overlapping
+    :param fused_results: the results after fusion
+    :param bb_threshold: the least part of overlapping bounding boxes to continue checking
+    :param mask_threshold: the least part of a mask contained in another for it to be deleted
+    :param confidence_threshold: the least confidence of a mask that will keep the common part
+    :param classes: list of classes ids to check, ex: [<class that will be reduced>: [<class(es) that could be kept>]]
     :param config: the config to get mini_mask informations
-    :return: Dict of "className": {"count": int, "area": int} elements for each classes
+    :param displayProgress: if string given, prints a progress bar using this as prefix
+    :param verbose: 0 : nothing, 1+ : errors/problems, 2 : general information
+    :return:
     """
-    res = {}
+    if classes is None or classes == {}:
+        return fused_results
 
-    rois = results['rois']
-    masks = results['masks']
-    class_ids = results['class_ids']
+    rois = fused_results['rois']
+    masks = fused_results['masks']
+    scores = fused_results['scores']
+    class_ids = fused_results['class_ids']
+    bbAreas = fused_results.get('bbox_areas', np.ones(len(class_ids), dtype=int) * -1)
+    maskAreas = fused_results.get('mask_areas', np.ones(len(class_ids), dtype=int) * -1)
+    indices = np.arange(len(class_ids))
 
-    # Getting the inferenceIDs of the wanted classes
-    selectedClassesID = {}
-    for classInfo in classesInfo:
-        if classInfo["name"] in selectedClasses:
-            selectedClassesID[classInfo["inferenceID"]] = classInfo["name"]
-            res[classInfo["name"]] = {"count": 0, "area": 0}
+    indices_list = []
+    for extrudedClass in classes:
+        e_class_id = config.get_class_id(extrudedClass)
+        e_indices = indices[np.isin(class_ids, [e_class_id])]
 
-    # For each predictions, if class ID matching with one we want
-    for index, classID in enumerate(class_ids):
-        if classID in selectedClassesID.keys():
-            # Getting current values of count and area
-            className = selectedClassesID[classID]
-            res[className]["count"] += 1
-            # Getting the area of current mask
-            if config is not None and config.USE_MINI_MASK:
-                shifted_roi = shift_bbox(rois[index])
-                mask = expand_mask(shifted_roi, masks[:, :, index], shifted_roi[2:])
-            else:
-                yStart, xStart, yEnd, xEnd = rois[index]
-                mask = masks[yStart:yEnd, xStart:xEnd, index]
-            mask = mask.astype(np.uint8)
-            if "mask_areas" in results and results['mask_areas'][index] != -1:
-                area = int(results['mask_areas'][index])
-            else:
-                area, _ = get_mask_area(mask)
-            res[className]["area"] += area  # Cast to int to avoid "json 'int64' not serializable"
+        o_class_ids = [config.get_class_id(c_id) for c_id in (classes[extrudedClass]
+                                                              if type(classes[extrudedClass]) is list
+                                                              else [classes[extrudedClass]])]
+        o_indices = indices[np.isin(class_ids, [o_class_ids])]
+        indices_list.append((e_indices, o_indices))
 
-    return res
+    toDelete = []
+    if displayProgress is not None:
+        total = sum(len(o) * len(e) for e, o in indices_list)
+        displayStep = max(round(total / 200), 1)
+        start_time = time()
+        duration = ""
+        progressBar(0, total, prefix=displayProgress)
+
+    iterator = 0
+    for e_indices, o_indices in indices_list:
+        for e_id in e_indices:
+            e_roi = rois[e_id]
+
+            skip_e = False
+            for o_id in o_indices:
+                iterator += 1
+                o_roi = rois[o_id]
+
+                # Test on scores if confidence threshold is not given, else if confidence is enough
+                if (confidence_threshold is None and scores[e_id] > scores[o_id]) or \
+                        (confidence_threshold is not None and scores[o_id] < confidence_threshold):
+                    continue
+
+                intersection = utils.get_bboxes_intersection(e_roi, o_roi)
+
+                # We skip next part if bb intersection not representative enough
+                partOfRE = intersection / bbAreas[e_id]
+                partOfRO = intersection / bbAreas[o_id]
+                if partOfRE > bb_threshold or partOfRO > bb_threshold:
+                    # Getting first mask and computing its area if not done yet
+                    maskE = masks[..., e_id]
+                    maskO = masks[..., o_id]
+
+                    if config is not None and config.is_using_mini_mask():
+                        maskE, maskO = utils.expand_masks(maskE, e_roi, maskO, o_roi)
+
+                    if maskAreas[e_id] == -1:
+                        maskAreas[e_id], _ = utils.get_mask_area(maskE, verbose=verbose)
+                        if maskAreas[e_id] == 0:
+                            print(e_id, maskAreas[e_id])
+
+                    # Getting second mask and computing its area if not done yet
+                    if maskAreas[o_id] == -1:
+                        maskAreas[o_id], _ = utils.get_mask_area(maskO, verbose=verbose)
+                        if maskAreas[o_id] == 0:
+                            print(o_id, maskAreas[o_id])
+
+                    # Computing intersection of mask 1 and 2 and computing its area
+                    maskEANDO = np.logical_and(maskE, maskO)
+                    maskEANDOArea, _ = utils.get_mask_area(maskEANDO, verbose=verbose)
+                    partOfMask1 = maskEANDOArea / maskAreas[e_id]
+                    partOfMask2 = maskEANDOArea / maskAreas[o_id]
+
+                    # We check if the common area represents more than the mask_threshold
+                    if partOfMask1 > mask_threshold or partOfMask2 > mask_threshold:
+                        notMaskO = np.bitwise_not(maskO)
+                        maskE = np.bitwise_and(maskE, notMaskO)
+                        maskAreas[e_id], _ = utils.get_mask_area(maskE, verbose=verbose)
+                        if maskAreas[e_id] == 0:
+                            toDelete.append(e_id)
+                            skip_e = True
+                            break
+                        else:
+                            if config.is_using_mini_mask():
+                                roiEAndO = list(utils.global_bbox(e_roi, o_roi))[:2] * 2
+                                shifted_bbox = utils.shift_bbox(e_roi, customShift=roiEAndO[:2])
+                                rois[e_id, ...] = utils.extract_bboxes(maskE) + roiEAndO
+                                masks[..., e_id] = utils.minimize_mask(shifted_bbox, maskE,
+                                                                       config.get_mini_mask_shape())
+                            else:
+                                masks[..., e_id] = maskE
+                                rois[e_id, ...] = utils.extract_bboxes(maskE)
+
+                if displayProgress is not None and (iterator % displayStep == 0 or iterator == total):
+                    if iterator == total:
+                        duration = f"Duration = {formatTime(round(time() - start_time))}"
+                    progressBar(iterator, total, prefix=displayProgress, suffix=duration)
+            if skip_e:
+                continue
+
+    if displayProgress is not None and duration == "":
+        duration = f"Duration = {formatTime(round(time() - start_time))}"
+        progressBar(total, total, prefix=displayProgress, suffix=duration, forceNewLine=True)
+
+    # Deletion of unwanted results
+    scores = np.delete(scores, toDelete)
+    class_ids = np.delete(class_ids, toDelete)
+    bbAreas = np.delete(bbAreas, toDelete)
+    maskAreas = np.delete(maskAreas, toDelete)
+    masks = np.delete(masks, toDelete, axis=2)
+    rois = np.delete(rois, toDelete, axis=0)
+    return {"rois": rois, "bbox_areas": bbAreas, "class_ids": class_ids,
+            "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
-def getPoints(mask, xOffset=0, yOffset=0, epsilon=1,
-              show=False, waitSeconds=10, info=False):
+def __exclude_masks_part__(results, args: dict, config: Config = None, display=True, verbose=0, dynargs=None):
+    return exclude_masks_part(
+        fused_results=results, bb_threshold=args.get('bb_threshold', 0.5),
+        mask_threshold=args.get('mask_threshold', 0.2), confidence_threshold=args.get('confidence_threshold', 0.7),
+        classes=args.get('classes', None), config=config, verbose=verbose,
+        displayProgress=" - Excluding part of masks" if display else None
+    )
+
+
+def keep_biggest_mask(fused_results, bb_threshold=0.5, mask_threshold=0.2, classes=None,
+                      config: Config = None, displayProgress: str = None, verbose=0):
     """
-    Return a list of points describing the given mask as a polygon
-    :param mask: the mask you want the points
-    :param xOffset: if using a RoI the x-axis offset used
-    :param yOffset: if using a RoI the y-axis offset used
-    :param epsilon: epsilon parameter of cv2.approxPolyDP() method
-    :param show: whether you want or not to display the approximated mask so you can see it
-    :param waitSeconds: time in seconds to wait before closing automatically the displayed masks, or press ESC to close
-    :param info: whether you want to display some information (mask size, number of predicted points, number of
-    approximated points...) or not
-    :return: 2D-array of points coordinates : [[x, y]]
-    """
-    pts = None
-    contours, _ = cv2.findContours(mask, method=cv2.RETR_TREE, mode=cv2.CHAIN_APPROX_SIMPLE)
-
-    if len(contours) > 0:
-        # https://stackoverflow.com/questions/41879315/opencv-visualize-polygonal-curves-extracted-with-cv2-approxpolydp
-        # Finding biggest area
-        cnt = contours[0]
-        max_area = cv2.contourArea(cnt)
-
-        for cont in contours:
-            if cv2.contourArea(cont) > max_area:
-                cnt = cont
-                max_area = cv2.contourArea(cont)
-
-        res = cv2.approxPolyDP(cnt, epsilon, True)
-        pts = []
-        for point in res:
-            # Casting coordinates to int, not doing this makes crash json dump
-            pts.append([int(point[0][0] + xOffset), int(point[0][1] + yOffset)])
-
-        if info:
-            maskHeight, maskWidth = mask.shape
-            nbPtPred = contours[0].shape[0]
-            nbPtApprox = len(pts)
-            print("Mask size : {}x{}".format(maskWidth, maskHeight))
-            print("Nb points prediction : {}".format(nbPtPred))
-            print("Nb points approx : {}".format(nbPtApprox))
-            print("Compression rate : {:5.2f}%".format(nbPtPred / nbPtApprox * 100))
-            temp = np.array(pts)
-            xMin = np.amin(temp[:, 0])
-            xMax = np.amax(temp[:, 0])
-            yMin = np.amin(temp[:, 1])
-            yMax = np.amax(temp[:, 1])
-            print("{} <= X <= {}".format(xMin, xMax))
-            print("{} <= Y <= {}".format(yMin, yMax))
-            print()
-
-        if show:
-            img = np.zeros(mask.shape, np.int8)
-            img = cv2.drawContours(img, [res], -1, 255, 2)
-            cv2.imshow('before {}'.format(img.shape), mask * 255)
-            cv2.imshow("approxPoly", img * 255)
-            cv2.waitKey(max(waitSeconds, 1) * 1000)
-
-    return pts
-
-
-def export_annotations(image_info: dict, results: dict, classes_info: [{int, str, str}],
-                       adapter: AnnotationAdapter.__class__, save_path="predicted", config=None, verbose=0):
-    """
-    Exports predicted results to an XML annotation file using given XMLExporter
-    :param image_info: Dict with at least {"NAME": str, "HEIGHT": int, "WIDTH": int} about the inferred image
-    :param results: inference results of the image
-    :param classes_info: list of class names, including background
-    :param adapter: class inheriting XMLExporter
-    :param save_path: path to the dir you want to save the annotation file
+    Post-prediction filtering to delete smallest mask between two overlapping
+    :param fused_results: the results after fusion
+    :param bb_threshold: the least part of overlapping bounding boxes to continue checking
+    :param mask_threshold: the least part of a mask contained in another for it to be deleted
+    :param classes: list of classes ids to check, ex: {<a class to test>: [<class(es) to test at the same time>]}
     :param config: the config to get mini_mask informations
-    :param verbose: verbose level of the method (0 = nothing, 1 = information)
-    :return: None
+    :param displayProgress: if string given, prints a progress bar using this as prefix
+    :param verbose: 0 : nothing, 1+ : errors/problems, 2 : general information
+    :return:
     """
-    isASAPAdapter = adapter is ASAPAdapter
-    isLabelMeAdapter = adapter is LabelMeAdapter
-    assert not (isASAPAdapter and isLabelMeAdapter)
+    if classes is None or classes == {}:
+        return fused_results
 
-    if verbose > 0:
-        if isASAPAdapter:
-            print("Exporting to ASAP annotation file format.")
-        if isLabelMeAdapter:
-            print("Exporting to LabelMe annotation file format.")
+    rois = fused_results['rois']
+    masks = fused_results['masks']
+    scores = fused_results['scores']
+    class_ids = fused_results['class_ids']
+    bbAreas = fused_results.get('bbox_areas', np.ones(len(class_ids), dtype=int) * -1)
+    maskAreas = fused_results.get('mask_areas', np.ones(len(class_ids), dtype=int) * -1)
+    indices = np.arange(len(class_ids))
 
-    rois = results['rois']
-    masks = results['masks']
-    class_ids = results['class_ids']
-    height = masks.shape[0]
-    width = masks.shape[1]
-    adapter_instance = adapter({"name": image_info['NAME'], "height": image_info['HEIGHT'],
-                                'width': image_info['WIDTH'], 'format': image_info['IMAGE_FORMAT']},
-                               verbose=verbose)
-    # For each prediction
-    for i in range(masks.shape[2]):
-        if config is not None and config.USE_MINI_MASK:
-            shifted_roi = shift_bbox(rois[i])
-            shifted_roi += [5, 5, 5, 5]
-            image_size = shifted_roi[2:] + [5, 5]
-            mask = expand_mask(shifted_roi, masks[:, :, i], image_size)
-            yStart, xStart = rois[i][:2] - [5, 5]
-        else:
-            # Getting the RoI coordinates and the corresponding area
-            # y1, x1, y2, x2
-            yStart, xStart, yEnd, xEnd = rois[i]
-            yStart = max(yStart - 10, 0)
-            xStart = max(xStart - 10, 0)
-            yEnd = min(yEnd + 10, height)
-            xEnd = min(xEnd + 10, width)
-            mask = masks[yStart:yEnd, xStart:xEnd, i]
+    indices_list = []
+    for firstClass in classes:
+        f_class_id = config.get_class_id(firstClass)
+        f_indices = indices[np.isin(class_ids, [f_class_id])]
 
-        # Getting list of points coordinates and adding the prediction to XML
-        points = getPoints(np.uint8(mask), xOffset=xStart, yOffset=yStart, show=False, waitSeconds=0, info=False)
-        if points is None:
-            continue
-        classInfo = None
-        iterator = 0
-        # Find the first class not to be ignored with the same id
-        while classInfo is None:
-            temp = classes_info[iterator]
-            if not temp["ignore"] and temp["inferenceID"] == class_ids[i]:
-                classInfo = temp
-            iterator += 1
-        adapter_instance.addAnnotation(classInfo, points)
+        o_class_ids = [config.get_class_id(c_id) for c_id in (classes[firstClass]
+                                                              if type(classes[firstClass]) is list
+                                                              else [classes[firstClass]])]
+        o_indices = indices[np.isin(class_ids, [o_class_ids])]
+        indices_list.append((f_indices, o_indices))
 
-    for classInfo in classes_info:
-        if classInfo["id"] == 0:
-            continue
-        adapter_instance.addAnnotationClass(classInfo)
+    toDelete = []
+    if displayProgress is not None:
+        total = sum(len(o) * len(e) for e, o in indices_list)
+        displayStep = max(round(total / 200), 1)
+        start_time = time()
+        duration = ""
+        progressBar(0, total, prefix=displayProgress)
 
-    os.makedirs(save_path, exist_ok=True)
-    adapter_instance.saveToFile(save_path, image_info['NAME'])
+    iterator = 0
+    for f_indices, o_indices in indices_list:
+        for f_id in f_indices:
+
+            if f_id in toDelete:
+                continue
+
+            f_roi = rois[f_id]
+
+            skip_f = False
+            for o_id in o_indices:
+                iterator += 1
+                break_o = False
+                if o_id not in toDelete:
+                    o_roi = rois[o_id]
+
+                    intersection = utils.get_bboxes_intersection(f_roi, o_roi)
+
+                    # We skip next part if bb intersection not representative enough
+                    partOfRF = intersection / bbAreas[f_id]
+                    partOfRO = intersection / bbAreas[o_id]
+                    if partOfRF > bb_threshold or partOfRO > bb_threshold:
+                        # Getting first mask and computing its area if not done yet
+                        maskF = masks[..., f_id]
+                        maskO = masks[..., o_id]
+
+                        if config is not None and config.is_using_mini_mask():
+                            maskF, maskO = utils.expand_masks(maskF, f_roi, maskO, o_roi)
+
+                        if maskAreas[f_id] == -1:
+                            maskAreas[f_id], _ = utils.get_mask_area(maskF, verbose=verbose)
+                            if maskAreas[f_id] == 0:
+                                print(f_id, maskAreas[f_id])
+
+                        # Getting second mask and computing its area if not done yet
+                        if maskAreas[o_id] == -1:
+                            maskAreas[o_id], _ = utils.get_mask_area(maskO, verbose=verbose)
+                            if maskAreas[o_id] == 0:
+                                print(o_id, maskAreas[o_id])
+
+                        # Computing intersection of mask 1 and 2 and computing its area
+                        maskEANDO = np.logical_and(maskF, maskO)
+                        maskEANDOArea, _ = utils.get_mask_area(maskEANDO, verbose=verbose)
+                        partOfMask1 = maskEANDOArea / maskAreas[f_id]
+                        partOfMask2 = maskEANDOArea / maskAreas[o_id]
+
+                        # We check if the common area represents more than the mask_threshold
+                        if partOfMask1 > mask_threshold or partOfMask2 > mask_threshold:
+                            if maskAreas[f_id] > maskAreas[o_id]:
+                                toDelete.append(o_id)
+                            elif maskAreas[o_id] > maskAreas[f_id]:
+                                skip_f = True
+                                toDelete.append(f_id)
+                                break_o = True
+
+                if displayProgress is not None and (iterator % displayStep == 0 or iterator == total):
+                    if iterator == total:
+                        duration = f"Duration = {formatTime(round(time() - start_time))}"
+                    progressBar(iterator, total, prefix=displayProgress, suffix=duration)
+
+                if break_o:
+                    break
+            if skip_f:
+                continue
+
+    if displayProgress is not None and duration == "":
+        duration = f"Duration = {formatTime(round(time() - start_time))}"
+        progressBar(total, total, prefix=displayProgress, suffix=duration, forceNewLine=True)
+
+    # Deletion of unwanted results
+    scores = np.delete(scores, toDelete)
+    class_ids = np.delete(class_ids, toDelete)
+    bbAreas = np.delete(bbAreas, toDelete)
+    maskAreas = np.delete(maskAreas, toDelete)
+    masks = np.delete(masks, toDelete, axis=2)
+    rois = np.delete(rois, toDelete, axis=0)
+    return {"rois": rois, "bbox_areas": bbAreas, "class_ids": class_ids,
+            "scores": scores, "masks": masks, "mask_areas": maskAreas}
 
 
-class PostProcessingMethod(Enum):
+def __keep_biggest_mask__(results, args: dict, config: Config = None, display=True, verbose=0, dynargs=None):
+    return keep_biggest_mask(
+        fused_results=results, bb_threshold=args.get('bb_threshold', 0.5), classes=args.get('classes', None),
+        mask_threshold=args.get('mask_threshold', 0.2), config=config, verbose=verbose,
+        displayProgress=" - Removing smallest overlapping masks" if display else None
+    )
+
+
+class PostProcessingMethod(DynamicMethod):
     MASK_FUSION = "fusion"
+    CLASS_FUSION = "class_fusion"
     MASK_FILTER = "filter"
     ORPHAN_FILTER = "orphan_filter"
     SMALL_FILTER = "small_filter"
     BORDER_FILTER = "border_filter"
-    GET_STATS = "statistics"
-    EXPORT_ANNOTATIONS = "export_as_annotations"
+    EXCLUDE_PART = "exclude_masks_part"
+    KEEP_BIGGEST = "keep_biggest_mask"
 
-    def method(self, args=None):
-        methods = {
-            PostProcessingMethod.MASK_FUSION.name: fuse_masks,
-            PostProcessingMethod.MASK_FILTER.name: filter_masks,
-            PostProcessingMethod.ORPHAN_FILTER.name: filter_orphan_masks,
-            PostProcessingMethod.SMALL_FILTER.name: filter_small_masks,
-            PostProcessingMethod.BORDER_FILTER.name: filter_on_border_masks,
-            PostProcessingMethod.GET_STATS.name: getCountAndArea,
-            PostProcessingMethod.EXPORT_ANNOTATIONS.name: export_annotations
+    def dynargs(self):
+        dynamic_args = {
+            PostProcessingMethod.BORDER_FILTER.name: ['image']
         }
-        return methods[self.name] if args is None else methods[self.name](args)
+        return dynamic_args.get(self.name, [])
+
+    def method(self, results=None, config: Config = None, args=None, dynargs=None, display=True, verbose=0):
+        methods = {
+            PostProcessingMethod.MASK_FUSION.name: __fuse_masks__,
+            PostProcessingMethod.CLASS_FUSION.name: __fuse_class__,
+            PostProcessingMethod.MASK_FILTER.name: __filter_masks__,
+            PostProcessingMethod.ORPHAN_FILTER.name: __filter_orphans_masks__,
+            PostProcessingMethod.SMALL_FILTER.name: __filter_small_masks__,
+            PostProcessingMethod.BORDER_FILTER.name: __filter_on_border_masks__,
+            PostProcessingMethod.EXCLUDE_PART.name: __exclude_masks_part__,
+            PostProcessingMethod.KEEP_BIGGEST.name: __keep_biggest_mask__
+        }
+        return methods[self.name] if results is None or args is None else methods[self.name](
+            results, args, config, display, verbose, dynargs
+        )

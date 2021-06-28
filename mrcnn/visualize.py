@@ -24,6 +24,7 @@ import IPython.display
 # Root directory of the project
 from common_utils import format_number
 from datasetTools.datasetDivider import CV2_IMWRITE_PARAM
+from mrcnn.Config import Config
 
 ROOT_DIR = os.path.abspath("../../")
 
@@ -159,14 +160,7 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     :return: None
     """
     matrix = np.copy(confusion_matrix)
-    # Adding background as first class
-    labels = class_names.copy()
-    if labels[0].lower() not in ['bg', 'background']:
-        labels.insert(0, "Background")
-    for i in range(len(labels)):
-        labels[i] = labels[i].replace('_', ' ').capitalize()
-
-    NB_CLASS = len(labels)
+    NB_CLASS = len(class_names)
 
     # plt.plot()
     fig, ax = plt.subplots(figsize=(9, 6.75), frameon=False)
@@ -190,12 +184,12 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     # Using class names as labels of both axis
     plt.xlabel("Predicted")
     ax.set_xticks(np.arange(NB_CLASS))
-    ax.set_xticklabels(labels)
+    ax.set_xticklabels(class_names)
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
     plt.ylabel("Ground Truth")
     ax.set_yticks(np.arange(NB_CLASS))
-    ax.set_yticklabels(labels)
+    ax.set_yticklabels(class_names)
 
     # Adding the text values above the image
     for i in range(NB_CLASS):
@@ -218,7 +212,7 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     del ax, fig
 
 
-def create_multiclass_mask(image_shape, results: dict, classes_hierarchy, config=None):
+def create_multiclass_mask(image_shape, results: dict, classes_hierarchy, config: Config = None):
     """
     Creates an image containing all the masks where pixel color is the mask's class ID
     :param image_shape: the shape of the initial image
@@ -241,7 +235,7 @@ def create_multiclass_mask(image_shape, results: dict, classes_hierarchy, config
             mask = masks[:, :, idx].astype(bool).astype(np.uint8) * 255
             roi = rois[idx]
             classID = int(class_ids[idx])
-            if config is not None and config.USE_MINI_MASK:
+            if config is not None and config.is_using_mini_mask():
                 shifted_bbox = utils.shift_bbox(roi)
                 mask = utils.expand_mask(shifted_bbox, mask, shifted_bbox[2:])
             res = apply_mask(res, mask, classID, 1, roi)
@@ -253,7 +247,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
                       figsize=(16, 16), ax=None, fig=None, image_format="jpg",
                       show_mask=True, show_bbox=True,
                       colors=None, colorPerClass=False, captions=None,
-                      fileName=None, save_cleaned_img=False, silent=False, config=None):
+                      fileName=None, save_cleaned_img=False, silent=False, config: Config = None):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -332,7 +326,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
         mask = masks[:, :, i]
         bbox = boxes[i]
         shift = np.array([0, 0])
-        if config is not None and config.USE_MINI_MASK:
+        if config is not None and config.is_using_mini_mask():
             shifted_bbox = utils.shift_bbox(bbox)
             shift = bbox[:2]
             mask = utils.expand_mask(shifted_bbox, mask, tuple(shifted_bbox[2:]))

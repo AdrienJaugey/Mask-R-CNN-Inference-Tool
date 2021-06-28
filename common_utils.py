@@ -131,3 +131,40 @@ def combination(setSize, combinationSize):
         y += 1
         i += 1
     return x
+
+
+def rgb_to_hex(r, g=0, b=0, a=0, alpha=False):
+    """
+    Returns the hexadecimal string of a color
+    :param r: red channel
+    :param g: green channel
+    :param b: blue channel
+    :param a: alpha channel
+    :param alpha: if True, alpha will be used
+    :return: color in a string format such as #abcdef
+    """
+    if type(r) is not list:
+        color = [r, g, b, a]
+    else:
+        color = r
+    hex = "#"
+    for channel in color[:(4 if alpha else 3)]:
+        temp = channel if type(channel) is int else int(round(channel * 255))
+        hex += f'{temp:02x}'
+    return hex
+
+
+def hex_to_rgb(hex_str: str, normalized=False):
+    """
+    Returns a list of channel values of a hexadecimal string color
+    :param hex_str: color in hexadecimal string format (ex: '#abcdef')
+    :param normalized: if True, color will be float between 0 and 1
+    :return: list of all channels
+    """
+    hex_str = hex_str.replace('#', '').replace('0x', '')
+    color = []
+    for idx in range(0, len(hex_str), 2):
+        color.append(int(hex_str[idx:idx + 2], 16))
+    if normalized:
+        color = [float(c) / 255 for c in color]
+    return color
