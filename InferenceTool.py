@@ -195,6 +195,8 @@ class InferenceTool:
         :return: image, imageInfo = {"PATH": str, "DIR_PATH": str, "FILE_NAME": str, "NAME": str, "HEIGHT": int,
         "WIDTH": int, "NB_DIV": int, "X_STARTS": list, "Y_STARTS": list, "HAS_ANNOTATION": bool}
         """
+        if not silent:
+            print(" - Preparing image before inference")
         image = None
         fullImage = None
         imageInfo = None
