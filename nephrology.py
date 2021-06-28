@@ -356,7 +356,7 @@ class NephrologyInferenceModel:
                     if self.__CONFIG.get_param()['fuse_base_class']:
                         dW.fuseClassMasks('data', imageInfo['NAME'], imageInfo['BASE_CLASS'],
                                           imageFormat=imageInfo['IMAGE_FORMAT'], deleteBaseMasks=True, silent=True)
-                    dW.cleanImage('data', imageInfo['NAME'], cleaningClass=imageInfo['BASE_CLASS'],
+                    dW.cleanImage('data', imageInfo['NAME'], cleaningClasses=imageInfo['BASE_CLASS'],
                                   cleanMasks=False, imageFormat=imageInfo['IMAGE_FORMAT'])
                     maskDirs = os.listdir(os.path.join('data', imageInfo['NAME']))
                     # If RoI mode is 'centered', inference will be done on base-class masks
