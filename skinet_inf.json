@@ -206,7 +206,7 @@
                     "box_epsilon": 20,
                     "test_masks": true,
                     "mask_threshold": 0.9,
-                    "count_zeros": false,
+                    "count_zeros": true,
                     "display_per_base_mask": false,
                     "display_global": true
                 }

@@ -387,6 +387,7 @@
                     "box_epsilon": 0,
                     "test_masks": true,
                     "mask_threshold": 0.9,
+                    "count_zeros": true,
                     "display_per_base_mask": false,
                     "display_global": true
                 }
