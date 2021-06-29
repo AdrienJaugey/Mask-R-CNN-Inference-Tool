@@ -145,7 +145,10 @@ class XMLAdapter(AnnotationAdapter, ABC):
         return fileName + '.xml'
 
     def __str__(self):
-        return et.tostring(self.root, encoding='unicode', method='xml', xml_declaration=True)
+        if 'xml_declaration' in et.tostring.__code__.co_varnames:
+            return et.tostring(self.root, encoding='unicode', method='xml', xml_declaration=True)
+        else:
+            return et.tostring(self.root, encoding='unicode', method='xml')
 
     @staticmethod
     def canRead(filePath):
