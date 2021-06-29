@@ -1,3 +1,11 @@
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+Dataset tools
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
 import os
 from abc import ABC, abstractmethod
 import xml.etree.ElementTree as et
@@ -137,7 +145,10 @@ class XMLAdapter(AnnotationAdapter, ABC):
         return fileName + '.xml'
 
     def __str__(self):
-        return et.tostring(self.root, encoding='unicode', method='xml', xml_declaration=True)
+        if 'xml_declaration' in et.tostring.__code__.co_varnames:
+            return et.tostring(self.root, encoding='unicode', method='xml', xml_declaration=True)
+        else:
+            return et.tostring(self.root, encoding='unicode', method='xml')
 
     @staticmethod
     def canRead(filePath):
