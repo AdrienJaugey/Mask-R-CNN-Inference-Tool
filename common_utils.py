@@ -26,12 +26,12 @@ def progressBar(value, maxValue, prefix="", suffix="", forceNewLine=False, size=
     :param empty: the character to use for the empty part of the bar
     :return: None
     """
-    percent = float(value) / maxValue
+    percent = 0. if maxValue == 0 else float(value) / maxValue
     nbFullChar = int(percent * size)
     bar = full * nbFullChar + (cursor if percent > 0 and nbFullChar < size else "")
     emptyBar = empty * (size - len(bar))
     print(f'\r{prefix} {bar}{emptyBar} {percent: 6.2%} {suffix}',
-          end='\n' if value == maxValue or forceNewLine else "", flush=True)
+          end='\n' if (value == maxValue and maxValue != 0) or forceNewLine else "", flush=True)
 
 
 def progressText(value, maxValue, onlyRaw=False, onlyPercent=False):

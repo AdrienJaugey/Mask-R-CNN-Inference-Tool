@@ -144,11 +144,15 @@ class XMLAdapter(AnnotationAdapter, ABC):
     def getSaveFileName(self, fileName):
         return fileName + '.xml'
 
-    def __str__(self):
+    @staticmethod
+    def __tostring__(node):
         if 'xml_declaration' in et.tostring.__code__.co_varnames:
-            return et.tostring(self.root, encoding='unicode', method='xml', xml_declaration=True)
+            return et.tostring(node, encoding='unicode', method='xml', xml_declaration=True)
         else:
-            return et.tostring(self.root, encoding='unicode', method='xml')
+            return et.tostring(node, encoding='unicode', method='xml')
+
+    def __str__(self):
+        return XMLAdapter.__tostring__(self.root)
 
     @staticmethod
     def canRead(filePath):

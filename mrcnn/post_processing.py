@@ -1001,6 +1001,13 @@ def filter_on_border_masks(fused_results, image, onBorderThreshold=0.25, classes
             if idx % displayStep == 0 or iterator == total:
                 progressBar(iterator, total, prefix=displayProgress, suffix=duration)
 
+    if displayProgress is not None and duration == "":
+        if total == 0:
+            duration = "Skipped (nothing to do)"
+        else:
+            duration = f"Duration = {formatTime(round(time() - start_time))}"
+        progressBar(1, 1, prefix=displayProgress, suffix=duration)
+
     # Deletion of unwanted results
     scores = np.delete(scores, toDelete)
     class_ids = np.delete(class_ids, toDelete)

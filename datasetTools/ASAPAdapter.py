@@ -163,5 +163,60 @@ class ASAPAdapter(XMLAdapter):
                     yCoordinate = points.attrib.get('Y')
                     points.set('X', str(int(xCoordinate) + xOffset))
                     points.set('Y', str(int(yCoordinate) + yOffset))
-            tree.write(filePath if outputFilePath is None else outputFilePath, encoding='unicode', xml_declaration=True)
+            if 'xml_declaration' in tree.write.__code__.co_varnames:
+                tree.write(filePath if outputFilePath is None else outputFilePath,
+                           encoding='unicode', xml_declaration=True)
+            else:
+                tree.write(filePath if outputFilePath is None else outputFilePath, encoding='unicode')
         return None
+
+    @staticmethod
+    def fuseAnnotationsFiles(filePaths: list, savePath: str):
+        """
+        Fuses multiple
+        :param filePaths:
+        :param savePath:
+        :return:
+        """
+        canRead = all([ASAPAdapter.canRead(filePath) for filePath in filePaths])
+        if not canRead:
+            raise TypeError('At least one given file path is not an ASAP annotation file')
+        if len(filePaths) < 2:
+            raise ValueError('You must provide at least two file paths')
+        tree = et.parse(filePaths[0])
+        root = tree.getroot()
+        groups = root.findall('./AnnotationGroups/Group')
+        annotations = root.findall('./Annotations/Annotation')
+        classes = [aClass.attrib.get('Name') for aClass in groups]
+
+        # Merging AnnotationsGroups and annotations
+        for filePath in filePaths[1:]:
+            tempTree = et.parse(filePath)
+            tempRoot = tempTree.getroot()
+            for aClass in tempRoot.findall('./AnnotationGroups/Group'):
+                className = aClass.attrib.get('Name')
+                if className not in classes:
+                    classes.append(className)
+                    groups.append(aClass)
+
+            for anAnnotation in tempRoot.findall('./Annotations/Annotation'):
+                annotations.append(anAnnotation)
+
+        newTree = et.ElementTree(element=et.Element("ASAP_Annotations"))
+        newRoot = newTree.getroot()
+        annotationsNode = et.Element('Annotations')
+        annotationsNode.text = "\n\t\t"
+        annotationsNode.tail = "\n\t"
+        for node in annotations:
+            annotationsNode.append(node)
+        newRoot.append(annotationsNode)
+        groupsNode = et.Element('AnnotationGroups')
+        groupsNode.text = "\n\t\t"
+        groupsNode.tail = "\n"
+        for node in groups:
+            groupsNode.append(node)
+        newRoot.append(groupsNode)
+        if 'xml_declaration' in tree.write.__code__.co_varnames:
+            newTree.write(savePath, encoding='unicode', xml_declaration=True)
+        else:
+            newTree.write(savePath, encoding='unicode')
