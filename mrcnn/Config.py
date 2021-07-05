@@ -341,6 +341,25 @@ class Config:
         if self.has_to_export(mode):
             return self.get_mode_config(mode)['export']
 
+    def has_to_export_cleaned_img(self, mode: str = None):
+        """
+        Returns True if given/current mode has to exports a cleaned image
+        :param mode: If given, specifies the mode for which you want the info. Special modes: first, previous, next
+        :return: bool
+        """
+        mode_config = self.get_mode_config(mode)
+        if mode_config is not None:
+            return mode_config.get('export_cleaned_image', None) is not None
+
+    def get_export_param_cleaned_img(self, mode: str = None):
+        """
+        Returns cleaned image export parameters of the given/current mode
+        :param mode: If given, specifies the mode for which you want the info. Special modes: first, previous, next
+        :return: export parameters as a dict
+        """
+        if self.has_to_export(mode):
+            return self.get_mode_config(mode)['export_cleaned_image']
+
     def has_to_return(self, mode: str = None):
         """
         Returns True if given/current mode returns at least a part of its results

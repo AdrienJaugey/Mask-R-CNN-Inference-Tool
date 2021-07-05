@@ -12,10 +12,12 @@ Updated/Modified by Adrien JAUGEY
 """
 import json
 import logging
+import os
 import random
 import shutil
 import urllib.request
 import warnings
+import zipfile
 from distutils.version import LooseVersion
 
 import cv2
@@ -29,8 +31,8 @@ from mrcnn.Config import Config
 from mrcnn.visualize import create_multiclass_mask
 from datasetTools import datasetDivider as dD
 
-# URL from which to download the latest COCO trained weights
-COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
+# URL from which to download the latest trained weights
+WEIGHTS_URL = []
 
 
 ############################################################
@@ -1091,17 +1093,22 @@ def compute_recall(pred_boxes, gt_boxes, iou):
     return recall, positive_ids
 
 
-def download_trained_weights(coco_model_path, verbose=1):
-    """Download COCO trained weights from Releases.
-
-    coco_model_path: local path of COCO trained weights
-    """
+def download_trained_weights(weights=None, verbose=1):
+    """ Download trained weights from Releases. """
+    if weights is None:
+        weights = WEIGHTS_URL
     if verbose > 0:
-        print("Downloading pretrained model to " + coco_model_path + " ...")
-    with urllib.request.urlopen(COCO_MODEL_URL) as resp, open(coco_model_path, 'wb') as out:
-        shutil.copyfileobj(resp, out)
+        print("Downloading weights files if needed ...", end='')
+    for weightsUrl in weights:
+        path = weightsUrl.split('/')[-1]
+        if not os.path.exists(path) and not os.path.exists(path.replace(".zip", "")):
+            with urllib.request.urlopen(weightsUrl) as resp, open(path, 'wb') as out:
+                shutil.copyfileobj(resp, out)
+        if not os.path.exists(path.replace(".zip", "")):
+            with zipfile.ZipFile(path, 'r') as zip_ref:
+                zip_ref.extractall(".")
     if verbose > 0:
-        print("... done downloading pretrained model!")
+        print(" Done !")
 
 
 def norm_boxes(boxes, shape):

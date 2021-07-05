@@ -29,7 +29,8 @@
             "parameters": {
                 "weight_file": "skinet_cortex_v2",
                 "base_class": null,
-                "crop_to_base_class": false,
+				"exclude_class": null,
+                "crop_to_remaining": false,
                 "allow_empty_annotations": false,
                 "roi_mode": "divided",
                 "resize": [2048, 2048],
@@ -37,9 +38,7 @@
                 "min_overlap_part": 0.5,
                 "mini_mask": null,
                 "min_confidence": 0.7,
-                "allow_sparse": true,
-                "exclude_medulla": false,
-                "exclude_capsule": false
+                "allow_sparse": true
             },
             "post_processing": [
                 {"method": "fusion", "bb_threshold": 0.1, "mask_threshold": 0.1},
@@ -49,6 +48,14 @@
                 {"method": "count_and_area", "selected_classes": "all"}
             ],
             "export": "all",
+            "export_cleaned_image": [
+                {
+                    "name": "cortex",
+                    "crop_to_remaining": true,
+                    "base_class": "cortex",
+                    "exclude_class": null
+                }
+            ],
             "return": ["cortex"]
         },
         {
@@ -124,7 +131,7 @@
                 "weight_file": "skinet_main_v1",
                 "base_class": "cortex",
                 "fuse_base_class": true,
-                "crop_to_base_class": true,
+                "crop_to_remaining": true,
                 "allow_empty_annotations": false,
                 "roi_mode": "divided",
                 "resize": null,
@@ -195,6 +202,7 @@
                 {"method": "count_and_area", "selected_classes": "all"}
             ],
             "export": "all",
+            "export_cleaned_image": null,
             "return": null
         },
         {
@@ -243,7 +251,7 @@
                 "weight_file": "skinet_mest_main_v3",
                 "base_class": "cortex",
                 "fuse_base_class": true,
-                "crop_to_base_class": true,
+                "crop_to_remaining": true,
                 "allow_empty_annotations": false,
                 "roi_mode": "divided",
                 "resize": null,
@@ -297,6 +305,14 @@
                 {"method": "count_and_area", "selected_classes": "all"}
             ],
             "export": "all",
+            "export_cleaned_image": [
+                {
+                    "name": "glom",
+                    "crop_to_remaining": false,
+                    "base_class": "nsg",
+                    "exclude_class": null
+                }
+            ],
             "return": ["nsg"]
         },
         {
@@ -345,7 +361,7 @@
                 "weight_file": "skinet_mest_glom_v3",
                 "base_class": "nsg",
                 "fuse_base_class": false,
-                "crop_to_base_class": false,
+                "crop_to_remaining": false,
                 "allow_empty_annotations": true,
                 "roi_mode": "centered",
                 "resize": null,
@@ -387,12 +403,12 @@
                     "box_epsilon": 0,
                     "test_masks": true,
                     "mask_threshold": 0.9,
-                    "count_zeros": true,
                     "display_per_base_mask": false,
                     "display_global": true
                 }
             ],
             "export": "all",
+            "export_cleaned_image": null,
             "return": null
         }
     ]

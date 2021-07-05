@@ -299,7 +299,8 @@ class InferenceTool:
                     else:
                         baseClassId = self.__CONFIG.get_class_id(imageInfo['BASE_CLASS'], 'previous')
                         if self.__PREVIOUS_RES is not None and baseClassId in self.__PREVIOUS_RES['class_ids']:
-                            fusedMask, hasBase = self.__gather_masks__(baseClassId, height, width)
+                            fusedMask, hasBase = self.__gather_masks__(self.__PREVIOUS_RES, baseClassId, "previous",
+                                                                       height, width)
 
                 if hasToExclude:
                     classesToExclude = self.__CONFIG.get_param()['exclude_class']
@@ -310,7 +311,8 @@ class InferenceTool:
                             classesToExclude = [classesToExclude]
                         classesToExclude = [self.__CONFIG.get_class_id('previous', c) for c in classesToExclude
                                             if self.__CONFIG.get_class_id('previous', c) != -1]
-                    fusedExcludedMask, hasExcluded = self.__gather_masks__(classesToExclude, height, width)
+                    fusedExcludedMask, hasExcluded = self.__gather_masks__(self.__PREVIOUS_RES, classesToExclude,
+                                                                           "previous", height, width)
                     if hasExcluded:
                         fusedExcludedMask = cv2.bitwise_not(fusedExcludedMask)
 
@@ -326,8 +328,8 @@ class InferenceTool:
                     return (None,) * 4
 
                 if hasBase:
-                    crop_to_base_class = self.__CONFIG.get_param().get('crop_to_base_class', False)
-                    if crop_to_base_class:
+                    crop_to_remaining = self.__CONFIG.get_param().get('crop_to_remaining', False)
+                    if crop_to_remaining:
                         fusedBbox = utils.extract_bboxes(fusedMask)
                         image = image[fusedBbox[0]:fusedBbox[2], fusedBbox[1]:fusedBbox[3], :]
                         fullImage = fullImage[fusedBbox[0]:fusedBbox[2], fusedBbox[1]:fusedBbox[3], :]
@@ -352,7 +354,7 @@ class InferenceTool:
                             raise NotImplementedError('Centered mode and same base as previous '
                                                       'mode is not currently supported')
                         if self.__CONFIG.get_param()['fuse_base_class']:
-                            if crop_to_base_class:
+                            if crop_to_remaining:
                                 imageInfo['ROI_COORDINATES'] = fusedBbox - offset
                             else:
                                 imageInfo['ROI_COORDINATES'] = utils.extract_bboxes(fusedMask)
@@ -360,7 +362,7 @@ class InferenceTool:
                             indices = np.arange(len(self.__PREVIOUS_RES['class_ids']))
                             indices = indices[np.isin(self.__PREVIOUS_RES['class_ids'], [baseClassId])]
                             imageInfo['ROI_COORDINATES'] = self.__PREVIOUS_RES['rois'][indices]
-                            if crop_to_base_class:
+                            if crop_to_remaining:
                                 imageInfo['ROI_COORDINATES'] -= offset
                         for idx, bbox in enumerate(imageInfo['ROI_COORDINATES']):
                             imageInfo['ROI_COORDINATES'][idx] = dI.center_mask(bbox, (height, width),
@@ -476,23 +478,23 @@ class InferenceTool:
 
         return image, fullImage, imageInfo, image_results_path
 
-    def __gather_masks__(self, baseClassId, height, width):
-        if type(baseClassId) is list:
-            baseClassId_ = baseClassId
+    def __gather_masks__(self, results, classId, mode, height, width):
+        if type(classId) is list:
+            classId_ = classId
         else:
-            baseClassId_ = [baseClassId]
-        indices = np.arange(len(self.__PREVIOUS_RES['class_ids']))
-        indices = indices[np.isin(self.__PREVIOUS_RES['class_ids'], baseClassId_)]
+            classId_ = [classId]
+        indices = np.arange(len(results['class_ids']))
+        indices = indices[np.isin(results['class_ids'], classId_)]
         fusedMask = None
         if len(indices) > 0:
-            temp = self.__CONFIG.get_mini_mask_shape('previous')
-            previousModeUsedMiniMask = temp is not None and self.__PREVIOUS_RES['masks'].shape[:2] == temp
-            previousResize = self.__CONFIG.get_param('previous').get('resize', None)
+            temp = self.__CONFIG.get_mini_mask_shape(mode)
+            modeUsingMiniMask = temp is not None and results['masks'].shape[:2] == temp
+            previousResize = self.__CONFIG.get_param(mode).get('resize', None)
             fusedMask = np.zeros((height, width), dtype=np.uint8)
             for idx in indices:
-                mask = self.__PREVIOUS_RES['masks'][:, :, idx].astype(np.uint8) * 255
-                if previousModeUsedMiniMask:
-                    bbox = self.__PREVIOUS_RES['rois'][idx]
+                mask = results['masks'][:, :, idx].astype(np.uint8) * 255
+                if modeUsingMiniMask:
+                    bbox = results['rois'][idx]
                     if previousResize is not None:
                         mask = utils.expand_mask(bbox, mask, tuple(previousResize)).astype(np.uint8) * 255
                         mask = cv2.resize(mask, (width, height))
@@ -633,7 +635,7 @@ class InferenceTool:
             dynamic_args = {}
             for dynamic_arg in method.dynargs():
                 if dynamic_arg == 'image':
-                    dynamic_args[dynamic_arg] = image
+                    dynamic_args[dynamic_arg] = image if image is not None else fullImage
                 elif dynamic_arg == 'image_info':
                     dynamic_args[dynamic_arg] = imageInfo
                 elif dynamic_arg == 'save':
@@ -693,8 +695,14 @@ class InferenceTool:
         ### Finalization ###
         #################"""
         if save_results:
-            if cortex_mode:
-                self.__finalize_cortex_mode__(image_results_path, imageInfo, res, displayOnlyStats)
+            # Cleaned image export
+            if self.__CONFIG.has_to_export_cleaned_img():
+                self.__clean_image__(fullImage, image, imageInfo, res, image_results_path, displayOnlyStats)
+
+            # Annotations Extraction
+            if self.__CONFIG.has_to_export():
+                self.__export_annotations__(image_results_path, imageInfo, res, displayOnlyStats)
+
             if len(res['class_ids']) > 0:
                 if not displayOnlyStats:
                     print(" - Applying masks on image")
@@ -703,10 +711,6 @@ class InferenceTool:
                                     title=f"{imageInfo['NAME']} Predicted")
             elif not displayOnlyStats:
                 print(" - No mask to apply on image")
-
-            # Annotations Extraction
-            if self.__CONFIG.has_to_export():
-                self.__export_annotations__(image_results_path, imageInfo, res, displayOnlyStats)
 
         final_time = round(time() - start_time)
         print(f" Done in {formatTime(final_time)}\n")
@@ -765,8 +769,9 @@ class InferenceTool:
                                                imageInfo["Y_STARTS"], divId, self.__DIVISION_SIZE)
             elif 'ROI_COORDINATES' in imageInfo:
                 currentRoI = imageInfo['ROI_COORDINATES'][divId]
-                division = (fullImage if image is None else image)[currentRoI[0]:currentRoI[2],
-                           currentRoI[1]:currentRoI[3], :]
+                division = (fullImage if image is None else image)[
+                           currentRoI[0]:currentRoI[2], currentRoI[1]:currentRoI[3], :
+                           ]
                 forceInference = True
             else:
                 raise ValueError('Cannot find image areas to use')
@@ -909,76 +914,12 @@ class InferenceTool:
                         name = (f"{image_info['NAME']} Confusion Matrix ({mat_type.capitalize()})"
                                 f"{' (Normalized)' if normalized else ''}")
                         confusionMatrixFileName = os.path.join(
-                            image_results_path, name.replace('(', '') .replace(')', '') .replace(' ', '_')
+                            image_results_path, name.replace('(', '').replace(')', '').replace(' ', '_')
                         )
                         visualize.display_confusion_matrix(
                             conf_matrix[mat_type], self.__VISUALIZE_NAMES, title=name, cmap=cmap,
                             show=False, normalize=normalized, fileName=confusionMatrixFileName
                         )
-
-    def __finalize_cortex_mode__(self, image_results_path, image_info, predicted, displayOnlyStats):
-        # TODO Generalize this step
-        self.__STEP = "cleaning full resolution image"
-        if not displayOnlyStats:
-            print(" - Cleaning full resolution image and saving statistics")
-        allCortices = None
-        exclude_medulla = self.__CONFIG.get_param().get('exclude_medulla', False)
-        allExcluded = None
-        exclude_capsule = self.__CONFIG.get_param().get('exclude_capsule', False)
-        # Gathering every cortex masks into one
-        for idxMask, classMask in enumerate(predicted['class_ids']):
-            if classMask == 1:
-                if allCortices is None:  # First mask found
-                    allCortices = predicted['masks'][:, :, idxMask].copy() * 255
-                else:  # Additional masks found
-                    allCortices = cv2.bitwise_or(allCortices, predicted['masks'][:, :, idxMask] * 255)
-            elif (exclude_medulla and classMask == 2) or (exclude_capsule and classMask == 3):
-                if allExcluded is None:  # First mask found
-                    allExcluded = predicted['masks'][:, :, idxMask].copy() * 255
-                else:  # Additional masks found
-                    allExcluded = cv2.bitwise_or(allExcluded, predicted['masks'][:, :, idxMask] * 255)
-        if allExcluded is not None:
-            allExcluded = cv2.bitwise_not(allExcluded)
-            allCortices = cv2.bitwise_and(allCortices, allExcluded)
-        # To avoid cleaning an image without cortex
-        if allCortices is not None:
-            # Cleaning original image with cortex mask(s) and saving stats
-            self.__keep_only_cortex__(image_results_path, image_info, allCortices)
-
-    def __keep_only_cortex__(self, image_results_path, image_info, allCortices):
-        """
-        Cleans the original biopsy/nephrectomy with cortex masks and extracts the cortex area
-        :param image_results_path: the current image output folder
-        :param image_info: info about the current image
-        :param allCortices: fused-cortices mask
-        :return: allCorticesArea, allCorticesSmall
-        """
-        # Saving useful part of fused-cortices mask
-        self.__STEP = "crop & save fused-cortices mask"
-        allCorticesROI = utils.extract_bboxes(allCortices)
-        allCorticesSmall = allCortices[allCorticesROI[0]:allCorticesROI[2], allCorticesROI[1]:allCorticesROI[3]]
-
-        # Computing coordinates at full resolution
-        yRatio = image_info['HEIGHT'] / self.__RESIZE[0]
-        xRatio = image_info['WIDTH'] / self.__RESIZE[1]
-        allCorticesROI[0] = int(allCorticesROI[0] * yRatio)
-        allCorticesROI[1] = int(allCorticesROI[1] * xRatio)
-        allCorticesROI[2] = int(allCorticesROI[2] * yRatio)
-        allCorticesROI[3] = int(allCorticesROI[3] * xRatio)
-
-        # Resizing fused-cortices mask and computing its area
-        allCortices = cv2.resize(np.uint8(allCortices), (image_info['WIDTH'], image_info['HEIGHT']),
-                                 interpolation=cv2.INTER_CUBIC)
-
-        # Masking the image and saving it
-        temp = np.repeat(allCortices[:, :, np.newaxis], 3, axis=2)
-        image_info['ORIGINAL_IMAGE'] = cv2.bitwise_and(
-            image_info['ORIGINAL_IMAGE'][allCorticesROI[0]: allCorticesROI[2], allCorticesROI[1]:allCorticesROI[3], :],
-            temp[allCorticesROI[0]: allCorticesROI[2], allCorticesROI[1]:allCorticesROI[3], :]
-        )
-        cv2.imwrite(os.path.join(image_results_path, f"{image_info['NAME']}_cleaned.jpg"),
-                    cv2.cvtColor(image_info['ORIGINAL_IMAGE'], cv2.COLOR_RGB2BGR),
-                    CV2_IMWRITE_PARAM)
 
     def __save_debug_image__(self, step, debugIterator, fullImage, image_info, res, image_results_path, silent=True):
         if not silent:
@@ -1013,7 +954,91 @@ class InferenceTool:
                     adapters.append(adapter)
         for adapter in adapters:
             try:
+                if not silent:
+                    print(' - ', end='')
                 export_annotations(image_info, predicted, adapter, save_path=image_results_path,
                                    config=self.__CONFIG, verbose=verbose if silent else 1)
             except Exception:
                 print(f"Failed to export using {adapter.getName()} adapter")
+
+    def __clean_image__(self, fullImage, image, imageInfo, res, image_results_path, displayOnlyStats):
+        """ Cleans the image following the config parameter """
+        self.__STEP = "exporting cleaned image"
+        if not displayOnlyStats:
+            print(' - Exporting cleaned image')
+        cleaning_params = self.__CONFIG.get_export_param_cleaned_img()
+        if type(cleaning_params) is not list:
+            cleaning_params = [cleaning_params]
+
+        for idx, cleaning_param in enumerate(cleaning_params):
+            name = cleaning_param.get('name', None)
+            if name is None:
+                name = f"{idx:02d}"
+            # Gathering base masks if needed
+            base_param = cleaning_param.get('base_class', None)
+            if type(base_param) is not list:
+                base_param = [base_param]
+            baseMask, reuseImage = (None, False)
+            if 'base' in base_param or ('BASE_CLASS' in imageInfo and imageInfo['BASE_CLASS'] in base_param):
+                # TODO Add support for resized image
+                reuseImage = hasBase = True
+            else:
+                if "all" in base_param:
+                    classIDs = [c['id'] for c in self.__CONFIG.get_classes_info()]
+                else:
+                    classIDs = [self.__CONFIG.get_class_id(c) for c in base_param]
+                baseMask, hasBase = self.__gather_masks__(
+                    results=res, classId=classIDs,
+                    mode="current", height=imageInfo['HEIGHT'], width=imageInfo['WIDTH']
+                )
+            if not hasBase:
+                baseMask = np.ones((imageInfo['HEIGHT'], imageInfo['WIDTH']), dtype=np.uint8)
+
+            # Gathering excluded masks if needed
+            exclude_param = cleaning_param.get('exclude_class', None)
+            excludedMask, hasExcluded = (None, False)
+            if exclude_param is not None:
+                if type(exclude_param) is not list:
+                    exclude_param = [exclude_param]
+                if "all" in exclude_param:
+                    classIDs = [c['id'] for c in self.__CONFIG.get_classes_info()]
+                else:
+                    classIDs = [self.__CONFIG.get_class_id(c) for c in exclude_param]
+                excludedMask, hasExcluded = self.__gather_masks__(
+                    results=res, classId=classIDs,
+                    mode="current", height=imageInfo['HEIGHT'], width=imageInfo['WIDTH']
+                )
+                if hasExcluded:
+                    excludedMask = cv2.bitwise_not(excludedMask)
+
+            # Cleaning the image and resizing if needed
+            resImage = None
+            cropToRemaining = cleaning_param.get('crop_to_remaining', False)
+            if reuseImage:
+                if hasExcluded:
+                    y1, x1, y2, x2 = (0, 0, imageInfo['HEIGHT'], imageInfo['WIDTH'])
+                    if cropToRemaining:
+                        y1, x1, y2, x2 = utils.extract_bboxes(excludedMask)
+                    resImage = cv2.bitwise_and(
+                        image[y1:y2, x1:x2, :],
+                        np.repeat(excludedMask[y1:y2, x1:x2, np.newaxis], 3, axis=2)
+                    )
+                else:
+                    resImage = image
+            elif hasBase or hasExcluded:
+                if hasExcluded:
+                    baseMask = cv2.bitwise_and(baseMask, excludedMask)
+                y1, x1, y2, x2 = (0, 0, imageInfo['HEIGHT'], imageInfo['WIDTH'])
+                if cropToRemaining:
+                    y1, x1, y2, x2 = utils.extract_bboxes(baseMask)
+                resImage = cv2.bitwise_and(
+                    (imageInfo['ORIGINAL_IMAGE'] if 'ORIGINAL_IMAGE' in imageInfo else fullImage)[y1:y2, x1:x2, :],
+                    np.repeat(baseMask[y1:y2, x1:x2, np.newaxis], 3, axis=2)
+                )
+
+            # Saving the image
+            if resImage is not None:
+                cv2.imwrite(
+                    os.path.join(image_results_path, f"{imageInfo['NAME']}_cleaned_{name}.jpg"),
+                    cv2.cvtColor(resImage, cv2.COLOR_RGB2BGR), CV2_IMWRITE_PARAM
+                )

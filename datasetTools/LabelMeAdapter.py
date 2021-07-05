@@ -174,7 +174,7 @@ class LabelMeAdapter(JSONAdapter):
         return masks
 
     @staticmethod
-    def offsetAnnotations(filePath, xOffset=0, yOffset=0, outputFilePath=None):
+    def updateAnnotations(filePath, xRatio=1, yRatio=1, xOffset=0, yOffset=0, outputFilePath=None):
         canRead = LabelMeAdapter.canRead(filePath)
         if not canRead:
             raise TypeError('This file is not a LabelMe annotation file')

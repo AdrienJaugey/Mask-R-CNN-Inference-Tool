@@ -29,7 +29,7 @@
             "parameters": {
                 "weight_file": "skinet_cortex_v2",
                 "base_class": null,
-                "crop_to_base_class": false,
+                "crop_to_remaining": false,
                 "allow_empty_annotations": false,
                 "roi_mode": "divided",
                 "resize": [2048, 2048],
@@ -37,9 +37,7 @@
                 "min_overlap_part": 0.5,
                 "mini_mask": null,
                 "min_confidence": 0.7,
-                "allow_sparse": true,
-                "exclude_medulla": false,
-                "exclude_capsule": false
+                "allow_sparse": true
             },
             "post_processing": [
                 {"method": "fusion", "bb_threshold": 0.1, "mask_threshold": 0.1},
@@ -49,6 +47,14 @@
                 {"method": "count_and_area", "selected_classes": "all"}
             ],
             "export": "all",
+            "export_cleaned_image": [
+                {
+                    "name": "cortex",
+                    "crop_to_remaining": true,
+                    "base_class": "cortex",
+                    "exclude_class": null
+                }
+            ],
             "return": ["cortex"]
         },
         {
@@ -97,7 +103,7 @@
                 "weight_file": "skinet_mest_main_v3",
                 "base_class": "cortex",
                 "fuse_base_class": true,
-                "crop_to_base_class": true,
+                "crop_to_remaining": true,
                 "allow_empty_annotations": false,
                 "roi_mode": "divided",
                 "resize": null,
@@ -151,6 +157,14 @@
                 {"method": "count_and_area", "selected_classes": "all"}
             ],
             "export": "all",
+            "export_cleaned_image": [
+                {
+                    "name": "interstitium",
+                    "crop_to_remaining": true,
+                    "base_class": "cortex",
+                    "exclude_class": "all"
+                }
+            ],
             "return": ["base", "all"]
         },
         {
@@ -173,11 +187,11 @@
                 }
             ],
             "parameters": {
-                "weight_file": "skinet_inflammation_v2",
+                "weight_file": "skinet_inflammation_v3",
                 "base_class": "cortex",
 				"exclude_class": "all",
                 "fuse_base_class": false,
-                "crop_to_base_class": false,
+                "crop_to_remaining": false,
                 "allow_empty_annotations": false,
                 "roi_mode": "divided",
                 "resize": null,
@@ -212,6 +226,7 @@
                 }
             ],
             "export": "all",
+            "export_cleaned_image": null,
             "return": null
         }
     ]

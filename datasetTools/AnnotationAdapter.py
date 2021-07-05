@@ -10,6 +10,8 @@ import os
 from abc import ABC, abstractmethod
 import xml.etree.ElementTree as et
 import json
+from xml.dom import minidom
+
 import numpy as np
 import cv2
 
@@ -105,10 +107,12 @@ class AnnotationAdapter(ABC):
         return None
 
     @staticmethod
-    def offsetAnnotations(filePath, xOffset=0, yOffset=0, outputFilePath=None):
+    def updateAnnotations(filePath, xRatio=1, yRatio=1, xOffset=0, yOffset=0, outputFilePath=None):
         """
         Offsets annotations of a file
         :param filePath: file path to the annotation file
+        :param xRatio: the x-axis ratio to apply (before offset)
+        :param yRatio: the y-axis ratio to apply (before offset)
         :param xOffset: the x-axis offset to apply to annotations
         :param yOffset: the y-axis offset to apply to annotations
         :param outputFilePath: path to the output file, if None, will modify the base file
@@ -122,8 +126,6 @@ class XMLAdapter(AnnotationAdapter, ABC):
     def __init__(self, imageInfo: dict, rootName, verbose=0):
         super().__init__(imageInfo, verbose=verbose)
         self.root = et.Element(rootName)
-        self.root.tail = "\n"
-        self.root.text = "\n\t"
 
     @staticmethod
     def getName():
@@ -147,12 +149,12 @@ class XMLAdapter(AnnotationAdapter, ABC):
     @staticmethod
     def __tostring__(node):
         if 'xml_declaration' in et.tostring.__code__.co_varnames:
-            return et.tostring(node, encoding='unicode', method='xml', xml_declaration=True)
+            return et.tostring(node, xml_declaration=True)
         else:
-            return et.tostring(node, encoding='unicode', method='xml')
+            return et.tostring(node)
 
     def __str__(self):
-        return XMLAdapter.__tostring__(self.root)
+        return minidom.parseString(XMLAdapter.__tostring__(self.root)).toprettyxml()
 
     @staticmethod
     def canRead(filePath):
@@ -314,4 +316,6 @@ def export_annotations(image_info: dict, results: dict, adapterClass: Annotation
         adapter_instance.addAnnotationClass(classInfo)
 
     os.makedirs(save_path, exist_ok=True)
+    if verbose > 0:
+        print('  - ', end='')
     adapter_instance.saveToFile(save_path, image_info['NAME'])
