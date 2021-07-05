@@ -20,7 +20,7 @@ To get performance metrics for an image, you will also need an annotations file 
 You will find specific requirements for Google Colaboratory in the [Using the Inference Notebook with Google Colaboratory](Using-the-Inference-Notebook-with-Google-Colaboratory.md#specific-requirements) page.
 
 ## Local usage requirements
-You will find the specific requirements for local usage in the [Using the Inference Notebook Locally](Using-the-Inference-Notebook-Locally#specific-requirements.md) page.
+You will find the specific requirements for local usage in the [Using the Inference Notebook Locally](Using-the-Inference-Notebook-Locally.md#specific-requirements.md) page.
 
 # 2. Configuration of the notebook
 ## Working with Google Colaboratory
