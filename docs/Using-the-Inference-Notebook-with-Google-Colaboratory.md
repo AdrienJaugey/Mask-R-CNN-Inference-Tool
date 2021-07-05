@@ -1,4 +1,4 @@
-Using the Notebook Inference on Google Colaboratory will ask you a bit more of configuration. Common requirements and configuration are provided in the [Using the Inference Notebook](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook) page. 
+Using the Notebook Inference on Google Colaboratory will ask you a bit more of configuration. Common requirements and configuration are provided in the [Using the Inference Notebook](Using-the-Inference-Notebook.md) page. 
 
 # Index
 1. [Specific requirements](#1-specific-requirements)

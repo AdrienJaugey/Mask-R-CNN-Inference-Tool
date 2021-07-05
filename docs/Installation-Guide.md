@@ -7,7 +7,7 @@ To use the available tools in this repository, you will need to install a few th
 4. [Making a shortcut to easily open the tools](#4-making-a-shortcut-to-easily-open-the-tools)
 
 # 1. Getting all the required tool's files
-1. [Download](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/archive/master.zip) or clone the [repository](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition.git).
+1. [Download](../archive/refs/heads/Matterport_based.zip) or clone the [repository](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition.git).
 2. Unzip or move the repository in the directory of your choice.
 3. Download the weights file (.h5) and maybe some images you want to run the inference on and put it/them in the same folder. Images should be put in a sub-directory named ```images``` (this can be costumed).
 

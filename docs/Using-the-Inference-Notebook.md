@@ -1,34 +1,34 @@
 An inference notebook is available in the root directory of the repository. You can run it locally or through Google Colaboratory without any major modifications of the script.
 
 # Index
-1. [Requirements](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook#1-requirements)
-   * [Google Colaboratory specific requirements](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook#google-colaboratory-specific-requirements)
-   * [Local usage requirements](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook#local-usage-requirements)
-2. [Configuration of the notebook](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook#2-configuration-of-the-notebook)
-   * [Working with Google Colaboratory](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook#working-with-google-colaboratory)
-   * [Working Locally](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook#working-locally)
-   * [Common configuration](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook#common-configuration)
-      * ["Initialisation" cell](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook#initialisation-cell)
+1. [Requirements](#1-requirements)
+   * [Google Colaboratory specific requirements](#google-colaboratory-specific-requirements)
+   * [Local usage requirements](#local-usage-requirements)
+2. [Configuration of the notebook](2-configuration-of-the-notebook)
+   * [Working with Google Colaboratory](#working-with-google-colaboratory)
+   * [Working Locally](#working-locally)
+   * [Common configuration](#common-configuration)
+      * ["Initialisation" cell](#initialisation-cell)
 
 # 1. Requirements
 At that time, you will at least need the following resources to run the inference notebook : 
 * A weights file (`.h5`);
 * An image to start an inference.
-To get performance metrics for an image, you will also need an annotations file (see [Supported formats](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Annotations-format-compatibility#supported-formats)) having the same name as the image
+To get performance metrics for an image, you will also need an annotations file (see [Supported formats](Annotations-format-compatibility.md#supported-formats)) having the same name as the image
 
 ## Google Colaboratory specific requirements
-You will find specific requirements for Google Colaboratory in the [Using the Inference Notebook with Google Colaboratory](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook-with-Google-Colaboratory#specific-requirements) page.
+You will find specific requirements for Google Colaboratory in the [Using the Inference Notebook with Google Colaboratory](Using-the-Inference-Notebook-with-Google-Colaboratory.md#specific-requirements) page.
 
 ## Local usage requirements
-You will find the specific requirements for local usage in the [Using the Inference Notebook Locally](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook-Locally#specific-requirements) page.
+You will find the specific requirements for local usage in the [Using the Inference Notebook Locally](Using-the-Inference-Notebook-Locally#specific-requirements.md) page.
 
 # 2. Configuration of the notebook
 ## Working with Google Colaboratory
-You will find the specific configuration explanation for Google Colaboratory in the [Using the Inference Notebook with Google Colaboratory](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook-with-Google-Colaboratory#configuration-of-the-notebook) page.
+You will find the specific configuration explanation for Google Colaboratory in the [Using the Inference Notebook with Google Colaboratory](Using-the-Inference-Notebook-with-Google-Colaboratory.md#configuration-of-the-notebook) page.
 
 
 ## Working Locally
-You will find the specific configuration explanation for local usage in the [Using the Inference Notebook Locally](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/wiki/Using-the-Inference-Notebook-Locally#configuration-of-the-notebook) page.
+You will find the specific configuration explanation for local usage in the [Using the Inference Notebook Locally](Using-the-Inference-Notebook-Locally.md#configuration-of-the-notebook) page.
 
 
 ## Common configuration
