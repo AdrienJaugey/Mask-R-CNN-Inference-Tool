@@ -1,4 +1,4 @@
-name: Skinet_TF25
+name: Skinet
 channels:
   - defaults
 dependencies:
