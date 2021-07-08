@@ -1,13 +1,13 @@
-# [DEPRECATED]
+# [DEPRECATED] Using the Training Notebook
 
 A training notebook is available in the root directory of the repository. You can run it locally.
 
-# Index
+## Index
 
 1. [Requirements](#1-requirements)
 2. [Configuration of the notebook](#2-Configuration-of-the-Training-Tool)
 
-# 1. Requirements
+## 1. Requirements
 
 At that time, you will at least need the following resources to run the training notebook : 
 
@@ -18,7 +18,7 @@ At that time, you will at least need the following resources to run the training
 * Python environment and CUDA (if compatible) installed (Installation Guide ([EN](Installation-Guide.md)|[FR](Guide-d'installation.md)))
 
 
-# 2. Configuration of the Training Tool
+## 2. Configuration of the Training Tool
 
 Start the Training Tool by activating the python environment and using the `jupyter notebook Mask_R_CNN_Training_Tool.ipynb` command in the same terminal.
 

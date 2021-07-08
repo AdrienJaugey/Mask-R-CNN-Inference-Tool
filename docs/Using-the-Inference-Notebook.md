@@ -1,6 +1,8 @@
+# Using the Inference Notebook
+
 An inference notebook is available in the root directory of the repository. You can run it locally or through Google Colaboratory without any major modifications of the script.
 
-# Index
+## Index
 1. [Requirements](#1-requirements)
    * [Google Colaboratory specific requirements](#google-colaboratory-specific-requirements)
    * [Local usage requirements](#local-usage-requirements)
@@ -10,7 +12,7 @@ An inference notebook is available in the root directory of the repository. You 
    * [Common configuration](#common-configuration)
       * ["Configuration" cell](#configuration-cell)
 
-# 1. Requirements
+## 1. Requirements
 At that time, you will at least need the following resources to run the inference notebook : 
 * One or more weights file(s) (a weights file is a folder containing an `assets`, `variables` folder and a `saved_model.pb` file, they might be zipped so you need to unzip it) in the same folder as the different tools. Images should be put in a sub-directory named `images\<Mode name>`;
 
@@ -18,23 +20,23 @@ At that time, you will at least need the following resources to run the inferenc
 
   To get performance metrics for an image, you will also need an annotations file (see [Supported formats](Annotations-format-compatibility.md#supported-formats)) having the same name as the image in the same folder.
 
-## Google Colaboratory specific requirements
+### Google Colaboratory specific requirements
 You will find specific requirements for Google Colaboratory in the [Using the Inference Notebook with Google Colaboratory](Using-the-Inference-Notebook-with-Google-Colaboratory.md#specific-requirements) page.
 
-## Local usage requirements
+### Local usage requirements
 You will need the Python environment installed (see [Installation Guide](Installation-Guide.md) [[FR ver.](Guide-d'installation.md)]).
 
-# 2. Configuration of the notebook
-## Working with Google Colaboratory
+## 2. Configuration of the notebook
+### Working with Google Colaboratory
 You will find the specific configuration explanation for Google Colaboratory in the [Using the Inference Notebook with Google Colaboratory](Using-the-Inference-Notebook-with-Google-Colaboratory.md#configuration-of-the-notebook) page.
 
 
-## Working Locally
+### Working Locally
 Simply start Jupyter via the shortcut created during the [Installation Guide](Installation-Guide.md) [[FR ver.](Guide-d'installation.md)] or by starting an Anaconda (or Miniconda) prompt, navigating to the repository folder using `cd` command, activating the environment via `conda activate Skinet`, and finally by starting Jupyter using `jupyter notebook`.
 
 
-## Common configuration
-### 'Configuration' cell
+### Common configuration
+#### 'Configuration' cell
 ```Python
 mode = 'chain'
 displayMode = "All steps" #@param ["All steps", "Only statistics"]

@@ -1,11 +1,13 @@
-# Index
+# Annotations format compatibility
+
+## Index
 1. [Introduction](#1-introduction)
 2. [Supported formats](#2-supported-formats)
 3. [Adding another annotations format](#3-adding-another-annotations-format)
    * [Custom Adapter Class Template](#custom-adapter-class-template)
    * [Making your custom Adapter Class available automatically](#making-your-custom-adapter-class-available-automatically)
 
-# 1. Introduction
+## 1. Introduction
 To train Mask R-CNN, you need to get annotations for your dataset images. As we based our model on [navidyou's Mask R-CNN implementation for cell nucleus detection](https://github.com/navidyou/Mask-RCNN-implementation-for-cell-nucleus-detection-executable-on-google-colab-), we used the same mask loading system. Instead of a masks folder where to get every mask as an image, we are using a folder per class containing all its corresponding masks. You can generate your dataset using the [datasetFormator](../datasetTools/datasetFormator.py) script which requires all the [datasetTools](../datasetTools) folder's files. 
 
 If you want to be able to read directly the annotations file from Mask R-CNN, without generating an image per mask, you will need to rewrite a custom dataset Class. You should read [Waleed Abdulla's article](https://engineering.matterport.com/splash-of-color-instance-segmentation-with-mask-r-cnn-and-tensorflow-7c761e238b46) on Mask R-CNN where he explains how to do this.
@@ -14,16 +16,16 @@ Annotations files are also generated from predictions, so you can generate new d
 
 To sum up, to be able to train using a specific annotation format, the model needs to read and write this format. This work is done by adapter classes.
 
-# 2. Supported formats
+## 2. Supported formats
 Current supported annotations format are the following :
 * ASAP format ([ASAPAdapter](../datasetTools/ASAPAdapter.py))
 * Label Me format ([LabelMeAdapter](../datasetTools/LabelMeAdapter.py))
 
-# 3. Adding another annotations format
+## 3. Adding another annotations format
 You can add support to a currently unsupported annotations format by writing an adapter class inheriting from abstract classes [AnnotationAdapter](../datasetTools/AnnotationAdapter.py#L7), [XMLAdapter](../datasetTools/AnnotationAdapter.py#L87), or [JSONAdapter](../datasetTools/AnnotationAdapter.py#L118) and implementing all abstract methods.  
 _You can use [ASAPAdapter](../datasetTools/ASAPAdapter.py) or [LabelMeAdapter](../datasetTools/LabelMeAdapter.py) as examples to help you._
 
-## Custom Adapter Class Template
+### Custom Adapter Class Template
 Here is the custom adapter template :
 ```python
 class CustomAdapter(JSONAdapter):
@@ -136,8 +138,8 @@ class CustomAdapter(JSONAdapter):
         return masks
 ```
 
-## Making your custom Adapter Class available automatically
-Finally, you should add your custom Adapter class at the end of the [AnnotationAdapter](../datasetTools/AnnotationAdapter.py#L142) script. You just have to import the class (do it at the end like for `ASAPAdapter` and `LabelMeAdapter`) and adding it to `ANNOTATION_ADAPTERS` list.
+### Making your custom Adapter Class available automatically
+Finally, you should add your custom Adapter class at the end of the [AnnotationAdapter](../datasetTools/AnnotationAdapter.py#L189) script. You just have to import the class (do it at the end like for `ASAPAdapter` and `LabelMeAdapter`) and adding it to `ANNOTATION_ADAPTERS` list.
 
 Here is an example of what it should be with the `CustomAdapter` class :
 ```python
