@@ -27,7 +27,8 @@ def existing_path(value):
 
 
 pre_built_path = {
-    'cleaned_image': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_cleaned.jpg"),
+    'original_image': os.path.join("{imageDir}", "{chainDir}", "{imageDir}.{imgFormat}"),
+    'cleaned_image': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_cleaned.{imgFormat}"),
     'expected': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_Expected.{imgFormat}"),
     'predicted': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_Predicted.{imgFormat}"),
     'predicted_clean': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_Predicted_clean.{imgFormat}"),

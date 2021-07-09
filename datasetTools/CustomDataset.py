@@ -62,7 +62,7 @@ class CustomDataset(utils.Dataset):
         masks_dir_list = [p for p in os.listdir(path) if p in self.__CUSTOM_CLASS_NAMES]
         for masks_dir in masks_dir_list:
             temp_DIR = os.path.join(path, masks_dir)
-            # https://stackoverflow.com/questions/2632205/how-to-count-the-number-of-files-in-a-directory-using-python
+            # https://stackoverflow.com/a/2632251/9962046
             number_of_masks += len([name_ for name_ in os.listdir(temp_DIR)
                                     if os.path.isfile(os.path.join(temp_DIR, name_))])
         if self.__CONFIG.get_param().get('resize', None) is not None:
@@ -80,7 +80,7 @@ class CustomDataset(utils.Dataset):
             masks_dir_path = os.path.join(path, masks_dir)
             for mask_file in os.listdir(masks_dir_path):
                 mask = imread(os.path.join(masks_dir_path, mask_file))
-                mask = np.where(mask > 128, 255, 0).astype(np.uint8)
+                mask = np.where(mask > 220, 255, 0).astype(np.uint8)
                 masks[:, :, iterator] = mask
                 if self.__CONFIG.is_using_mini_mask():
                     bboxes[iterator] = getBboxFromName(mask_file)

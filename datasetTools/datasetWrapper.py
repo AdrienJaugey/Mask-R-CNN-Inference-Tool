@@ -19,7 +19,7 @@ from datasetTools import AnnotationAdapter as adapt
 from datasetTools.AnnotationAdapter import AnnotationAdapter
 from datasetTools.datasetDivider import getBWCount, CV2_IMWRITE_PARAM
 from mrcnn.Config import Config
-from mrcnn.utils import extract_bboxes, expand_mask, minimize_mask
+from mrcnn.utils import extract_bboxes, expand_mask, minimize_mask, get_bboxes_intersection, shift_bbox
 
 NEPHRO_CLASSES = [
     {"id": 0, "name": "Background", "color": "", "ignore": True},
@@ -61,6 +61,20 @@ INFLAMMATION_CLASSES = [
 ]
 
 
+def get_bbox_from_points(pts):
+    """
+    Return bbox from a points array
+    :param pts: the points coordinates
+    :return: y1, x1, y2, x2
+    """
+    temp = np.array(pts)
+    x1 = np.amin(temp[:, 0])
+    x2 = np.amax(temp[:, 0])
+    y1 = np.amin(temp[:, 1])
+    y2 = np.amax(temp[:, 1])
+    return y1, x1, y2, x2
+
+
 def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 'dataset_train',
                maskClass: str = 'masks', imageFormat="jpg", config: Config = None):
     """
@@ -75,30 +89,45 @@ def createMask(imgName: str, imgShape, idMask: int, ptsMask, datasetName: str = 
     :param config: config object
     :return: None
     """
-    # Defining path where the result image will be stored and creating dir if not exists
-    maskClass = maskClass.lower().strip(' ').replace(" ", "_")
-    output_directory = os.path.join(datasetName, imgName, maskClass)
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
-
     # https://www.programcreek.com/python/example/89415/cv2.fillPoly
     # Formatting coordinates matrix to get int
     ptsMask = np.double(ptsMask)
     ptsMask = np.matrix.round(ptsMask)
     ptsMask = np.int32(ptsMask)
 
-    # Creating black matrix with same size than original image and then drawing the mask
-    mask = np.uint8(np.zeros((imgShape[0], imgShape[1])))
-    cv2.fillPoly(mask, [ptsMask], 255)
-
     bbox_coordinates = ""
     if config is not None and config.is_using_mini_mask():
-        bbox = extract_bboxes(mask)
-        mask = minimize_mask(bbox, mask, config.get_mini_mask_shape())
-        mask = mask.astype(np.uint8) * 255
-        y1, x1, y2, x2 = bbox
+        bbox = get_bbox_from_points(ptsMask)
+        if get_bboxes_intersection(bbox, [0, 0, *imgShape[:2]]) <= 0:
+            return
+        kept_bbox = [0, 0, 0, 0]
+        for i in range(4):
+            kept_bbox[i] = min(max(0, bbox[i]), imgShape[i % 2])
+        y1, x1, y2, x2 = kept_bbox
         bbox_coordinates = f"_{y1}_{x1}_{y2}_{x2}"
+
+        shiftedBbox = shift_bbox(bbox)
+        shift = bbox[:2]
+        mask = np.uint8(np.zeros((shiftedBbox[2], shiftedBbox[3])))
+        cv2.fillPoly(mask, [ptsMask - shift[::-1]], 255)
+
+        shifted_kept_bbox = shift_bbox(kept_bbox, customShift=shift)
+        y1, x1, y2, x2 = shifted_kept_bbox
+        mask = mask[y1:y2, x1:x2]
+
+        # Creating black matrix with same size than original image and then drawing the mask
+        mask = minimize_mask(shiftedBbox, mask, config.get_mini_mask_shape())
+        mask = mask.astype(np.uint8) * 255
+    else:
+        # Creating black matrix with same size than original image and then drawing the mask
+        mask = np.uint8(np.zeros((imgShape[0], imgShape[1])))
+        cv2.fillPoly(mask, [ptsMask], 255)
+
     # Saving result image
+    maskClass = maskClass.lower().strip(' ').replace(" ", "_")
+    output_directory = os.path.join(datasetName, imgName, maskClass)
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
     output_name = f"{imgName}_{idMask:03d}{bbox_coordinates}.{imageFormat}"
     cv2.imwrite(os.path.join(output_directory, output_name), mask, CV2_IMWRITE_PARAM)
 
@@ -221,62 +250,69 @@ def createMasksOfImage(rawDatasetPath: str, imgName: str, datasetName: str = 'da
                    imageFormat, config=config)
 
 
-def fuseClassMasks(datasetPath: str, imageName: str, targetedClass, imageFormat="jpg", deleteBaseMasks=False,
-                   silent=False):
+def fuseClassMasks(datasetPath: str, imageName: str, targetedClass: [str, list], imageFormat="jpg",
+                   deleteBaseMasks=False, silent=False):
     """
-    Fuse each cortex masks into one
+    Fuse each targeted-class masks into one
     :param datasetPath: the dataset that have been wrapped
-    :param imageName: the image you want its cortex to be fused
+    :param imageName: the image you want its targeted-class to be fused
     :param targetedClass: the class of the masks that have to be fused
-    :param imageFormat: format to use to save the final cortex masks
+    :param imageFormat: format to use to save the final targeted-class masks
     :param deleteBaseMasks: delete the base masks images after fusion
     :param silent: if True will not print
     :return: None
     """
+    if type(targetedClass) is str:
+        targetedClasses = [targetedClass]
+    else:
+        targetedClasses = targetedClass
     # Getting the image directory path
     imageDir = os.path.join(datasetPath, imageName)
-    classDir = os.path.join(imageDir, targetedClass)
     imagePath = os.path.join(datasetPath, imageName, "images")
     imagePath = os.path.join(imagePath, os.listdir(imagePath)[0])
     image = cv2.imread(imagePath)
-    if os.path.exists(classDir):
-        listCortexImages = os.listdir(classDir)
-        if not silent:
-            print(f"Fusing {imageName} {targetedClass} class masks")
-        fusion = loadSameResImage(os.path.join(classDir, listCortexImages[0]), imageShape=image.shape)
-        listCortexImages.remove(listCortexImages[0])
-        for maskName in listCortexImages:  # Adding each mask to the same image
-            maskPath = os.path.join(classDir, maskName)
-            mask = loadSameResImage(maskPath, imageShape=image.shape)
-            fusion = cv2.add(fusion, mask)
-        # Saving the fused mask image
-        cv2.imwrite(os.path.join(classDir, f"{imageName}_{targetedClass}.{imageFormat}"), fusion, CV2_IMWRITE_PARAM)
-        if deleteBaseMasks:
-            for maskName in os.listdir(classDir):  # Deleting each cortex mask except the fused one
-                if f'_{targetedClass}.{imageFormat}' not in maskName:
-                    maskPath = os.path.join(classDir, maskName)
-                    os.remove(maskPath)
+    for aClass in targetedClasses:
+        classDir = os.path.join(imageDir, aClass)
+        if os.path.exists(classDir):
+            listClassImages = os.listdir(classDir)
+            if not silent:
+                print(f"Fusing {imageName} {aClass} class masks")
+            fusion = loadSameResImage(os.path.join(classDir, listClassImages[0]), imageShape=image.shape)
+            listClassImages.remove(listClassImages[0])
+            for maskName in listClassImages:  # Adding each mask to the same image
+                maskPath = os.path.join(classDir, maskName)
+                mask = loadSameResImage(maskPath, imageShape=image.shape)
+                fusion = cv2.add(fusion, mask)
+            # Saving the fused mask image
+            cv2.imwrite(os.path.join(classDir, f"{imageName}_{aClass}.{imageFormat}"), fusion, CV2_IMWRITE_PARAM)
+            if deleteBaseMasks:
+                for maskName in os.listdir(classDir):  # Deleting each targeted-class mask except the fused one
+                    if f'_{aClass}.{imageFormat}' not in maskName:
+                        maskPath = os.path.join(classDir, maskName)
+                        os.remove(maskPath)
 
 
-def cleanCortexDir(datasetPath: str):
+def cleanFusedClassDir(datasetPath: str, fusedClass):
     """
-    Cleaning all cortex directories in the dataset, keeping only unique file or fused ones
+    Cleaning all fused-class directories in the dataset, keeping only unique file or fused ones
     :param datasetPath: the dataset that have been wrapped
+    :param fusedClass: the class 
     :return: None
     """
     for imageDir in os.listdir(datasetPath):
         imageDirPath = os.path.join(datasetPath, imageDir)
-        cortexDirPath = os.path.join(imageDirPath, 'cortex')
-        if os.path.exists(cortexDirPath):
-            listCortexImages = os.listdir(cortexDirPath)
-            if len(listCortexImages) > 1:  # Deleting only if strictly more than one cortex mask image present
-                fusedCortexPresent = False
-                for cortexImage in listCortexImages:
-                    fusedCortexPresent = fusedCortexPresent or ('_cortex' in cortexImage)
-                if fusedCortexPresent:
-                    for maskName in os.listdir(cortexDirPath):  # Deleting each cortex mask except the fused one
-                        if '_cortex' not in maskName:
-                            maskPath = os.path.join(cortexDirPath, maskName)
+        fusedClassDirPath = os.path.join(imageDirPath, fusedClass)
+        if os.path.exists(fusedClassDirPath):
+            listFusedClassImages = os.listdir(fusedClassDirPath)
+            if len(listFusedClassImages) > 1:  # Deleting only if strictly more than one fused-class mask image present
+                fusedFusedClassPresent = False
+                for fusedClassImage in listFusedClassImages:
+                    fusedFusedClassPresent = fusedFusedClassPresent or (f'_{fusedClass}' in fusedClassImage)
+                if fusedFusedClassPresent:
+                    # Deleting each fused-class mask except the fused one
+                    for maskName in os.listdir(fusedClassDirPath):
+                        if f'_{fusedClass}' not in maskName:
+                            maskPath = os.path.join(fusedClassDirPath, maskName)
                             os.remove(maskPath)
 
 
@@ -286,7 +322,7 @@ def cleanImage(datasetPath: str, imageName: str, cleaningClasses: str, excludeCl
     Creating the full_images directory and cleaning the base image by removing non-cleaning-class areas
     :param excludeClasses:
     :param datasetPath: the dataset that have been wrapped
-    :param imageName: the image you want its cortex to be fused
+    :param imageName: the image name
     :param cleaningClasses: the class to use to clean the image
     :param cleanMasks: if true, will clean masks based on the cleaning-class-mask
     :param imageFormat: the image format to use to save the image
@@ -402,8 +438,9 @@ def gatherClassesMasks(datasetPath, imageName, img_shape, gatheredClasses):
                     gatheredClassMasks = loadSameResImage(gatheredClassMaskPath, img_shape)
                     gatheredMaskFound = True
                 else:  # Adding additional masks
-                    temp = loadSameResImage(gatheredClassMaskPath, img_shape)
-                    gatheredClassMasks = cv2.bitwise_or(gatheredClassMasks, temp)
+                    temp, tempBbox = loadOnlyMask(gatheredClassMaskPath, img_shape)
+                    y1, x1, y2, x2 = tempBbox
+                    gatheredClassMasks[y1:y2, x1:x2] = cv2.bitwise_or(gatheredClassMasks[y1:y2, x1:x2], temp)
                     del temp
     return gatheredClassMasks
 
@@ -415,6 +452,24 @@ def loadSameResImage(imagePath, imageShape):
         mask = expand_mask(bbox, mask, image_shape=imageShape)
         mask = mask.astype(np.uint8) * 255
     return mask
+
+
+def loadOnlyMask(imagePath, imageShape):
+    mask = cv2.imread(imagePath, cv2.IMREAD_UNCHANGED)
+    if mask.shape[0] != imageShape[0] or mask.shape[1] != imageShape[1]:
+        # Finding bbox coordinates from image name
+        bbox = getBboxFromName(imagePath)
+        shifted = shift_bbox(bbox)
+        y1, x1, y2, x2 = shifted
+
+        # Expanding mask to its real size
+        mask = expand_mask(shifted, mask, image_shape=shifted[2:])
+        mask = mask.astype(np.uint8) * 255
+    else:
+        # Extracting bbox of
+        bbox = extract_bboxes(mask)
+        y1, x1, y2, x2 = bbox
+    return mask[y1:y2, x1:x2, ...], bbox
 
 
 def convertImage(inputImagePath: str, outputImagePath: str):
@@ -520,7 +575,7 @@ def startWrapper(rawDatasetPath: str, datasetName: str = 'dataset_train', delete
     :param deleteBaseMasks: delete the base masks images after fusion
     :param adapter: Adapter to use to read annotations, if None compatible adapter will be searched
     :param resize: If tuple given, the images and their masks will be resized to the tuple value
-    :param mode: Mode to use, will not clean the image nor fuse cortex masks
+    :param mode: Mode to use
     :param classesInfo: Information about the classes that will be used
     :param imageFormat: the image format to use in the dataset
     :return: None

@@ -14,7 +14,7 @@ def progressBar(value, maxValue, prefix="", suffix="", forceNewLine=False, size=
                 empty='░'):
     """
     Prints a progress bar
-    Based on https://stackoverflow.com/questions/6169217/replace-console-output-in-python
+    Based on https://stackoverflow.com/a/51339999/9962046
     :param value: the current progress value
     :param maxValue: the maximum value that could be given
     :param prefix: text to display before the progress bar
@@ -47,7 +47,7 @@ def progressText(value, maxValue, onlyRaw=False, onlyPercent=False):
             return f"({value}/{maxValue} | {percent:06.2%})"
 
 
-def formatTime(seconds: int, minutes: int = 0, hours: int = 0):
+def formatTime(seconds: [int, float], minutes: int = 0, hours: int = 0):
     """
     Returns a string representing the given time
     :param seconds: number of seconds
@@ -99,7 +99,7 @@ def format_number(num, maxLength=None):
                       the length but will at least return abs(num / 1000^N) followed by the metric prefix for 1000^N.
     :return: the formatted number with up to 2 decimal digits
     """
-    # https://stackoverflow.com/questions/579310/formatting-long-numbers-as-strings-in-python
+    # https://stackoverflow.com/q/579310/9962046
     suffixes = ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']
     magnitude = 0
     isInt = np.issubdtype(type(num), np.integer)

@@ -156,59 +156,49 @@ def getNumShard(num_shards, index):
     return min(index // IMG_PER_SHARD, num_shards - 1)
 
 
-'''
-Lire XML
-↳ Infos images
-    - height
-    - width
-    - filename
-    - source_id = filename
-    - sha256
-    - encoded
-    - format
-↳ Infos masques
-    - Liste x, y mim max
-    - Liste class label & text
-    - Liste masques
-        - numerical/image
-'''
-
-
 def main(_):
-    start = time()
     LOG_FILE = FLAGS.log_path
     if LOG_FILE is not None:
         with open(LOG_FILE, 'w') as log:
             log.write("IMG_PATH\n")
     label_map_dict = label_map_util.get_label_map_dict(FLAGS.label_map_path)
-
     DATASET_PATH = os.path.normpath(FLAGS.data_dir)
-    imageDirList = os.listdir(DATASET_PATH)
-    nbImage = len(imageDirList)
-    record_dir = os.path.dirname(FLAGS.output_path)
-    if not os.path.exists(record_dir):
-        os.makedirs(record_dir, exist_ok=True)
-    num_shards = max(1, nbImage // IMG_PER_SHARD + (0 if nbImage % IMG_PER_SHARD < IMG_PER_SHARD * 0.2 else 1))
-    if FLAGS.no_shard:
-        num_shards = 1
-    with contextlib2.ExitStack() as tf_record_close_stack:
-        output_tfrecords = tf_record_creation_util.open_sharded_output_tfrecords(tf_record_close_stack,
-                                                                                 FLAGS.output_path, num_shards)
-        for idx, imageDir in enumerate(imageDirList):
-            if LOG_FILE is not None:
-                with open(LOG_FILE, 'a') as log:
-                    log.write(imageDir + "\n")
-            if idx % 50 == 0:
-                logging.info('On image %d of %d', idx, len(imageDirList))
+    OUTPUT_PATH = os.path.normpath(FLAGS.output_path)
+    if '%TYPE%' in DATASET_PATH:
+        PATHS = [(DATASET_PATH.replace('%TYPE%', datasetType), OUTPUT_PATH.replace('%TYPE%', datasetType))
+                 for datasetType in ['train', 'val']]
+    else:
+        PATHS = [(DATASET_PATH, FLAGS.output_path)]
 
-            IMAGE_DIR_PATH = os.path.join(DATASET_PATH, imageDir)
-            data = getImageData(IMAGE_DIR_PATH, label_map_dict)
-            tf_example = data2TFExample(data)
-            output_tfrecords[idx % num_shards].write(tf_example.SerializeToString())
-    total_time = time() - start
-    m = int(total_time) // 60
-    s = int(total_time) % 60
-    print(f"{m:02d}:{s:02d}")
+    for datasetPath, outputPath in PATHS:
+        logging.info(f'Using {datasetPath}')
+        start = time()
+        imageDirList = os.listdir(datasetPath)
+        nbImage = len(imageDirList)
+        record_dir = os.path.dirname(outputPath)
+        if not os.path.exists(record_dir):
+            os.makedirs(record_dir, exist_ok=True)
+        num_shards = max(1, nbImage // IMG_PER_SHARD + (0 if nbImage % IMG_PER_SHARD < IMG_PER_SHARD * 0.2 else 1))
+        if FLAGS.no_shard:
+            num_shards = 1
+        with contextlib2.ExitStack() as tf_record_close_stack:
+            output_tfrecords = tf_record_creation_util.open_sharded_output_tfrecords(tf_record_close_stack,
+                                                                                     outputPath, num_shards)
+            for idx, imageDir in enumerate(imageDirList):
+                if LOG_FILE is not None:
+                    with open(LOG_FILE, 'a') as log:
+                        log.write(f"{imageDir}\n")
+                if idx % 50 == 0:
+                    logging.info(f'On image {idx} of {len(imageDirList)}')
+
+                IMAGE_DIR_PATH = os.path.join(datasetPath, imageDir)
+                data = getImageData(str(IMAGE_DIR_PATH), label_map_dict)
+                tf_example = data2TFExample(data)
+                output_tfrecords[idx % num_shards].write(tf_example.SerializeToString())
+        total_time = time() - start
+        m = int(total_time) // 60
+        s = int(total_time) % 60
+        print(f"{m:02d}:{s:02d}", flush=True)
 
 
 if __name__ == '__main__':

@@ -219,7 +219,7 @@ def getPoints(mask, xOffset=0, yOffset=0, epsilon=1, show=False, waitSeconds=10,
     contours, _ = cv2.findContours(mask, method=cv2.RETR_TREE, mode=cv2.CHAIN_APPROX_SIMPLE)
 
     if len(contours) > 0:
-        # https://stackoverflow.com/questions/41879315/opencv-visualize-polygonal-curves-extracted-with-cv2-approxpolydp
+        # https://stackoverflow.com/q/41879315/9962046
         # Finding biggest area
         cnt = contours[0]
         max_area = cv2.contourArea(cnt)

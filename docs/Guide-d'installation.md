@@ -10,7 +10,7 @@ Pour utiliser les outils disponibles dans ce dépôt GitHub, vous aurez au préa
 5. [Créer un raccourci pour ouvrir facilement les outils](#4-créer-un-raccourci-pour-ouvrir-facilement-les-outils)
 
 ## 1. Obtenir tous les fichiers nécessaires aux outils
-1. [Télécharger](../archive/refs/heads/Matterport_based.zip) ou cloner le [dépôt](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition.git).
+1. [Télécharger](../archive/refs/heads/master.zip) ou cloner le [dépôt](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition.git).
 2. Décompresser ou déplacer le dossier à l'emplacement de votre choix.
 3. Télécharger le fichier de poids (`.h5`) et peut-être aussi une image ou plus sur lesquelles vous voulez lancer l'inférence. Placer ces fichiers dans le même dossier que précédemment, les images doivent être placées dans un dossier nommé `images` (cela peut être personnalisé dans le notebook d'inférence).
 

@@ -221,12 +221,13 @@ class InferenceTool:
             }
             imageInfo['NAME'] = imageInfo['FILE_NAME'].split('.')[0]
             if suffix != "":
-                imageInfo['NAME'] = imageInfo['NAME'].replace(suffix, "")
+                # Replacing only the last occurence https://stackoverflow.com/a/2556252/9962046
+                imageInfo['NAME'] = ''.join(imageInfo['NAME'].rsplit(suffix, maxsplit=1))
             imageInfo['IMAGE_FORMAT'] = imageInfo['FILE_NAME'].split('.')[-1]
 
             # Reading input image in RGB color order
             imageChanged = False
-            if self.__RESIZE is not None:  # If in cortex mode, resize image to lower resolution
+            if self.__RESIZE is not None:  # If in mode, resize image to lower resolution
                 imageInfo['ORIGINAL_IMAGE'] = cv2.cvtColor(cv2.imread(imagePath), cv2.COLOR_BGR2RGB)
                 height, width, _ = imageInfo['ORIGINAL_IMAGE'].shape
                 fullImage = cv2.resize(imageInfo['ORIGINAL_IMAGE'], self.__RESIZE)
@@ -353,7 +354,7 @@ class InferenceTool:
                         if usingPreviousBase:
                             raise NotImplementedError('Centered mode and same base as previous '
                                                       'mode is not currently supported')
-                        if self.__CONFIG.get_param()['fuse_base_class']:
+                        if self.__CONFIG.get_param().get('fuse_base_class', False):
                             if crop_to_remaining:
                                 imageInfo['ROI_COORDINATES'] = fusedBbox - offset
                             else:
@@ -370,7 +371,7 @@ class InferenceTool:
                         imageInfo['NB_DIV'] = len(imageInfo['ROI_COORDINATES'])
 
                     # Getting count and area of base-class masks
-                    if self.__CONFIG.get_param()['fuse_base_class'] or usingPreviousBase:
+                    if self.__CONFIG.get_param().get('fuse_base_class', False) or usingPreviousBase:
                         imageInfo.update({'BASE_AREA': dD.getBWCount(fusedMask)[1], 'BASE_COUNT': 1})
                     else:
                         indices = np.arange(len(self.__PREVIOUS_RES['class_ids']))
@@ -396,14 +397,15 @@ class InferenceTool:
             elif annotationExists:
                 if not silent:
                     print(" - Annotation file found: creating dataset files and cleaning image if possible",
-                          flush=True)
+                          flush=True, end='')
+                    start_wrapping = time()
                 dW.createMasksOfImage(imageInfo['DIR_PATH'], imageInfo['NAME'], 'data',
                                       classesInfo=self.__CLASSES_INFO, imageFormat=imageInfo['IMAGE_FORMAT'],
                                       resize=self.__RESIZE, config=self.__CONFIG)
                 maskDirs = os.listdir(os.path.join('data', imageInfo['NAME']))
                 if 'BASE_CLASS' in imageInfo and imageInfo['BASE_CLASS'] in maskDirs:
                     # Fusing masks of base class if needed, then cleaning image using it/them
-                    if self.__CONFIG.get_param()['fuse_base_class']:
+                    if self.__CONFIG.get_param().get('fuse_base_class', False):
                         dW.fuseClassMasks('data', imageInfo['NAME'], imageInfo['BASE_CLASS'],
                                           imageFormat=imageInfo['IMAGE_FORMAT'], deleteBaseMasks=True, silent=True)
                     if hasToExclude:
@@ -446,12 +448,15 @@ class InferenceTool:
                         imageInfo['cleaned_image_path'] = os.path.join(imagesDirPath, imageFilePath)
                         image = cv2.cvtColor(cv2.imread(imageInfo['cleaned_image_path']), cv2.COLOR_BGR2RGB)
 
+                # TODO TIME Wrapper/Clean
+                if not silent:
+                    end_wrapping = time()
+                    print(f' Duration = {formatTime(end_wrapping - start_wrapping)}')
                 for notAClass in ['images', 'full_images']:
                     if notAClass in maskDirs:
                         maskDirs.remove(notAClass)
-                # We want to know if image has annotation, if we don't want to detect cortex and this mask exist
-                # as we need it to clean the image, we remove it from the mask list before checking if a class
-                # we want to predict has an annotated mask
+
+                # Image has annotation if at least a class that we want to predict has a mask (i.e. is present)
                 if not imageInfo['HAS_ANNOTATION']:
                     imageInfo['HAS_ANNOTATION'] = any([d in self.__CUSTOM_CLASS_NAMES for d in maskDirs])
 
@@ -489,20 +494,27 @@ class InferenceTool:
         if len(indices) > 0:
             temp = self.__CONFIG.get_mini_mask_shape(mode)
             modeUsingMiniMask = temp is not None and results['masks'].shape[:2] == temp
-            previousResize = self.__CONFIG.get_param(mode).get('resize', None)
+            hasResize = self.__CONFIG.get_param(mode).get('resize', None)
             fusedMask = np.zeros((height, width), dtype=np.uint8)
             for idx in indices:
                 mask = results['masks'][:, :, idx].astype(np.uint8) * 255
+                my1, mx1, my2, mx2 = y1, x1, y2, x2 = bbox = results['rois'][idx]
                 if modeUsingMiniMask:
-                    bbox = results['rois'][idx]
-                    if previousResize is not None:
-                        mask = utils.expand_mask(bbox, mask, tuple(previousResize)).astype(np.uint8) * 255
+                    if hasResize is not None:
+                        mask = utils.expand_mask(bbox, mask, tuple(hasResize)).astype(np.uint8) * 255
                         mask = cv2.resize(mask, (width, height))
                     else:
-                        mask = utils.expand_mask(bbox, mask, (height, width)).astype(np.uint8) * 255
-                elif previousResize:
+                        shifted = utils.shift_bbox(bbox)
+                        my1, mx1, my2, mx2 = shifted
+                        mask = utils.expand_mask(shifted, mask, shifted[2:]).astype(np.uint8) * 255
+                elif hasResize:
+                    yRatio = height / hasResize[0]
+                    xRatio = width / hasResize[1]
+                    bbox = np.around(bbox * [yRatio, xRatio, yRatio, xRatio]).astype(np.int)
+                    my1, mx1, my2, mx2 = y1, x1, y2, x2 = bbox
                     mask = cv2.resize(mask, (width, height))
-                fusedMask = np.bitwise_or(fusedMask, mask)
+                # TODO : Optimize fusion by working only on mask's bbox
+                fusedMask[y1:y2, x1:x2] = np.bitwise_or(fusedMask[y1:y2, x1:x2], mask[my1:my2, mx1:mx2])
         return fusedMask, len(indices) > 0
 
     @staticmethod
@@ -557,7 +569,7 @@ class InferenceTool:
                                                       save_results, displayOnlyStats, logsPath, verbose=verbose)
                         if not stay:
                             print(f"{image_name} does not have required data (ex : needed class from previous mode is "
-                                  f"missing) to continue current and/or next inference modes processing.")
+                                  f"missing) to continue current and/or next inference modes processing.\n")
                 else:
                     self.__process_image__(IMAGE_PATH, results_path, chainMode, saveDebugImages, save_results,
                                            displayOnlyStats, logsPath, verbose=verbose)
@@ -604,7 +616,6 @@ class InferenceTool:
 
     def __process_image__(self, image_path, results_path, chainMode=False, saveDebugImages=False, save_results=True,
                           displayOnlyStats=False, logsPath=None, verbose=0):
-        cortex_mode = self.__MODE == "cortex"
         allowSparse = self.__CONFIG.get_param().get('allow_sparse', True)
         start_time = time()
         self.__STEP = "image preparation"
@@ -804,22 +815,28 @@ class InferenceTool:
         if not displayOnlyStats:
             print(" - Fusing results of all divisions")
         self.__STEP = "fusing results"
-        res = pp.fuse_results(res, imageInfo, division_size=self.__DIVISION_SIZE,
-                              cortex_size=self.__RESIZE, config=self.__CONFIG)
+        res = pp.fuse_results(res, imageInfo, division_size=self.__DIVISION_SIZE, resize=self.__RESIZE,
+                              config=self.__CONFIG)
         return res
 
     def __draw_masks__(self, image_results_path, img, image_info, masks_data, title=None, cleaned_image=True):
         if title is None:
             title = f"{image_info['NAME']} Masked"
         fileName = os.path.join(image_results_path, title.replace(' ', '_').replace('(', '').replace(')', ''))
+
+        # Computing figure size
+        figsize = self.__CONFIG.get_param().get('resize', None)
+        if figsize is None:
+            figsize = (image_info['WIDTH'] / 100, image_info['HEIGHT'] / 100)
+        else:
+            figsize = (figsize[0] / 100, figsize[1] / 100)
+
         # No need of reloading or passing copy of image as it is the final drawing
         visualize.display_instances(
             img, masks_data['rois'], masks_data['masks'], masks_data['class_ids'],
             self.__VISUALIZE_NAMES, masks_data['scores'] if 'scores' in masks_data else None, colors=self.__COLORS,
-            colorPerClass=True, fileName=fileName, save_cleaned_img=cleaned_image, silent=True, title=title, figsize=(
-                (1024 if self.__MODE == "cortex" else image_info["WIDTH"]) / 100,
-                (1024 if self.__MODE == "cortex" else image_info["HEIGHT"]) / 100
-            ), image_format=image_info['IMAGE_FORMAT'], config=self.__CONFIG
+            colorPerClass=True, fileName=fileName, save_cleaned_img=cleaned_image, silent=True, title=title,
+            figsize=figsize, image_format=image_info['IMAGE_FORMAT'], config=self.__CONFIG
         )
 
     def __get_ground_truth__(self, image_results_path, fullImage, image_info,

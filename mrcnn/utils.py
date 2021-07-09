@@ -91,7 +91,7 @@ def unsparse_mask(base_mask):
     :return: the main part of the mask as a same shape image and type
     """
     # http://www.learningaboutelectronics.com/Articles/How-to-find-the-largest-or-smallest-object-in-an-image-Python-OpenCV.php
-    # https://stackoverflow.com/questions/19222343/filling-contours-with-opencv-python
+    # https://stackoverflow.com/a/19222620/9962046
     # Convert to np.uint8 if not before processing
     convert = False
     if type(base_mask[0, 0]) is np.bool_:
