@@ -10,6 +10,9 @@ results
 *.jp2
 *.txt
 *.h5
+!docs/img/*.png
+!docs/img/*.jpg
+!requirements.txt
 Mask_R_CNN_mAP_auto_script.py
 test.py
 bidouille.py
