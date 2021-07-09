@@ -22,7 +22,7 @@ For better performance, enable GPU under hardware accelerator: `Runtime` > `Chan
 
 
 
-![image.png](img\colab_enable_gpu.png)
+![img/colab_enable_gpu.png](img/colab_enable_gpu.png)
 
 
 ### Getting the files easily without upload
