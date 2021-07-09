@@ -146,7 +146,7 @@ def mask_histo_per_base_mask(base_results, results, image_info, classes=None, bo
         raise ValueError(f"box_epsilon ({box_epsilon}) cannot be negative")
 
     def get_class_data(classname):
-        fromPreviousRes = config.get_class_mode(classname, "current") == config.get_previous_mode()
+        fromPreviousRes = config.get_previous_mode() in config.get_class_mode(classname, "current")
         class_id = config.get_class_id(b_class, "previous" if fromPreviousRes else "current")
         tempRes = base_results if fromPreviousRes else results
         if 'histos' not in tempRes:  # If histo does not exists, initiate it
