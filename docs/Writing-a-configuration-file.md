@@ -8,10 +8,10 @@
 
 1. [Mode and mode's order definition](#1-mode-and-modes-order-definition)
 2. [Classes definition](#2-classes-definition)
-3. [Pre-inference and Inference parameters](#2-pre-inference-and-inference-parameters)
-4. [Post-processing methods](#3-post-processing-methods)
-5. [Statistics methods](#4-statistics-methods)
-6. [Additional results files](#5-additional-results-files)
+3. [Pre-inference and Inference parameters](#3-pre-inference-and-inference-parameters)
+4. [Post-processing methods](#4-post-processing-methods)
+5. [Statistics methods](#5-statistics-methods)
+6. [Additional results files](#6-additional-results-files)
 
 ## 1. Mode and mode's order definition
 
