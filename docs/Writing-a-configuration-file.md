@@ -195,16 +195,6 @@ Those parameters can be :
 
 ​	A `post_processing` array is found inside each mode configuration and defines which post-processing methods have to be applied to the results. Those methods are described as dictionaries with a `method` string corresponding to the method's name and additional parameters that will define the method behavior. Those additional parameters are described in the following table and can be added in the same way as in the example :
 
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;
-  overflow:hidden;padding:10px 5px;word-break:normal;}
-.tg th{border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;
-  font-weight:normal;overflow:hidden;padding:10px 5px;word-break:normal;}
-.tg .tg-9wq8{border-color:inherit;text-align:center;vertical-align:middle}
-.tg .tg-c3ow{border-color:inherit;text-align:center;vertical-align:top}
-.tg .tg-uzvj{border-color:inherit;font-weight:bold;text-align:center;vertical-align:middle}
-</style>
 <table class="tg">
 <thead>
   <tr>
@@ -370,6 +360,7 @@ Those parameters can be :
 
 
 
+
 ## 5. Statistics methods
 
 ```json
@@ -394,18 +385,6 @@ Those parameters can be :
 
 ​	A `statistics` array is found inside each mode configuration and defines which statistics methods will be applied to the results, in the same way as post-processing methods. They are only 2 statistics methods for now :
 
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;
-  overflow:hidden;padding:10px 5px;word-break:normal;}
-.tg th{border-color:black;border-style:solid;border-width:1px;font-family:Arial, sans-serif;font-size:14px;
-  font-weight:normal;overflow:hidden;padding:10px 5px;word-break:normal;}
-.tg .tg-9wq8{border-color:inherit;text-align:center;vertical-align:middle}
-.tg .tg-baqh{text-align:center;vertical-align:top}
-.tg .tg-wa1i{font-weight:bold;text-align:center;vertical-align:middle}
-.tg .tg-uzvj{border-color:inherit;font-weight:bold;text-align:center;vertical-align:middle}
-.tg .tg-nrix{text-align:center;vertical-align:middle}
-</style>
 <table class="tg">
 <thead>
   <tr>
@@ -472,6 +451,7 @@ Those parameters can be :
   </tr>
 </tbody>
 </table>
+
 
 ## 6. Additional results files
 
