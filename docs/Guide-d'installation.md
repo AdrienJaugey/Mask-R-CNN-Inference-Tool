@@ -8,6 +8,7 @@ Pour utiliser les outils disponibles dans ce dépôt GitHub, vous aurez au préa
 3. [Installer CUDA Toolkit et cuDNN](#3-installer-cuda-toolkit-et-cudnn)
 4. [Installer l'API de Détection d'Objets de TensorFlow](#4-installer-lapi-de-détection-dobjets-de-tensorflow)
 5. [Créer un raccourci pour ouvrir facilement les outils](#4-créer-un-raccourci-pour-ouvrir-facilement-les-outils)
+6. [[Windows seulement] Corriger les erreurs de noyau Jupyter et win32api](#6-windows-seulement-corriger-les-erreurs-de-noyau-jupyter-et-win32api)
 
 ## 1. Obtenir tous les fichiers nécessaires aux outils
 1. [Télécharger](../archive/refs/heads/master.zip) ou cloner le [dépôt](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition.git).
@@ -21,6 +22,8 @@ Pour utiliser les outils disponibles dans ce dépôt GitHub, vous aurez au préa
     * Pour changer de dossier, utiliser la commande `cd <Nom du dossier>`.
     * Pour changer de disque utilisé, écrire la lettre du disque suivi de ":" et appuyer sur ENTRÉE (par exemple, pour passer du disque C au disque D, il faut écrire `D:` et appuyer sur ENTRÉE).  
 4. Exécuter la commande suivante : `conda env create -f environment.yml`.
+
+> > Si vous êtes bien sous windows, vous devriez également lire [§6](#6-windows-seulement-corriger-les-erreurs-de-noyau-jupyter-et-win32api) qui décrit un bug qui peut apparaître et empêcher tout fonctionnement de l'outil.
 
 ## 3. Installer CUDA Toolkit et cuDNN
 En utilisant une carte graphique compatible avec CUDA 11.2, l'entraînement et les inférences peuvent être considérablement accélérés. Pour savoir si votre carte graphique est compatible, veuillez vous référer à la [liste des GPUs compatibles avec CUDA](https://developer.nvidia.com/cuda-gpus) pour vérifier que votre carte graphique a une `Compute Capability` d'au moins 3.5. Si c'est le cas, vous pouvez installer CUDA comme suit : 
@@ -68,3 +71,15 @@ Source : [Creating your own object detector, Towards data science, Gilbert Tanne
 9. Cliquer sur le bouton `OK`
 
 L'installation devrait désormais être terminée. Vous devriez tester le Notebook d'inférence pour être sûr que tout fonctionne correctement.
+
+## 6. [Windows seulement] Corriger les erreurs de noyau Jupyter et win32api
+
+​	![bug du noyau Jupyter](img/jupyter_win32api_error.png)
+
+​	Si vous utilisez Windows, vous rencontrerez peut-être un bug où le noyau Jupyter ne peut se connecter, ou est bloqué à l'étape de démarrage (cf. image ci-dessus après avoir cliqué sur le bouton rouge `Kernel error` ou `Noyau planté` en haut à droite). Si c'est le cas, et que le terminal qui s'est ouvert en même temps que le notebook Jupyter affiche des erreurs `JSONDecodeError` ainsi qu'une erreur `ImportError` faisant référence à **win32api**, les instructions suivantes devraient vous permettre de corriger le bug:
+
+1. En utilisant le **Menu Démarrer** ou la **Barre de Recherche Windows**, ouvrir **Anaconda Prompt**;
+2. Activer l'environnement Python créé au [§2](#2-mettre-en-place-lenvironnement-python) en utilisant la commande `conda activate Skinet`;
+3. Réinstaller `pywin32` en utilisant la commande suivante `pip install --upgrade pywin32==300` (la version 300 fonctionne, d'autres le pourront certainement);
+4. Ouvrir de nouveau un des outils (ne pas réutiliser l'instance qui affichait l'erreur, celle-ci peut être fermée) et exécuter au moins la première cellule pour voir si le noyau démarre et se connecte normalement ou non.
+

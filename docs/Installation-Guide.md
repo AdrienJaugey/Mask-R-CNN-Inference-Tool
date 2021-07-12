@@ -8,6 +8,7 @@ To use the available tools in this repository, you will need to install a few th
 3. [Installing CUDA Toolkit and cuDNN](#3-installing-cuda-toolkit-and-cudnn)
 4. [Installing TensorFlow Object Detection API](#4-Installing-TensorFlow-Object Detection-API)
 5. [Making a shortcut to easily open the tools](#5-making-a-shortcut-to-easily-open-the-tools)
+6. [[Windows only] Fixing the Jupyter's kernel and win32api errors](#6-windows-only-fixing-the-jupyters-kernel-and-win32api-errors)
 
 ## 1. Getting all the required tool's files
 1. [Download](../archive/refs/heads/master.zip) or clone the [repository](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition.git).
@@ -21,6 +22,8 @@ To use the available tools in this repository, you will need to install a few th
     * To change directory, use ```cd <Directory Name>``` command.
     * To switch the drive you are using, just write its letter adding ":" and then press ENTER (for example, to switch from C drive to D drive, write ```D:``` and press ENTER).  
 4. Execute the following command: ```conda env create -f environment.yml```.
+
+> > If you are on windows, you may want to check [§6](#6-windows-only-fixing-the-jupyters-kernel-and-win32api-errors) that describes a bug that may appear.
 
 ## 3. Installing CUDA Toolkit and cuDNN
 Using a CUDA-capable GPU that supports CUDA 11.2 (please refer to [CUDA GPUs list](https://developer.nvidia.com/cuda-gpus) to know if your GPU as a ```Compute Capability``` of at least 3.5) will considerably accelerate training and inference.
@@ -68,3 +71,12 @@ Source : [Creating your own object detector, Towards data science, Gilbert Tanne
 9. Click ```OK```
 
 The installation should be done. You may try the Inference or Training Notebook to be sure everything works fine.
+
+## 6. [Windows only] Fixing the Jupyter's kernel and win32api errors
+![Jupyter's kernel's bug](img/jupyter_win32api_error.png)	If your are using Windows, you may encounter a bug where the Jupyter's notebook's kernel will not connect, or is stuck at the 'starting' state (see image above after clicking on the red button `Kernel error`). If this is the case, and the terminal that was opened at the same time as the notebook has `JSONDecodeError` errors as well as an `ImportError` about **win32api**, the following instructions should fix this bug:
+
+1. Using **Start Menu** or **Windows Search Bar**, open **Anaconda Prompt**;
+2. Activate the Python environment created in [§2](#2-setting-up-the-python-environment) by using `conda activate Skinet` command;
+3. Update `pywin32` using the following command `pip install --upgrade pywin32==300` (version 300 works, other may work too);
+4. Try reopening one of the tool (do not reuse the instance that displayed the error, you can close it) and starting the first cell to see if the kernel starts and connects correctly or not.
+
