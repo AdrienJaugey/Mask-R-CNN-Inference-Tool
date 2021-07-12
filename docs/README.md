@@ -9,7 +9,7 @@
 
 **Technical Information**
 
-* TODO [Writing a configuration file](Writing-a-configuration-file.md)
+* [Writing a configuration file](Writing-a-configuration-file.md)
 * [Annotations format compatibility](Annotations-format-compatibility.md)
   * [Writing your custom annotation format adapter](Annotations-format-compatibility.md#3-adding-another-annotations-format)
 

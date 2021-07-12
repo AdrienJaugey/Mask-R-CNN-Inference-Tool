@@ -11,7 +11,7 @@ Pour utiliser les outils disponibles dans ce dépôt GitHub, vous aurez au préa
 6. [[Windows seulement] Corriger les erreurs de noyau Jupyter et win32api](#6-windows-seulement-corriger-les-erreurs-de-noyau-jupyter-et-win32api)
 
 ## 1. Obtenir tous les fichiers nécessaires aux outils
-1. [Télécharger](../archive/refs/heads/master.zip) ou cloner le [dépôt](https://github.com/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition.git).
+1. [Télécharger](../../../archive/refs/heads/master.zip) ou cloner le [dépôt](../../../).
 2. Décompresser ou déplacer le dossier à l'emplacement de votre choix.
 3. Télécharger le(s) fichier(s) de poids (un fichier de poids est un dossier contenant des sous-dossiers `assets` et `variables` ainsi qu'un fichier `saved_model.pb` , il peut se trouver sous la forme d'une archive compressée, il faut dans ce cas la décompresser en s'assurant que la hiérarchie de fichier soit respectée [pas de dossier en trop avant d'arriver devant ceux citer précédemment]) et peut-être quelques images à passer en inférence, et les placer dans le dossier décompressé du dépôt. Les images devraient être placées dans un dans un dossier `images` contenant un sous-dossier au même nom que le mode d'inférence à exécuter avec ces images (ex: un dossier `cortex` pour les images à traiter par le mode cortex, et un dossier `chain` pour les images à traiter en enchaînement).
 
