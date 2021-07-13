@@ -3,12 +3,12 @@
 ## Index
 
 - [Introduction](#introduction)
-1. [extract_files_from_results.py script]()
-2. [gather_stats(histo)_into_csv.py scripts]()
-3. [remove_non_failed.py script]()
-4. [TF OD API's custom scripts]()
-    1. [create_skinet_tf_record.py script]()
-    2. [test_record.py script]()
+1. [extract_files_from_results.py script](#1-extract_files_from_resultspy-script)
+2. [gather_stats(histo)_into_csv.py scripts](#2-gather_statshisto_into_csvpy-scripts)
+3. [remove_non_failed.py script](#3-remove_non_failedpy-script)
+4. [TF OD API's custom scripts](#4-tf-od-apis-custom-scripts)
+    1. [create_skinet_tf_record.py script](#1-create_skinet_tf_recordpy-script)
+    2. [test_record.py script](#2-test_recordpy-script)
 
 ## Introduction
 
