@@ -4,7 +4,7 @@
 * [Installation Guide](Installation-Guide.md) [[FR ver.](Guide-d'installation.md)]
 * [Using the Inference Notebook](Using-the-Inference-Notebook.md)
   * [Specific steps for Google Colaboratory](Using-the-Inference-Notebook-with-Google-Colaboratory.md)
-* TODO [Using scripts to manage results](Using-scripts-to-manage-results.md)
+* [Using scripts to manage results](Using-scripts-to-manage-results.md)
 * :warning:[DEPRECATED] [Using the Training Notebook](Using-the-Training-Notebook.md)
 
 **Technical Information**
