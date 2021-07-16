@@ -1,3 +1,11 @@
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+Dataset tools
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
 import json
 import os
 from shutil import move
@@ -21,7 +29,7 @@ def infoNephrologyDataset(datasetPath: str, baseClass=None, silent=False):
     histogram = {}
     maxNbClasses = 0
     maxClasses = []
-    maxNbClassesNoCortex = 0
+    maxNbClassesNoBase = 0
     maxClassesNoBaseMask = []
     missingBaseClass = []
     printedBaseClassMissing = []
@@ -78,9 +86,9 @@ def infoNephrologyDataset(datasetPath: str, baseClass=None, silent=False):
                 maxClasses = []
             maxClasses.append(imageDir)
 
-        if nbClassesNoBaseClass >= maxNbClassesNoCortex:
-            if nbClassesNoBaseClass > maxNbClassesNoCortex:
-                maxNbClassesNoCortex = nbClassesNoBaseClass
+        if nbClassesNoBaseClass >= maxNbClassesNoBase:
+            if nbClassesNoBaseClass > maxNbClassesNoBase:
+                maxNbClassesNoBase = nbClassesNoBaseClass
                 maxClassesNoBaseMask = []
             maxClassesNoBaseMask.append(imageDir)
 
@@ -93,7 +101,7 @@ def infoNephrologyDataset(datasetPath: str, baseClass=None, silent=False):
         print(f"\tMulti {baseClass} masks ({len(multiBaseMasks)}) : {multiBaseMasks}")
         if baseClass is not None:
             print(f"\tMax Classes w/ {baseClass}  ({maxNbClasses}) :\t{maxClasses}")
-            print(f"\tMax Classes w/o {baseClass} ({maxNbClassesNoCortex}) :\t{maxClassesNoBaseMask}")
+            print(f"\tMax Classes w/o {baseClass} ({maxNbClassesNoBase}) :\t{maxClassesNoBaseMask}")
         else:
             print(f"\tMax Classes ({maxNbClasses}) :\t{maxClasses}")
     return {"image_count": nbImg, "classes_histogram": histogram, "missing_base_class": missingBaseClass,
@@ -152,10 +160,10 @@ def selectPatients(patientsBiopsie, patientsNephrectomie, nbPatientBiopsie=8, nb
 
 def sortImages(datasetPath: str, unusedDirPath: str = None, mode: str = "main"):
     """
-    Move images that cannot be used in main training/inference, can also create cortex dataset
+    Move images that cannot be used in main training/inference
     :param datasetPath: path to the base dataset
     :param unusedDirPath: path to the directory where unused files will be moved
-    :param mode: Choosing between sort for main segmentation or sort for cortices segmentation
+    :param mode: the inference mode
     :return: None
     """
     # Setting paths if not given
@@ -209,9 +217,9 @@ def sortImages(datasetPath: str, unusedDirPath: str = None, mode: str = "main"):
     if len(toBeMoved) > 0:
         os.makedirs(unusedDirPath, exist_ok=True)
         print("Moving {} non-usable images directories into correct folder".format(len(toBeMoved)))
-        for imageWithoutCortexDir in toBeMoved:
-            srcPath = os.path.join(datasetPath, imageWithoutCortexDir)
-            dstPath = os.path.join(unusedDirPath, imageWithoutCortexDir)
+        for imageWithoutBaseDir in toBeMoved:
+            srcPath = os.path.join(datasetPath, imageWithoutBaseDir)
+            dstPath = os.path.join(unusedDirPath, imageWithoutBaseDir)
             try:
                 move(srcPath, dstPath)
             except FileNotFoundError:
@@ -322,7 +330,7 @@ def checkNSG(datasetPath: str):
 
 def generateDataset(rawDataset='raw_dataset', tempDataset='temp_dataset', unusedDirPath='nephrology_dataset_unused',
                     mainDataset='main_dataset', mainDatasetUnusedDirPath='main_dataset_unused',
-                    deleteBaseCortexMasks=True, adapter: AnnotationAdapter = None, imageFormat="jpg",
+                    deleteBaseMasks=True, adapter: AnnotationAdapter = None, imageFormat="jpg",
                     recreateValList=None, separateDivInsteadOfImage=False, separateByPatient=True,
                     divisionSize=1024, minDivisionOverlapping=0.33, cleanBeforeStart=False):
     """
@@ -333,7 +341,7 @@ def generateDataset(rawDataset='raw_dataset', tempDataset='temp_dataset', unused
     :param unusedDirPath: path to the unused files' directory
     :param mainDataset: path to the main dataset directory, used to also define main training and validation directories
     :param mainDatasetUnusedDirPath: path to unused files' directory of main dataset
-    :param deleteBaseCortexMasks: whether to delete base cortex masks or not
+    :param deleteBaseMasks: whether to delete base masks or not
     :param adapter: the adapter used to read annotations files, if None, will detect automatically which one to use
     :param imageFormat: the image format to use for the datasets
     :param recreateValList: list of images to use to recreate val dataset
@@ -356,17 +364,17 @@ def generateDataset(rawDataset='raw_dataset', tempDataset='temp_dataset', unused
                 shutil.rmtree(directory, ignore_errors=True)
 
     # Creating masks and making per image directories
-    dW.startWrapper(rawDataset, tempDataset, deleteBaseMasks=deleteBaseCortexMasks,
+    dW.startWrapper(rawDataset, tempDataset, deleteBaseMasks=deleteBaseMasks,
                     adapter=adapter, imageFormat=imageFormat, mode="main")
     infoNephrologyDataset(tempDataset, baseClass='cortex')
     checkNSG(tempDataset)
 
-    # Sorting images to keep those that can be used to train cortex
+    # Sorting images to keep those that can be used
     sortImages(datasetPath=tempDataset, unusedDirPath=unusedDirPath, mode="main")
 
     recreateInfo = {"mode": "main", "temp_dataset": tempDataset, "unused_dir_path": unusedDirPath,
                     "main_dataset": mainDataset, "main_dataset_unused_path": mainDatasetUnusedDirPath,
-                    "delete_base_cortex_masks": deleteBaseCortexMasks, "image_format": imageFormat,
+                    "delete_base_masks": deleteBaseMasks, "image_format": imageFormat,
                     "separate": "div" if separateDivInsteadOfImage else ("patient" if separateByPatient else "images"),
                     "division_size": divisionSize, "min_overlap_part": minDivisionOverlapping,
                     "clean_before_start": cleanBeforeStart, "val_dataset": []}
@@ -376,10 +384,10 @@ def generateDataset(rawDataset='raw_dataset', tempDataset='temp_dataset', unused
                          min_overlap_part=minDivisionOverlapping, verbose=1)
         infoNephrologyDataset(mainDataset, baseClass='cortex')
 
-        # # If you want to keep all cortex files comment dW.cleanCortexDir() lines
-        # # If you want to check them and then delete them, comment these lines too and after checking use them
-        # # dW.cleanCortexDir(tempDataset)
-        # # dW.cleanCortexDir(mainDataset)
+        # If you want to keep all cortex files comment dW.cleanCortexDir() lines
+        # If you want to check them and then delete them, comment these lines too and after checking use them
+        # dW.cleanFusedClassDir(tempDataset, 'cortex')
+        # dW.cleanFusedClassDir(mainDataset, 'cortex')
 
         # Removing unusable images by moving them into a specific directory
         sortImages(mainDataset, unusedDirPath=mainDatasetUnusedDirPath)
@@ -434,7 +442,7 @@ def generateCortexDataset(rawDataset: str, outputDataset="nephrology_cortex_data
     :return: None
     """
     recreateInfo = {"mode": "cortex", "output_dataset": outputDataset,
-                    "clean_before_start": cleanBeforeStart, "cortex_resize": list(resize),
+                    "clean_before_start": cleanBeforeStart, "resize": list(resize),
                     "separate": "div" if separateDivInsteadOfImage else "images",
                     "min_overlap_part": overlap, "val_dataset": []}
     # Removing former dataset directories
@@ -489,9 +497,8 @@ def generateMESTCDataset(rawDataset: str, outputDataset="nephrology_mest_{mode}_
     :param imageFormat: the image format to look for and to use
     :param divisionSize: size of the output images
     :param overlap: the least overlap between two divisions
-    :param separate: if True, divisions of same image can be separated into training and val
-                                      directories
-    :param recreateValList: list of the images to use to recreate cortex dataset
+    :param separate: if True, divisions of same image can be separated into training and val directories
+    :param recreateValList: list of the images to use to recreate val dataset
     :param adapter: the adapter to use if given, else it will be chosen depending on the annotations found
     :return: None
     """
@@ -579,7 +586,7 @@ def generateInflammationDataset(rawDataset: str, outputDataset="nephrology_infla
     :param divisionSize: size of the output images
     :param overlap: the least overlap between two divisions
     :param separate: if True, divisions of same image can be separated into training and val directories
-    :param recreateValList: list of the images to use to recreate cortex dataset
+    :param recreateValList: list of the images to use to recreate val dataset
     :param adapter: the adapter to use if given, else it will be chosen depending on the annotations found
     :return: None
     """
@@ -598,7 +605,7 @@ def generateInflammationDataset(rawDataset: str, outputDataset="nephrology_infla
                     adapter=adapter, imageFormat=imageFormat, mode="inflammation")
     infoNephrologyDataset("temp_" + outputDataset, baseClass=base_class)
 
-    # Sorting images to keep those that can be used to train cortex
+    # Sorting images to keep those that can be used
     sortImages(datasetPath="temp_" + outputDataset, unusedDirPath=outputDataset + '_unused', mode="main")
 
     recreateInfo = {"mode": "inflammation", "output_dataset": outputDataset, "clean_before_start": cleanBeforeStart,
@@ -609,11 +616,6 @@ def generateInflammationDataset(rawDataset: str, outputDataset="nephrology_infla
         dD.divideDataset("temp_" + outputDataset, outputDataset, squareSideLength=divisionSize,
                          min_overlap_part=overlap, verbose=1)
         infoNephrologyDataset(outputDataset, baseClass=base_class)
-
-        # # If you want to keep all cortex files comment dW.cleanCortexDir() lines
-        # # If you want to check them and then delete them, comment these lines too and after checking use them
-        # # dW.cleanCortexDir(tempDataset)
-        # # dW.cleanCortexDir(mainDataset)
 
         # Removing unusable images by moving them into a specific directory
         sortImages(outputDataset, unusedDirPath=outputDataset + '_unused')
@@ -659,8 +661,9 @@ def regenerateDataset(rawDataset, recreateFilePath, adapter: AnnotationAdapter =
         generateDataset(rawDataset=rawDataset, tempDataset=recreateInfo["temp_dataset"],
                         unusedDirPath=recreateInfo["unused_dir_path"], mainDataset=recreateInfo["main_dataset"],
                         mainDatasetUnusedDirPath=recreateInfo["main_dataset_unused_path"],
-                        deleteBaseCortexMasks=recreateInfo["delete_base_cortex_masks"], adapter=adapter,
-                        imageFormat=recreateInfo["image_format"], recreateValList=recreateInfo["val_dataset"],
+                        deleteBaseMasks=recreateInfo["delete_base_masks"],
+                        adapter=adapter, imageFormat=recreateInfo["image_format"],
+                        recreateValList=recreateInfo["val_dataset"],
                         separateDivInsteadOfImage=recreateInfo["separate"] == "div",
                         separateByPatient=recreateInfo["separate"] == "patient",
                         divisionSize=recreateInfo["division_size"],
@@ -669,7 +672,7 @@ def regenerateDataset(rawDataset, recreateFilePath, adapter: AnnotationAdapter =
     elif recreateInfo["mode"] == "cortex":
         generateCortexDataset(rawDataset=rawDataset, outputDataset=recreateInfo["output_dataset"],
                               cleanBeforeStart=recreateInfo["clean_before_start"],
-                              resize=tuple(recreateInfo["cortex_resize"]), overlap=recreateInfo["min_overlap_part"],
+                              resize=tuple(recreateInfo["resize"]), overlap=recreateInfo["min_overlap_part"],
                               separateDivInsteadOfImage=recreateInfo["separate"] == "div",
                               recreateValList=recreateInfo["val_dataset"], adapter=adapter)
     elif recreateInfo["mode"] == "mest":

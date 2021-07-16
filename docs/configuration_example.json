@@ -1,0 +1,169 @@
+{
+    "first_mode": "mode1",
+    "modes": [
+        {
+            "name": "mode1",
+            "previous": null,
+            "next": "mode2",
+            "classes": [
+                {
+                    "name": "class1",
+                    "display_name": "Class 1",
+                    "asap_color": "#ffaa00",
+                    "priority_level": 1,
+                    "color": [255, 0, 0]
+                },
+                {
+                    "name": "class2",
+                    "display_name": "Class 2",
+                    "asap_color": "#ff0000",
+                    "color": [0, 255, 0]
+                },
+                {
+                    "name": "class3",
+                    "display_name": "Class 3",
+                    "asap_color": "#ffffff",
+                    "color": [0, 0, 255]
+                }
+            ],
+            "parameters": {
+                "weight_file": "path/to/weights_folder_of_mode1",
+                "base_class": null,
+				"exclude_class": null,
+                "crop_to_remaining": false,
+                "allow_empty_annotations": false,
+                "roi_mode": "divided",
+                "resize": [2048, 2048],
+                "roi_size": 1024,
+                "min_overlap_part": 0.5,
+                "mini_mask": null,
+                "min_confidence": 0.7,
+                "allow_sparse": true
+            },
+            "post_processing": [
+                {"method": "fusion", "bb_threshold": 0.1, "mask_threshold": 0.1},
+                {"method": "small_filter", "min_size": 300}
+            ],
+            "statistics": [
+                {"method": "count_and_area", "selected_classes": "all"}
+            ],
+            "export": "all",
+            "export_cleaned_image": [
+                {
+                    "name": "class1",
+                    "crop_to_remaining": true,
+                    "base_class": "class1",
+                    "exclude_class": null
+                }
+            ],
+            "return": ["class1"]
+        },
+        {
+            "name": "mode2",
+            "previous": "mode1",
+            "next": null,
+            "classes": [
+                {
+                    "name": "otherClass1",
+                    "display_name": "Other Class 1",
+                    "asap_color": "#ff007f",
+					"contains": ["otherClass2", "otherClass4"],
+                    "color": [255, 0, 0]
+                },
+                {
+                    "name": "otherClass2",
+                    "display_name": "Other Class 2",
+                    "asap_color": "#55557f",
+					"contains": ["otherClass4"],
+                    "color": [255, 153, 0]
+                },
+                {
+                    "name": "otherClass3",
+                    "display_name": "Other Class 3",
+                    "asap_color": "#55007f",
+                    "color": [204, 255, 0]
+                },
+                {
+                    "name": "otherClass4",
+                    "display_name": "Other Class 4",
+                    "asap_color": "#ffaa7f",
+                    "color": [0, 255, 255]
+                }
+            ],
+            "parameters": {
+                "weight_file": "path/to/weights_folder_of_mode2",
+                "base_class": "class1",
+                "fuse_base_class": true,
+                "crop_to_remaining": true,
+                "allow_empty_annotations": false,
+                "roi_mode": "divided",
+                "resize": null,
+                "roi_size": 1024,
+                "min_overlap_part": 0.33,
+                "mini_mask": 128,
+                "min_confidence": 0.5,
+                "allow_sparse": false
+            },
+            "post_processing": [
+                {
+                    "method": "fusion",
+                    "bb_threshold": 0.1,
+                    "mask_threshold": 0.1
+                },{
+                    "method": "border_filter",
+                    "on_border_threshold": 0.25,
+                    "classes": [5, 6]
+                },
+                {
+                    "method": "class_fusion",
+                    "bb_threshold": 0.2,
+                    "mask_threshold": 0.2,
+                    "classes_compatibility": [[1, 2]]
+                },
+                {
+                    "method": "keep_biggest_mask",
+                    "bb_threshold": 0.3,
+                    "mask_threshold": 0.3,
+                    "classes": {"otherClass1": ["otherClass3"]}
+                },
+                {
+                    "method": "filter",
+                    "bb_threshold": 0.3,
+                    "mask_threshold": 0.3,
+                    "priority_table": [
+                        [false, true,  false, true ],
+                        [false, false, false, false],
+                        [true,  true,  false, true ],
+                        [false, false, false, false]
+                    ]
+                },
+                {
+                    "method": "small_filter",
+                    "min_size": 50
+                }
+            ],
+            "statistics": [
+                {
+                    "method": "base_mask_histo",
+                    "classes": {"class1": ["all"]},
+                    "box_epsilon": 0,
+                    "test_masks": true,
+                    "count_zeros": true,
+                    "mask_threshold": 0.9,
+                    "display_per_base_mask": false,
+                    "display_global": true
+                }
+            ],
+            "export": "all",
+            "export_cleaned_image": [
+                {
+                    "name": "remaining",
+                    "crop_to_remaining": true,
+                    "base_class": "class1",
+                    "exclude_class": "all"
+                }
+            ],
+            "return": ["base", "all"]
+        }
+	]
+}

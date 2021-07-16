@@ -10,6 +10,7 @@
                     "name": "cortex",
                     "display_name": "Cortex",
                     "asap_color": "#ffaa00",
+                    "priority_level": 1,
                     "color": [255, 0, 0]
                 },
                 {
@@ -28,7 +29,8 @@
             "parameters": {
                 "weight_file": "skinet_cortex_v2",
                 "base_class": null,
-                "crop_to_base_class": false,
+				"exclude_class": null,
+                "crop_to_remaining": false,
                 "allow_empty_annotations": false,
                 "roi_mode": "divided",
                 "resize": [2048, 2048],
@@ -36,9 +38,7 @@
                 "min_overlap_part": 0.5,
                 "mini_mask": null,
                 "min_confidence": 0.7,
-                "allow_sparse": true,
-                "exclude_medulla": false,
-                "exclude_capsule": false
+                "allow_sparse": true
             },
             "post_processing": [
                 {"method": "fusion", "bb_threshold": 0.1, "mask_threshold": 0.1},
@@ -48,6 +48,14 @@
                 {"method": "count_and_area", "selected_classes": "all"}
             ],
             "export": "all",
+            "export_cleaned_image": [
+                {
+                    "name": "cortex",
+                    "crop_to_remaining": true,
+                    "base_class": "cortex",
+                    "exclude_class": null
+                }
+            ],
             "return": ["cortex"]
         },
         {
@@ -71,6 +79,7 @@
                     "name": "nsg",
                     "display_name": "NSG",
                     "asap_color": "#55007f",
+                    "contains": ["nsg_complet", "nsg_partiel"],
                     "color": [204, 255, 0]
                 },
                 {
@@ -101,12 +110,14 @@
                     "name": "vaisseau",
                     "display_name": "Artery",
                     "asap_color": "#55ff7f",
+                    "contains": ["media", "intima"],
                     "color": [51, 0, 255]
                 },
                 {
                     "name": "media",
                     "display_name": "External Elastic Lamina",
                     "asap_color": "#aa5500",
+                    "contains": ["intima"],
                     "color": [108, 10, 195]
                 },
                 {
@@ -120,7 +131,7 @@
                 "weight_file": "skinet_main_v1",
                 "base_class": "cortex",
                 "fuse_base_class": true,
-                "crop_to_base_class": true,
+                "crop_to_remaining": true,
                 "allow_empty_annotations": false,
                 "roi_mode": "divided",
                 "resize": null,
@@ -191,6 +202,7 @@
                 {"method": "count_and_area", "selected_classes": "all"}
             ],
             "export": "all",
+            "export_cleaned_image": null,
             "return": null
         },
         {
@@ -239,7 +251,7 @@
                 "weight_file": "skinet_mest_main_v3",
                 "base_class": "cortex",
                 "fuse_base_class": true,
-                "crop_to_base_class": true,
+                "crop_to_remaining": true,
                 "allow_empty_annotations": false,
                 "roi_mode": "divided",
                 "resize": null,
@@ -293,6 +305,14 @@
                 {"method": "count_and_area", "selected_classes": "all"}
             ],
             "export": "all",
+            "export_cleaned_image": [
+                {
+                    "name": "glom",
+                    "crop_to_remaining": false,
+                    "base_class": "nsg",
+                    "exclude_class": null
+                }
+            ],
             "return": ["nsg"]
         },
         {
@@ -341,7 +361,7 @@
                 "weight_file": "skinet_mest_glom_v3",
                 "base_class": "nsg",
                 "fuse_base_class": false,
-                "crop_to_base_class": false,
+                "crop_to_remaining": false,
                 "allow_empty_annotations": true,
                 "roi_mode": "centered",
                 "resize": null,
@@ -388,6 +408,7 @@
                 }
             ],
             "export": "all",
+            "export_cleaned_image": null,
             "return": null
         }
     ]

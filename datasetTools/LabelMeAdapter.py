@@ -1,3 +1,11 @@
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+Dataset tools
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
 import shutil
 
 from datasetTools.AnnotationAdapter import JSONAdapter
@@ -166,7 +174,7 @@ class LabelMeAdapter(JSONAdapter):
         return masks
 
     @staticmethod
-    def offsetAnnotations(filePath, xOffset=0, yOffset=0, outputFilePath=None):
+    def updateAnnotations(filePath, xRatio=1, yRatio=1, xOffset=0, yOffset=0, outputFilePath=None):
         canRead = LabelMeAdapter.canRead(filePath)
         if not canRead:
             raise TypeError('This file is not a LabelMe annotation file')

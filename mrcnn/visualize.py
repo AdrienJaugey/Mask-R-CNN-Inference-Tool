@@ -3,8 +3,12 @@ Mask R-CNN
 Display and Visualization Functions.
 
 Copyright (c) 2017 Matterport, Inc.
-Licensed under the MIT License (see LICENSE for details)
+Licensed under the MIT License (see LICENSE_MATTERPORT for details)
 Written by Waleed Abdulla
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Updated/Modified by Adrien JAUGEY
 """
 
 import os
@@ -212,12 +216,11 @@ def display_confusion_matrix(confusion_matrix, class_names, title="Confusion Mat
     del ax, fig
 
 
-def create_multiclass_mask(image_shape, results: dict, classes_hierarchy, config: Config = None):
+def create_multiclass_mask(image_shape, results: dict, config: Config = None):
     """
     Creates an image containing all the masks where pixel color is the mask's class ID
     :param image_shape: the shape of the initial image
     :param results: the results dictionary containing all the masks
-    :param classes_hierarchy: the classes hierarchy used to determine the order of the classes to apply masks
     :param config: the config object used to expand mini_masks if enabled
     :return: the multi-mask image
     """
@@ -228,7 +231,12 @@ def create_multiclass_mask(image_shape, results: dict, classes_hierarchy, config
     rois = results['rois']
     indices = np.arange(len(class_ids))
 
-    levels = utils.remove_redundant_classes(utils.classes_level(classes_hierarchy), keepFirst=False)
+    classes_hierarchy = config.get_classes_hierarchy()
+    if classes_hierarchy is None:
+        levels = [[i + 1 for i in range(len(config.get_classes_info()))]]
+    else:
+        levels = utils.remove_redundant_classes(utils.classes_level(classes_hierarchy), keepFirst=False)
+
     for lvl in levels:
         current_indices = indices[np.isin(class_ids, lvl)]
         for idx in current_indices:
@@ -510,46 +518,6 @@ def plot_precision_recall(AP, precisions, recalls):
     ax.set_ylim(0, 1.1)
     ax.set_xlim(0, 1.1)
     _ = ax.plot(recalls, precisions)
-
-
-# TODO Delete
-'''def plot_overlaps(gt_class_ids, pred_class_ids, pred_scores,
-                  overlaps, class_names, threshold=0.5):
-    """Draw a grid showing how ground truth objects are classified.
-    gt_class_ids: [N] int. Ground truth class IDs
-    pred_class_id: [N] int. Predicted class IDs
-    pred_scores: [N] float. The probability scores of predicted classes
-    overlaps: [pred_boxes, gt_boxes] IoU overlaps of predictions and GT boxes.
-    class_names: list of all class names in the dataset
-    threshold: Float. The prediction probability required to predict a class
-    """
-    gt_class_ids = gt_class_ids[gt_class_ids != 0]
-    pred_class_ids = pred_class_ids[pred_class_ids != 0]
-
-    plt.figure(figsize=(12, 10))
-    plt.imshow(overlaps, interpolation='nearest', cmap=plt.cm.Blues)
-    plt.yticks(np.arange(len(pred_class_ids)),
-               ["{} ({:.2f})".format(class_names[int(id)], pred_scores[i])
-                for i, id in enumerate(pred_class_ids)])
-    plt.xticks(np.arange(len(gt_class_ids)),
-               [class_names[int(id)] for id in gt_class_ids], rotation=90)
-
-    thresh = overlaps.max() / 2.
-    for i, j in itertools.product(range(overlaps.shape[0]),
-                                  range(overlaps.shape[1])):
-        text = ""
-        if overlaps[i, j] > threshold:
-            text = "match" if gt_class_ids[j] == pred_class_ids[i] else "wrong"
-        color = ("white" if overlaps[i, j] > thresh
-                 else "black" if overlaps[i, j] > 0
-        else "grey")
-        plt.text(j, i, "{:.3f}\n{}".format(overlaps[i, j], text),
-                 horizontalalignment="center", verticalalignment="center",
-                 fontsize=9, color=color)
-
-    plt.tight_layout()
-    plt.xlabel("Ground Truth")
-    plt.ylabel("Predictions")'''
 
 
 def draw_boxes(image, boxes=None, refined_boxes=None,

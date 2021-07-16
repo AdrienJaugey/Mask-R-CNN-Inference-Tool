@@ -1,3 +1,11 @@
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+Common display/math methods
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
 from datetime import datetime
 import numpy as np
 
@@ -6,7 +14,7 @@ def progressBar(value, maxValue, prefix="", suffix="", forceNewLine=False, size=
                 empty='░'):
     """
     Prints a progress bar
-    Based on https://stackoverflow.com/questions/6169217/replace-console-output-in-python
+    Based on https://stackoverflow.com/a/51339999/9962046
     :param value: the current progress value
     :param maxValue: the maximum value that could be given
     :param prefix: text to display before the progress bar
@@ -18,12 +26,12 @@ def progressBar(value, maxValue, prefix="", suffix="", forceNewLine=False, size=
     :param empty: the character to use for the empty part of the bar
     :return: None
     """
-    percent = float(value) / maxValue
+    percent = 0. if maxValue == 0 else float(value) / maxValue
     nbFullChar = int(percent * size)
     bar = full * nbFullChar + (cursor if percent > 0 and nbFullChar < size else "")
     emptyBar = empty * (size - len(bar))
     print(f'\r{prefix} {bar}{emptyBar} {percent: 6.2%} {suffix}',
-          end='\n' if value == maxValue or forceNewLine else "", flush=True)
+          end='\n' if (value == maxValue and maxValue != 0) or forceNewLine else "", flush=True)
 
 
 def progressText(value, maxValue, onlyRaw=False, onlyPercent=False):
@@ -39,7 +47,7 @@ def progressText(value, maxValue, onlyRaw=False, onlyPercent=False):
             return f"({value}/{maxValue} | {percent:06.2%})"
 
 
-def formatTime(seconds: int, minutes: int = 0, hours: int = 0):
+def formatTime(seconds: [int, float], minutes: int = 0, hours: int = 0):
     """
     Returns a string representing the given time
     :param seconds: number of seconds
@@ -91,7 +99,7 @@ def format_number(num, maxLength=None):
                       the length but will at least return abs(num / 1000^N) followed by the metric prefix for 1000^N.
     :return: the formatted number with up to 2 decimal digits
     """
-    # https://stackoverflow.com/questions/579310/formatting-long-numbers-as-strings-in-python
+    # https://stackoverflow.com/q/579310/9962046
     suffixes = ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']
     magnitude = 0
     isInt = np.issubdtype(type(num), np.integer)
@@ -111,6 +119,23 @@ def format_number(num, maxLength=None):
                 return text
         return possibleText[-1]
     return f"{num:.1f}{suffixes[magnitude]}"
+
+
+def sort_dict(data: dict, key_type=None, reverse=False):
+    """
+    Returns a sorted dictionary by keys
+    :param data: the input dictionary
+    :param key_type: type of key (if keys are not str for example)
+    :param reverse: sort in reverse order
+    :return: sorted dictionary
+    """
+    res = {}
+    og_type = type(list(data.keys())[0])
+    keys = [key if key_type is None else key_type(key) for key in data.keys()]
+    keys.sort(reverse=reverse)
+    for key in keys:
+        res[key] = data[og_type(key)]
+    return res
 
 
 def combination(setSize, combinationSize):

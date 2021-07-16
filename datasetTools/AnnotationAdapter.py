@@ -10,6 +10,8 @@ import os
 from abc import ABC, abstractmethod
 import xml.etree.ElementTree as et
 import json
+from xml.dom import minidom
+
 import numpy as np
 import cv2
 
@@ -105,10 +107,12 @@ class AnnotationAdapter(ABC):
         return None
 
     @staticmethod
-    def offsetAnnotations(filePath, xOffset=0, yOffset=0, outputFilePath=None):
+    def updateAnnotations(filePath, xRatio=1, yRatio=1, xOffset=0, yOffset=0, outputFilePath=None):
         """
         Offsets annotations of a file
         :param filePath: file path to the annotation file
+        :param xRatio: the x-axis ratio to apply (before offset)
+        :param yRatio: the y-axis ratio to apply (before offset)
         :param xOffset: the x-axis offset to apply to annotations
         :param yOffset: the y-axis offset to apply to annotations
         :param outputFilePath: path to the output file, if None, will modify the base file
@@ -122,8 +126,6 @@ class XMLAdapter(AnnotationAdapter, ABC):
     def __init__(self, imageInfo: dict, rootName, verbose=0):
         super().__init__(imageInfo, verbose=verbose)
         self.root = et.Element(rootName)
-        self.root.tail = "\n"
-        self.root.text = "\n\t"
 
     @staticmethod
     def getName():
@@ -144,11 +146,15 @@ class XMLAdapter(AnnotationAdapter, ABC):
     def getSaveFileName(self, fileName):
         return fileName + '.xml'
 
-    def __str__(self):
+    @staticmethod
+    def __tostring__(node):
         if 'xml_declaration' in et.tostring.__code__.co_varnames:
-            return et.tostring(self.root, encoding='unicode', method='xml', xml_declaration=True)
+            return et.tostring(node, xml_declaration=True)
         else:
-            return et.tostring(self.root, encoding='unicode', method='xml')
+            return et.tostring(node)
+
+    def __str__(self):
+        return minidom.parseString(XMLAdapter.__tostring__(self.root)).toprettyxml()
 
     @staticmethod
     def canRead(filePath):
@@ -213,7 +219,7 @@ def getPoints(mask, xOffset=0, yOffset=0, epsilon=1, show=False, waitSeconds=10,
     contours, _ = cv2.findContours(mask, method=cv2.RETR_TREE, mode=cv2.CHAIN_APPROX_SIMPLE)
 
     if len(contours) > 0:
-        # https://stackoverflow.com/questions/41879315/opencv-visualize-polygonal-curves-extracted-with-cv2-approxpolydp
+        # https://stackoverflow.com/q/41879315/9962046
         # Finding biggest area
         cnt = contours[0]
         max_area = cv2.contourArea(cnt)
@@ -310,4 +316,6 @@ def export_annotations(image_info: dict, results: dict, adapterClass: Annotation
         adapter_instance.addAnnotationClass(classInfo)
 
     os.makedirs(save_path, exist_ok=True)
+    if verbose > 0:
+        print('  - ', end='')
     adapter_instance.saveToFile(save_path, image_info['NAME'])

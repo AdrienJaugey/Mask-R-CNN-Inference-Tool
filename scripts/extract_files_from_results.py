@@ -1,3 +1,10 @@
+"""
+Skinet (Segmentation of the Kidney through a Neural nETwork) Project
+
+Copyright (c) 2021 Skinet Team
+Licensed under the MIT License (see LICENSE for details)
+Written by Adrien JAUGEY
+"""
 import os
 import shutil
 import argparse
@@ -20,8 +27,8 @@ def existing_path(value):
 
 
 pre_built_path = {
-    'cleaned_cortex': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_fusion", "{imageDir}_cleaned.jpg"),
-    'cortex_mask': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_fusion", "{imageDir}_cortex.jpg"),
+    'original_image': os.path.join("{imageDir}", "{chainDir}", "{imageDir}.{imgFormat}"),
+    'cleaned_image': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_cleaned.{imgFormat}"),
     'expected': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_Expected.{imgFormat}"),
     'predicted': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_Predicted.{imgFormat}"),
     'predicted_clean': os.path.join("{imageDir}", "{chainDir}", "{imageDir}_Predicted_clean.{imgFormat}"),
