@@ -6,7 +6,7 @@ numpy==1.19.5
 opencv-python==4.5.1.48
 ipython
 jsonschema
-pillow==8.1.2
+pillow==8.2.0
 scikit-image==0.18.1
 scipy==1.6.2
 pytz
