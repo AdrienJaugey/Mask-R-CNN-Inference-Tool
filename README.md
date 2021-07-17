@@ -7,12 +7,12 @@ You can find additional information in the repository's [documentation](docs/REA
 This repository has been started during my internship at the [LEAD Laboratory](http://leadserv.u-bourgogne.fr/en/) (Dijon, France) from April 2020 to June 2020 for my second-to-last year of master’s degree in Software Engineering at [ESIREM](https://esirem.u-bourgogne.fr/).
 
 ## Inference tool
-Latest Stable version : [![Open Inference Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/blob/master/Mask_R_CNN_Nephrology_Inference.ipynb) 
+Latest Stable version : [![Open Inference Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Mask-R-CNN-Inference-Tool/blob/stable/Mask_R_CNN_Inference_Tool.ipynb) 
 
-Matterport's Mask R-CNN Based version : [![Open Inference Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/blob/Matterport_based/Mask_R_CNN_Nephrology_Inference.ipynb)
+Matterport's Mask R-CNN Based version : [![Open Inference Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Mask-R-CNN-Inference-Tool/blob/Matterport_based/Mask_R_CNN_Nephrology_Inference.ipynb)
 
 ## Statistics Extractor tool
-[![Open Statistics Extractor Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/blob/master/Mask_R_CNN_Stats_Extractor.ipynb) 
+[![Open Statistics Extractor Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Mask-R-CNN-Inference-Tool/blob/stable/Mask_R_CNN_Stats_Extractor.ipynb) 
 
 ## ASAP Annotations Fusion Tool
-[![Open Statistics Extractor Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Custom-Mask-R-CNN-for-kidney-s-cell-recognition/blob/master/Mask_R_CNN_ASAP_Annotations_Fusion.ipynb#scrollTo=C_oloTUK8ODv) 
+[![Open Statistics Extractor Tool In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AdrienJaugey/Mask-R-CNN-Inference-Tool/blob/stable/Mask_R_CNN_ASAP_Annotations_Fusion.ipynb#scrollTo=C_oloTUK8ODv) 

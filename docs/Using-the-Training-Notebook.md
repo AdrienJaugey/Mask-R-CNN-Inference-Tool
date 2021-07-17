@@ -1,5 +1,15 @@
 # [DEPRECATED] Using the Training Notebook
 
+> :warning: The Training tool provided in this repository is specific to [Matterport's Mask R-CNN implementation](https://github.com/matterport/Mask_RCNN) that is not used anymore. To train Mask R-CNN Inception ResNet V2 from the TensorFlow Object Detection API, please refer to online tutorials such as:
+>
+> - [Creating your own object detector, Towards data science, Gilbert Tanner](https://towardsdatascience.com/creating-your-own-object-detector-ad69dda69c85) (using TF 2.x),
+> - [Building a Custom Mask RCNN model with Tensorflow Object Detection, Towards data science, Priya Dwivedi](https://towardsdatascience.com/building-a-custom-mask-rcnn-model-with-tensorflow-object-detection-952f5b0c7ab4),
+> - Or others you may find.
+>
+> The Inference Tool is able to use either [TF SavedModel](https://www.tensorflow.org/guide/saved_model) format, or the output folder of TF OD API's model exportation (that contains a TF SavedModel).  
+
+
+
 A training notebook is available in the root directory of the repository. You can run it locally.
 
 ## Index

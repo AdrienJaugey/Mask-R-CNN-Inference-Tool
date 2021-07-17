@@ -11,7 +11,7 @@ To use the available tools in this repository, you will need to install a few th
 6. [[Windows only] Fixing the Jupyter's kernel and win32api errors](#6-windows-only-fixing-the-jupyters-kernel-and-win32api-errors)
 
 ## 1. Getting all the required tool's files
-1. [Download](../../../archive/refs/heads/master.zip) or clone the [repository](../../../).
+1. [Download](../../../archive/refs/heads/stable.zip) or clone the [repository](../../../).
 2. Unzip or move the repository in the directory of your choice.
 3. Download the weights file(s) (a weights file is a folder containing an `assets`, `variables` folder and a `saved_model.pb` file, they might be zipped so you need to unzip it) and maybe some images you want to run the inference on and put it/them in the same folder. Images should be put in a sub-directory named `images\<Mode name>`.
 
