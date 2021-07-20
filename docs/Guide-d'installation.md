@@ -2,6 +2,10 @@
 
 Pour utiliser les outils disponibles dans ce dépôt GitHub, vous aurez au préalable besoin d'installer quelques bibliothèques et autres outils. Vous trouverez par la suite un petit guide qui explique comment installer tout ce qui est nécessaire pour utiliser le notebook d'inférence, celui d'entraînement et même le script `datasetFormator.py`, qui permet de générer un dataset pour l'entraînement. Ce guide est écrit principalement pour une installation sous Windows (10 de préférence). Si vous utilisez un autre système d'exploitation (MacOs, Linux...), vous aurez peut-être besoin de chercher sur internet comment installer CUDA Toolkit, cuDNN et comment pouvoir lancer facilement les outils en créant un raccourci pour votre système.
 
+## Vidéo d'installation
+Il est préférable de lire ce guide d'installation rapidement avant de visionner cette vidéo, puis de le suivre en parallèle de celle-ci.
+[![https://youtu.be/FWjqm0vkZrY](https://img.youtube.com/vi/FWjqm0vkZrY/0.jpg)](https://www.youtube.com/watch?v=FWjqm0vkZrY)
+
 ## Sommaire
 1. [Obtenir tous les fichiers nécessaires aux outils](#1-obtenir-tous-les-fichiers-nécessaires-aux-outils)
 2. [Mettre en place l'environnement Python](#2-mettre-en-place-lenvironnement-python)
