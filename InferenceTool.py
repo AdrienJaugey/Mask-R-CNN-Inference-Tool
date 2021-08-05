@@ -735,7 +735,7 @@ class InferenceTool:
         if chainMode:
             self.__PREVIOUS_RES = {}
             if self.__CONFIG.has_to_return():
-                return_param = self.__CONFIG.get_return_param()
+                return_param = self.__CONFIG.get_return_param().copy()
                 if type(return_param) is str:
                     return_param = [return_param]
                 if "base" in return_param:
