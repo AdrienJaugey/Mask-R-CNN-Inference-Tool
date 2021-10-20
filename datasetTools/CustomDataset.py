@@ -15,6 +15,10 @@ from mrcnn import utils
 from mrcnn.Config import Config
 
 
+def format_text(t: str):
+    return t.lower().replace(' ', '').replace('_', '')
+
+
 class CustomDataset(utils.Dataset):
 
     def __init__(self, dataset_id, image_info, config: Config, previous_mode=False, enable_occlusion=False):
@@ -22,6 +26,7 @@ class CustomDataset(utils.Dataset):
         self.__ID = dataset_id
         self.__CONFIG = config
         self.__CUSTOM_CLASS_NAMES = [c['name'] for c in config.get_classes_info("previous" if previous_mode else None)]
+        self.__CLASS_ASSOCIATION = {format_text(c): c for c in self.__CUSTOM_CLASS_NAMES}
         self.__IMAGE_INFO = image_info
         self.__ENABLE_OCCLUSION = enable_occlusion
 
@@ -59,7 +64,8 @@ class CustomDataset(utils.Dataset):
 
         # Counting masks for current image
         number_of_masks = 0
-        masks_dir_list = [p for p in os.listdir(path) if p in self.__CUSTOM_CLASS_NAMES]
+        masks_dir_list = {p: self.__CLASS_ASSOCIATION[format_text(p)] for p in os.listdir(path)
+                          if format_text(p) in self.__CLASS_ASSOCIATION}
         for masks_dir in masks_dir_list:
             temp_DIR = os.path.join(path, masks_dir)
             # https://stackoverflow.com/a/2632251/9962046
@@ -75,8 +81,8 @@ class CustomDataset(utils.Dataset):
         bboxes = np.zeros((number_of_masks, 4), dtype=np.int32)
         iterator = 0
         class_ids = np.zeros((number_of_masks,), dtype=int)
-        for masks_dir in masks_dir_list:
-            temp_class_id = self.__CUSTOM_CLASS_NAMES.index(masks_dir) + 1
+        for masks_dir, mask_class in masks_dir_list.items():
+            temp_class_id = self.__CUSTOM_CLASS_NAMES.index(mask_class) + 1
             masks_dir_path = os.path.join(path, masks_dir)
             for mask_file in os.listdir(masks_dir_path):
                 mask = imread(os.path.join(masks_dir_path, mask_file))
