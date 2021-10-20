@@ -130,6 +130,8 @@ def sort_dict(data: dict, key_type=None, reverse=False):
     :return: sorted dictionary
     """
     res = {}
+    if len(data) == 0:
+        return data
     og_type = type(list(data.keys())[0])
     keys = [key if key_type is None else key_type(key) for key in data.keys()]
     keys.sort(reverse=reverse)
