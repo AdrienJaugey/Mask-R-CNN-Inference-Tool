@@ -599,7 +599,7 @@ class InferenceTool:
                                                            .replace(')', '')
                                                            .replace(' ', '_'))
                     visualize.display_confusion_matrix(self.__CONFUSION_MATRIX[mat_type],
-                                                       self.__CUSTOM_CLASS_NAMES.copy(), title=name, cmap=cmap,
+                                                       self.__VISUALIZE_NAMES.copy(), title=name, cmap=cmap,
                                                        show=False, normalize=normalized,
                                                        fileName=confusionMatrixFileName)
             plt.close('all')
