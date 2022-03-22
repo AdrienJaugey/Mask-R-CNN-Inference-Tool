@@ -13,7 +13,7 @@ dependencies:
     - opencv-python==4.5.1.48
     - ipython
     - jsonschema
-    - pillow==8.1.2
+    - pillow==9.0.1
     - scikit-image==0.18.1
     - scipy==1.6.2
     - pytz
